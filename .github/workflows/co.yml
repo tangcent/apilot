@@ -1,4 +1,4 @@
-name: CO
+name: Coverage
 
 on:
   push:
@@ -22,51 +22,35 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.issue.number
             });
-            
             const docLabel = labels.data.find(label => label.name === 'type: doc');
-            if (docLabel) {
-              console.log('PR has type: doc label, skipping CO');
-              return core.setOutput('should-skip', 'true');
-            }
-            
-            console.log('PR does not have type: doc label, continuing with CO');
-            return core.setOutput('should-skip', 'false');
+            core.setOutput('should-skip', docLabel ? 'true' : 'false');
 
   coverage:
     needs: check-skip
     if: ${{ github.event_name != 'pull_request' || needs.check-skip.outputs.should-skip != 'true' }}
-    name: "Generate coverage On ${{ matrix.os }} - jdk${{ matrix.java-version }}"
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest]
-        java-version: [17]
-    env:
-      OS: ${{ matrix.os }}
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
-      - name: Set up JDK ${{ matrix.java-version }}
-        uses: actions/setup-java@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          java-version: ${{ matrix.java-version }}
-          distribution: 'zulu'
-      - name: Install Xvfb
-        run: sudo apt-get update && sudo apt-get install -y xvfb
-      - name: Start Xvfb
-        run: Xvfb :99 -screen 0 1024x768x24 &
-      - name: Generate coverage report
+          go-version: "1.22"
+
+      - name: Generate coverage
         run: |
-          ./gradlew check --stacktrace
-          ./gradlew jacocoTestReport
+          for mod in api-collector api-formatter api-collector-go api-collector-java api-collector-node api-collector-python api-formatter-curl api-formatter-markdown api-formatter-postman api-master apilot-cli; do
+            if [ -f "$mod/go.mod" ]; then
+              echo "==> Coverage for $mod"
+              (cd "$mod" && go test -coverprofile=coverage.out ./... || true)
+            fi
+          done
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          file: build/reports/jacoco/report.xml
+          files: "**/coverage.out"
           flags: unittests
-          env_vars: OS
-          name: codecov-umbrella
-          fail_ci_if_error: true
-          path_to_write_report: ./coverage/codecov_report.txt
-          verbose: true
+          fail_ci_if_error: false

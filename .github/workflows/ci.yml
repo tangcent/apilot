@@ -23,46 +23,45 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.issue.number
             });
-            
             const docLabel = labels.data.find(label => label.name === 'type: doc');
             if (docLabel) {
-              console.log('PR has type: doc label, skipping CI');
-              return core.setOutput('should-skip', 'true');
+              core.setOutput('should-skip', 'true');
+            } else {
+              core.setOutput('should-skip', 'false');
             }
-            
-            console.log('PR does not have type: doc label, continuing with CI');
-            return core.setOutput('should-skip', 'false');
 
   build-test:
     needs: check-skip
     if: ${{ github.event_name != 'pull_request' || needs.check-skip.outputs.should-skip != 'true' }}
-    name: "Unit Test On ${{ matrix.os }} - jdk${{ matrix.java-version }}"
+    name: "Test on ${{ matrix.os }} / Go ${{ matrix.go-version }}"
     runs-on: ${{ matrix.os }}
-    continue-on-error: true
     strategy:
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
-        java-version: [17, 21]
+        go-version: [ "1.22", "1.23" ]
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK ${{ matrix.java-version }}
-        uses: actions/setup-java@v4
+      - name: Set up Go ${{ matrix.go-version }}
+        uses: actions/setup-go@v5
         with:
-          java-version: |
-            17
-            ${{ matrix.java-version }}
-          distribution: 'zulu'
+          go-version: ${{ matrix.go-version }}
 
-      - name: test
-        run: ./gradlew test --stacktrace
-
-      - name: package plugin
-        run: ./gradlew buildPlugin --stacktrace
-
-      - name: Cleanup Gradle Cache
-        if: runner.os == 'Linux' || runner.os == 'macOS'
+      - name: Test all modules
+        shell: bash
         run: |
-          rm -f ~/.gradle/caches/modules-2/modules-2.lock
-          rm -f ~/.gradle/caches/modules-2/gc.properties
+          for mod in api-collector api-formatter api-collector-go api-collector-java api-collector-node api-collector-python api-formatter-curl api-formatter-markdown api-formatter-postman api-master apilot-cli; do
+            if [ -f "$mod/go.mod" ]; then
+              echo "==> Testing $mod"
+              (cd "$mod" && go test ./... && go vet ./...)
+            fi
+          done
+
+      - name: Build apilot-cli
+        run: go build -o /dev/null ./apilot-cli
+        if: runner.os != 'Windows'
+
+      - name: Build apilot-cli (Windows)
+        run: go build -o NUL ./apilot-cli
+        if: runner.os == 'Windows'
