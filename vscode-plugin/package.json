@@ -1,0 +1,61 @@
+{
+  "name": "apilot",
+  "displayName": "APilot",
+  "description": "Export API documentation from source code — Markdown, cURL, Postman",
+  "version": "0.1.0",
+  "publisher": "tangcent",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onCommand:apilot.export"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "apilot.export",
+        "title": "APilot: Export"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        { "command": "apilot.export", "group": "navigation" }
+      ]
+    },
+    "configuration": {
+      "title": "APilot",
+      "properties": {
+        "apilot.formatter": {
+          "type": "string",
+          "enum": ["markdown", "curl", "postman"],
+          "default": "markdown",
+          "description": "Output format"
+        },
+        "apilot.outputDestination": {
+          "type": "string",
+          "enum": ["channel", "file"],
+          "default": "channel",
+          "description": "Where to write the output"
+        },
+        "apilot.outputFile": {
+          "type": "string",
+          "default": "",
+          "description": "Output file path (used when outputDestination is 'file')"
+        },
+        "apilot.binaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Custom path to apilot-cli binary (overrides bundled binary)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  }
+}

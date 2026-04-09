@@ -1,0 +1,40 @@
+{{- range . }}
+## {{ .Name }}
+
+**{{ .Method }}** `{{ .Path }}`
+
+{{ if .Description }}{{ .Description }}{{ end }}
+
+{{ if .Tags }}**Tags:** {{ range .Tags }}{{ . }} {{ end }}{{ end }}
+
+{{ if .Parameters }}
+### Parameters
+
+| Name | In | Type | Required | Default | Description |
+|------|----|------|----------|---------|-------------|
+{{ range .Parameters }}| {{ .Name }} | {{ .In }} | {{ .Type }} | {{ .Required }} | {{ .Default }} | {{ .Description }} |
+{{ end }}
+{{ end }}
+
+{{ if .RequestBody }}
+### Request Body
+
+**Media Type:** `{{ .RequestBody.MediaType }}`
+
+```json
+{{ .RequestBody.Example }}
+```
+{{ end }}
+
+{{ if .Response }}
+### Response
+
+**Media Type:** `{{ .Response.MediaType }}`
+
+```json
+{{ .Response.Example }}
+```
+{{ end }}
+
+---
+{{ end }}

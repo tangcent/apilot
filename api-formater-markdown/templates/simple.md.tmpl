@@ -1,0 +1,13 @@
+{{- range . }}
+## {{ .Method }} {{ .Path }}
+
+{{ if .Description }}{{ .Description }}{{ end }}
+
+{{ if .Parameters }}
+| Name | In | Type | Required | Description |
+|------|----|------|----------|-------------|
+{{ range .Parameters }}| {{ .Name }} | {{ .In }} | {{ .Type }} | {{ .Required }} | {{ .Description }} |
+{{ end }}
+{{ end }}
+---
+{{ end }}
