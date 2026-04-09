@@ -1,4 +1,4 @@
-module github.com/tangcent/apilot/api-master
+module github.com/tangcent/apilot/api-formatter-markdown
 
 go 1.22
 

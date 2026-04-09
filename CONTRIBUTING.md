@@ -66,7 +66,7 @@ See [docs/architecture.md](docs/architecture.md) for the full breakdown.
 
 ### Key Principles
 
-1. `api-collector` and `api-formater` are the only shared contracts — no module may import above its layer
+1. `api-collector` and `api-formatter` are the only shared contracts — no module may import above its layer
 2. Collectors return `nil, nil` (not an error) when no endpoints are found
 3. Formatters must return valid empty output for an empty endpoints slice
 4. External plugins use the stdin/stdout JSON protocol — see [docs/plugin-protocol.md](docs/plugin-protocol.md)
@@ -76,11 +76,11 @@ See [docs/architecture.md](docs/architecture.md) for the full breakdown.
 ```
 apilot/
 ├── api-collector/                  # Collector interface + ApiEndpoint model
-├── api-formater/                   # Formatter interface + FormatOptions
+├── api-formatter/                   # Formatter interface + FormatOptions
 ├── api-master/                     # Core engine: registry, plugin loader, orchestration
 ├── apilot-cli/                     # Bundled CLI: statically links all collectors + formatters
-├── api-collector-support-{lang}/   # Language-specific collectors
-├── api-formater-{name}/            # Output formatters
+├── api-collector-{lang}/   # Language-specific collectors
+├── api-formatter-{name}/            # Output formatters
 ├── vscode-plugin/                  # VSCode extension (TypeScript)
 └── docs/                           # Architecture and protocol documentation
 ```

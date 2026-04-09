@@ -1,4 +1,4 @@
-module github.com/tangcent/apilot/api-collector-support-java
+module github.com/tangcent/apilot/api-collector-go
 
 go 1.22
 

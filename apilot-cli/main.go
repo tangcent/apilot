@@ -7,15 +7,15 @@ import (
 	"github.com/tangcent/apilot/api-master/engine"
 
 	// Collectors
-	gocollector   "github.com/tangcent/apilot/api-collector-support-go"
-	javacollector "github.com/tangcent/apilot/api-collector-support-java"
-	nodecollector "github.com/tangcent/apilot/api-collector-support-node"
-	pycollector   "github.com/tangcent/apilot/api-collector-support-python"
+	gocollector   "github.com/tangcent/apilot/api-collector-go"
+	javacollector "github.com/tangcent/apilot/api-collector-java"
+	nodecollector "github.com/tangcent/apilot/api-collector-node"
+	pycollector   "github.com/tangcent/apilot/api-collector-python"
 
 	// Formatters
-	curlfmt    "github.com/tangcent/apilot/api-formater-curl"
-	mdfmt      "github.com/tangcent/apilot/api-formater-markdown"
-	postmanfmt "github.com/tangcent/apilot/api-formater-postman"
+	curlfmt    "github.com/tangcent/apilot/api-formatter-curl"
+	mdfmt      "github.com/tangcent/apilot/api-formatter-markdown"
+	postmanfmt "github.com/tangcent/apilot/api-formatter-postman"
 )
 
 func init() {

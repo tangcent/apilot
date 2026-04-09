@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/tangcent/apilot/api-collector/collector"
-	"github.com/tangcent/apilot/api-formater/formater"
+	"github.com/tangcent/apilot/api-formatter/formatter"
 )
 
 // Config holds the runtime configuration for a single engine run.
@@ -45,7 +45,7 @@ func Run(cfg Config) error {
 	}
 
 	// 4. Format
-	opts := formater.FormatOptions{Format: cfg.FormatVariant}
+	opts := formatter.FormatOptions{Format: cfg.FormatVariant}
 	output, err := f.Format(endpoints, opts)
 	if err != nil {
 		return fmt.Errorf("formatting failed: %w", err)

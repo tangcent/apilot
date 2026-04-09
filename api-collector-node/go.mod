@@ -1,4 +1,4 @@
-module github.com/tangcent/apilot/api-formater
+module github.com/tangcent/apilot/api-collector-node
 
 go 1.22
 

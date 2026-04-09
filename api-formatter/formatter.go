@@ -1,6 +1,6 @@
-// Package formater defines the stable interface contract for all API formatter implementations.
+// Package formatter defines the stable interface contract for all API formatter implementations.
 // A Formatter converts []ApiEndpoint into a specific output format (Markdown, cURL, Postman, etc.).
-package formater
+package formatter
 
 import "github.com/tangcent/apilot/api-collector/collector"
 

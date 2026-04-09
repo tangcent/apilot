@@ -8,7 +8,7 @@ import (
 	"text/template"
 
 	"github.com/tangcent/apilot/api-collector/collector"
-	"github.com/tangcent/apilot/api-formater/formater"
+	"github.com/tangcent/apilot/api-formatter/formatter"
 )
 
 //go:embed templates/simple.md.tmpl
@@ -21,7 +21,7 @@ var detailedTmpl string
 type MarkdownFormatter struct{}
 
 // New returns a new MarkdownFormatter.
-func New() formater.Formatter { return &MarkdownFormatter{} }
+func New() formatter.Formatter { return &MarkdownFormatter{} }
 
 func (f *MarkdownFormatter) Name() string { return "markdown" }
 
@@ -29,7 +29,7 @@ func (f *MarkdownFormatter) SupportedFormats() []string { return []string{"simpl
 
 // Format renders endpoints using the selected template variant.
 // An empty endpoints slice returns an empty Markdown document.
-func (f *MarkdownFormatter) Format(endpoints []collector.ApiEndpoint, opts formater.FormatOptions) ([]byte, error) {
+func (f *MarkdownFormatter) Format(endpoints []collector.ApiEndpoint, opts formatter.FormatOptions) ([]byte, error) {
 	variant := opts.Format
 	if variant == "" {
 		variant = "simple"

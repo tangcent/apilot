@@ -1,4 +1,4 @@
-module github.com/tangcent/apilot/api-master
+module github.com/tangcent/apilot/api-formatter-postman
 
 go 1.22
 

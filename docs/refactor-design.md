@@ -4,7 +4,7 @@
 
 This document describes the technical design for restructuring APilot into a multi-module, multi-language monorepo. The architecture separates concerns into three layers:
 
-1. **Go engine layer** — `api-collector`, `api-formater`, their implementations, `api-master`, and `apilot-cli`
+1. **Go engine layer** — `api-collector`, `api-formatter`, their implementations, `api-master`, and `apilot-cli`
 2. **IDE integration layer** — `jetbrains-plugin` (unchanged behavior) and `vscode-plugin` (new)
 3. **Shared model layer** — `ApiEndpoint` JSON contract that bridges collectors, formatters, and IDE extensions
 
@@ -99,7 +99,7 @@ func UnmarshalEndpoints(data []byte) ([]ApiEndpoint, error) { ... }
 
 ---
 
-### 2. `api-formater` — Formatter Interface Package
+### 2. `api-formatter` — Formatter Interface Package
 
 **Type:** Go module (interface-only, no executable)
 
@@ -107,7 +107,7 @@ func UnmarshalEndpoints(data []byte) ([]ApiEndpoint, error) { ... }
 
 ```go
 // formatter.go
-package formater
+package formatter
 
 import "github.com/tangcent/apilot/api-collector/collector"
 
@@ -235,13 +235,13 @@ package main
 
 import (
     "github.com/tangcent/apilot/api-master/engine"
-    javacollector  "github.com/tangcent/apilot/api-collector-support-java"
-    gocollector    "github.com/tangcent/apilot/api-collector-support-go"
-    nodecollector  "github.com/tangcent/apilot/api-collector-support-node"
-    pycollector    "github.com/tangcent/apilot/api-collector-support-python"
-    mdfmt          "github.com/tangcent/apilot/api-formater-markdown"
-    curlfmt        "github.com/tangcent/apilot/api-formater-curl"
-    postmanfmt     "github.com/tangcent/apilot/api-formater-postman"
+    javacollector  "github.com/tangcent/apilot/api-collector-java"
+    gocollector    "github.com/tangcent/apilot/api-collector-go"
+    nodecollector  "github.com/tangcent/apilot/api-collector-node"
+    pycollector    "github.com/tangcent/apilot/api-collector-python"
+    mdfmt          "github.com/tangcent/apilot/api-formatter-markdown"
+    curlfmt        "github.com/tangcent/apilot/api-formatter-curl"
+    postmanfmt     "github.com/tangcent/apilot/api-formatter-postman"
 )
 
 func init() {
@@ -270,29 +270,29 @@ func main() {
 Each collector follows the same structural pattern:
 
 ```
-api-collector-support-<lang>/
+api-collector-<lang>/
 ├── go.mod
 ├── collector.go      # New() constructor, implements Collector interface
 └── <framework>/
     └── parser.go     # framework-specific AST/regex parsing logic
 ```
 
-**Java collector (`api-collector-support-java`):**
+**Java collector (`api-collector-java`):**
 - Uses `go/ast` is not applicable for Java; instead uses a Java source parser library (e.g., `github.com/nicholasgasior/gsfmt` or a custom regex+heuristic parser, or invokes `javap`/`javac` via subprocess).
 - Preferred approach: invoke a bundled `maven-indexer-cli` subprocess for dependency resolution; parse source files with a lightweight Java grammar (e.g., `antlr4` generated parser or `tree-sitter-java` bindings).
 - Extracts: `@RestController`, `@RequestMapping`, `@GetMapping`, `@PostMapping`, `@PathVariable`, `@RequestParam`, `@RequestBody`, Javadoc.
 
-**Go collector (`api-collector-support-go`):**
+**Go collector (`api-collector-go`):**
 - Uses Go's standard `go/ast` and `go/parser` packages — no external dependency needed.
 - Walks AST for `gin.RouterGroup.GET/POST/...`, `echo.Echo.GET/POST/...`, `fiber.App.Get/Post/...` call expressions.
 - Extracts route path string literals and associated handler function doc comments.
 
-**Node.js collector (`api-collector-support-node`):**
+**Node.js collector (`api-collector-node`):**
 - Invokes `node` or `ts-node` subprocess, or uses a Go-based TypeScript/JS parser (e.g., `tree-sitter` with `tree-sitter-typescript`).
 - Preferred: `tree-sitter-typescript` Go bindings for zero external runtime dependency.
 - Extracts Express/Fastify route registrations and NestJS decorators.
 
-**Python collector (`api-collector-support-python`):**
+**Python collector (`api-collector-python`):**
 - Uses `tree-sitter-python` Go bindings.
 - Extracts FastAPI/Flask decorators and Django REST `urlpatterns`.
 
@@ -300,24 +300,24 @@ api-collector-support-<lang>/
 
 ### 6. Formatter Implementations
 
-**Markdown (`api-formater-markdown`):**
+**Markdown (`api-formatter-markdown`):**
 - Uses Go `text/template` with two embedded templates: `simple.md.tmpl` and `detailed.md.tmpl`.
 - `simple`: one section per endpoint, method + path headline, parameter list.
 - `detailed`: full schema expansion, request/response body as JSON code block.
 - Template selection driven by `FormatOptions.Config["format"]` (`"simple"` default).
 
-**cURL (`api-formater-curl`):**
+**cURL (`api-formatter-curl`):**
 - Pure string building, no template needed.
 - Output: one `curl` command per endpoint, separated by blank lines.
 - Query params appended to URL; body as `-d '{...}'`; headers as `-H 'Name: Value'`.
 
-**Postman (`api-formater-postman`):**
+**Postman (`api-formatter-postman`):**
 - Builds Postman Collection v2.1 JSON using typed Go structs in `model/` sub-package.
 - Groups endpoints by `ApiEndpoint.Folder` into Postman `ItemGroup` folders.
 - Uses `encoding/json` for final serialization.
 
 ```
-api-formater-postman/model/
+api-formatter-postman/model/
 ├── collection.go   # Collection, Info, Item, ItemGroup
 ├── request.go      # Request, URL, Header, Body
 └── response.go     # Response (example responses)
@@ -395,11 +395,11 @@ export function resolveBinary(config: Settings): string {
 | Module | Build Tool | Artifact |
 |---|---|---|
 | `api-collector` | `go build` | Go package (no binary) |
-| `api-formater` | `go build` | Go package (no binary) |
+| `api-formatter` | `go build` | Go package (no binary) |
 | `api-master` | `go build` | Binary per platform |
 | `apilot-cli` | `go build` | Binary per platform (5 targets) |
-| `api-collector-support-*` | `go build` | Go package (no binary) |
-| `api-formater-*` | `go build` | Go package (no binary) |
+| `api-collector-*` | `go build` | Go package (no binary) |
+| `api-formatter-*` | `go build` | Go package (no binary) |
 | `vscode-plugin` | `npm run compile` | VSIX package |
 | `jetbrains-plugin` | `./gradlew buildPlugin` | `.zip` plugin artifact |
 

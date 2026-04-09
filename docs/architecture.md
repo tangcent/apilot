@@ -14,13 +14,13 @@ APilot is a multi-module monorepo that parses API source code and exports docume
                        │ subprocess (vscode only)
 ┌──────────────────────▼──────────────────────────────────────┐
 │                      Go Engine Layer                         │
-│  apilot-cli  →  api-master  →  api-collector / api-formater│
+│  apilot-cli  →  api-master  →  api-collector / api-formatter│
 └──────────────────────┬──────────────────────────────────────┘
                        │ implements
 ┌──────────────────────▼──────────────────────────────────────┐
 │                   Collector / Formatter Modules              │
-│  api-collector-support-{java,go,node,python}                 │
-│  api-formater-{markdown,curl,postman}                        │
+│  api-collector-{java,go,node,python}                 │
+│  api-formatter-{markdown,curl,postman}                        │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -31,16 +31,16 @@ APilot is a multi-module monorepo that parses API source code and exports docume
 | Module | Language | Role |
 |--------|----------|------|
 | `api-collector` | Go | Collector interface + ApiEndpoint model |
-| `api-formater` | Go | Formatter interface + FormatOptions |
+| `api-formatter` | Go | Formatter interface + FormatOptions |
 | `api-master` | Go | Core engine: CLI, registry, plugin loader, orchestration |
 | `apilot-cli` | Go | Bundled CLI: statically links all collectors + formatters |
-| `api-collector-support-java` | Go | Java/Kotlin collector (Spring MVC, JAX-RS, Feign) |
-| `api-collector-support-go` | Go | Go collector (Gin, Echo, Fiber) |
-| `api-collector-support-node` | Go | Node.js collector (Express, Fastify, NestJS) |
-| `api-collector-support-python` | Go | Python collector (FastAPI, Django REST, Flask) |
-| `api-formater-markdown` | Go | Markdown formatter (simple + detailed templates) |
-| `api-formater-curl` | Go | cURL command formatter |
-| `api-formater-postman` | Go | Postman Collection v2.1 formatter |
+| `api-collector-java` | Go | Java/Kotlin collector (Spring MVC, JAX-RS, Feign) |
+| `api-collector-go` | Go | Go collector (Gin, Echo, Fiber) |
+| `api-collector-node` | Go | Node.js collector (Express, Fastify, NestJS) |
+| `api-collector-python` | Go | Python collector (FastAPI, Django REST, Flask) |
+| `api-formatter-markdown` | Go | Markdown formatter (simple + detailed templates) |
+| `api-formatter-curl` | Go | cURL command formatter |
+| `api-formatter-postman` | Go | Postman Collection v2.1 formatter |
 | `vscode-plugin` | TypeScript | VSCode extension: invokes apilot-cli as subprocess |
 | `jetbrains-plugin` | Kotlin | IntelliJ plugin: PSI-based, no Go dependency |
 
@@ -51,24 +51,24 @@ APilot is a multi-module monorepo that parses API source code and exports docume
 ```
 apilot-cli
   ├── api-master (engine + plugin runtime)
-  ├── api-collector-support-java
-  ├── api-collector-support-go
-  ├── api-collector-support-node
-  ├── api-collector-support-python
-  ├── api-formater-markdown
-  ├── api-formater-curl
-  └── api-formater-postman
+  ├── api-collector-java
+  ├── api-collector-go
+  ├── api-collector-node
+  ├── api-collector-python
+  ├── api-formatter-markdown
+  ├── api-formatter-curl
+  └── api-formatter-postman
 
 api-master
   ├── api-collector  (interface only)
-  └── api-formater   (interface only)
+  └── api-formatter   (interface only)
 
-api-collector-support-{java,go,node,python}
+api-collector-{java,go,node,python}
   └── api-collector
 
-api-formater-{markdown,curl,postman}
+api-formatter-{markdown,curl,postman}
   ├── api-collector  (for ApiEndpoint type)
-  └── api-formater
+  └── api-formatter
 
 vscode-plugin
   └── apilot-cli  (bundled binary, no Go import)
@@ -77,7 +77,7 @@ jetbrains-plugin
   └── (no dependency on any Go module)
 ```
 
-**Rule:** No module may import a module above it in the graph. `api-collector` and `api-formater` are the only shared contracts.
+**Rule:** No module may import a module above it in the graph. `api-collector` and `api-formatter` are the only shared contracts.
 
 ---
 
@@ -108,8 +108,8 @@ For subprocess plugins, `CollectContext` is written as JSON to the subprocess st
 
 ## Implementing a New Collector
 
-1. Create a new module directory: `api-collector-support-<lang>/`
-2. Add `go.mod` with module path `github.com/tangcent/apilot/api-collector-support-<lang>`
+1. Create a new module directory: `api-collector-<lang>/`
+2. Add `go.mod` with module path `github.com/tangcent/apilot/api-collector-<lang>`
 3. Declare dependency on `github.com/tangcent/apilot/api-collector`
 4. Create `collector.go` with a struct implementing `collector.Collector`:
    - `Name() string` — unique lowercase identifier (e.g. `"rust"`)
@@ -130,9 +130,9 @@ For subprocess plugins, `CollectContext` is written as JSON to the subprocess st
 
 ## Implementing a New Formatter
 
-1. Create a new module directory: `api-formater-<name>/`
-2. Add `go.mod` with module path `github.com/tangcent/apilot/api-formater-<name>`
-3. Declare dependencies on `api-collector` and `api-formater`
+1. Create a new module directory: `api-formatter-<name>/`
+2. Add `go.mod` with module path `github.com/tangcent/apilot/api-formatter-<name>`
+3. Declare dependencies on `api-collector` and `api-formatter`
 4. Create `formatter.go` with a struct implementing `formater.Formatter`:
    - `Name() string` — unique lowercase identifier (e.g. `"openapi"`)
    - `SupportedFormats() []string` — format variant names
@@ -160,7 +160,7 @@ Register in `~/.config/api-master/plugins.json`:
     {
       "name": "rust",
       "type": "collector",
-      "command": "api-collector-support-rust",
+      "command": "api-collector-rust",
       "args": []
     }
   ]

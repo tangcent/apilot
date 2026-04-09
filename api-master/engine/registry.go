@@ -4,12 +4,12 @@ import (
 	"fmt"
 
 	"github.com/tangcent/apilot/api-collector/collector"
-	"github.com/tangcent/apilot/api-formater/formater"
+	"github.com/tangcent/apilot/api-formatter/formatter"
 )
 
 var (
 	collectors = map[string]collector.Collector{}
-	formatters = map[string]formater.Formatter{}
+	formatters = map[string]formatter.Formatter{}
 )
 
 // RegisterCollector adds a Collector to the in-process registry.
@@ -18,7 +18,7 @@ func RegisterCollector(c collector.Collector) {
 }
 
 // RegisterFormatter adds a Formatter to the in-process registry.
-func RegisterFormatter(f formater.Formatter) {
+func RegisterFormatter(f formatter.Formatter) {
 	formatters[f.Name()] = f
 }
 
@@ -32,7 +32,7 @@ func LookupCollector(name string) (collector.Collector, error) {
 }
 
 // LookupFormatter returns the named Formatter or an error if not found.
-func LookupFormatter(name string) (formater.Formatter, error) {
+func LookupFormatter(name string) (formatter.Formatter, error) {
 	f, ok := formatters[name]
 	if !ok {
 		return nil, fmt.Errorf("formatter %q not registered", name)

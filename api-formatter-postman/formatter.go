@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/tangcent/apilot/api-collector/collector"
-	"github.com/tangcent/apilot/api-formater/formater"
-	"github.com/tangcent/apilot/api-formater-postman/model"
+	"github.com/tangcent/apilot/api-formatter/formatter"
+	"github.com/tangcent/apilot/api-formatter-postman/model"
 )
 
 const postmanSchema = "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
@@ -16,7 +16,7 @@ const postmanSchema = "https://schema.getpostman.com/json/collection/v2.1.0/coll
 type PostmanFormatter struct{}
 
 // New returns a new PostmanFormatter.
-func New() formater.Formatter { return &PostmanFormatter{} }
+func New() formatter.Formatter { return &PostmanFormatter{} }
 
 func (f *PostmanFormatter) Name() string { return "postman" }
 
@@ -25,7 +25,7 @@ func (f *PostmanFormatter) SupportedFormats() []string { return []string{"postma
 // Format converts endpoints into a Postman Collection v2.1 JSON document.
 // Endpoints are grouped by their Folder field into Postman folders.
 // An empty endpoints slice returns a valid empty collection.
-func (f *PostmanFormatter) Format(endpoints []collector.ApiEndpoint, opts formater.FormatOptions) ([]byte, error) {
+func (f *PostmanFormatter) Format(endpoints []collector.ApiEndpoint, opts formatter.FormatOptions) ([]byte, error) {
 	name := opts.Config["name"]
 	if name == "" {
 		name = "APilot Export"

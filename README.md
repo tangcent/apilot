@@ -131,11 +131,11 @@ APilot is a multi-module Go monorepo with a clean three-layer design:
 ```
 apilot-cli  (bundled binary)
   └── api-master  (engine + plugin runtime)
-        ├── api-collector-support-{java,go,node,python}
-        └── api-formater-{markdown,curl,postman}
+        ├── api-collector-{java,go,node,python}
+        └── api-formatter-{markdown,curl,postman}
 ```
 
-The `api-collector` and `api-formater` packages define the stable interfaces. Everything else is an implementation. See [docs/architecture.md](docs/architecture.md) for the full breakdown.
+The `api-collector` and `api-formatter` packages define the stable interfaces. Everything else is an implementation. See [docs/architecture.md](docs/architecture.md) for the full breakdown.
 
 ---
 

@@ -1,4 +1,4 @@
-module github.com/tangcent/apilot/api-master
+module github.com/tangcent/apilot/api-formatter-curl
 
 go 1.22
 

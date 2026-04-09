@@ -8,7 +8,7 @@ import (
 	"os/exec"
 
 	"github.com/tangcent/apilot/api-collector/collector"
-	"github.com/tangcent/apilot/api-formater/formater"
+	"github.com/tangcent/apilot/api-formatter/formatter"
 )
 
 // subprocessCollector wraps an external binary as a collector.Collector.
@@ -42,12 +42,12 @@ func (s *subprocessCollector) Collect(ctx collector.CollectContext) ([]collector
 	return collector.UnmarshalEndpoints(out)
 }
 
-// subprocessFormatter wraps an external binary as a formater.Formatter.
+// subprocessFormatter wraps an external binary as a formatter.Formatter.
 type subprocessFormatter struct {
 	manifest PluginManifest
 }
 
-func newSubprocessFormatter(m PluginManifest) (formater.Formatter, error) {
+func newSubprocessFormatter(m PluginManifest) (formatter.Formatter, error) {
 	if err := checkExecutable(m); err != nil {
 		return nil, err
 	}
@@ -61,10 +61,10 @@ func (s *subprocessFormatter) SupportedFormats() []string {
 	return nil
 }
 
-func (s *subprocessFormatter) Format(endpoints []collector.ApiEndpoint, opts formater.FormatOptions) ([]byte, error) {
+func (s *subprocessFormatter) Format(endpoints []collector.ApiEndpoint, opts formatter.FormatOptions) ([]byte, error) {
 	envelope := struct {
 		Endpoints []collector.ApiEndpoint `json:"endpoints"`
-		Options   formater.FormatOptions  `json:"options"`
+		Options   formatter.FormatOptions  `json:"options"`
 	}{Endpoints: endpoints, Options: opts}
 
 	input, err := json.Marshal(envelope)
