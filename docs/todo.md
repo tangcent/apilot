@@ -125,6 +125,6 @@
 - [ ] Update `docs/architecture.md` — fix CI pipeline table to reflect actual workflow filenames (`ci.yml`, `co.yml`)
 - [ ] Update `docs/architecture.md` — fix config dir reference from `~/.config/api-master/` to `~/.config/apilot/`
 - [ ] Update `docs/architecture.md` — fix build commands to use `apilot` binary name (not `apilot-cli`)
-- [ ] Remove `docs/apilot-readme-draft.md` — content has been merged into `README.md`
-- [ ] Add `docs/contributing-collectors.md` — step-by-step guide for adding a new language collector
-- [ ] Add `docs/contributing-formatters.md` — step-by-step guide for adding a new output formatter
+- [X] Remove `docs/apilot-readme-draft.md` — content has been merged into `README.md`
+- [X] Add `docs/contributing-collectors.md` — step-by-step guide for adding a new language collector
+- [X] Add `docs/contributing-formatters.md` — step-by-step guide for adding a new output formatter
