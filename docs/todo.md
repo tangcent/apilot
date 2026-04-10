@@ -9,13 +9,13 @@
 
 ### api-master
 
-- [ ] Implement `RunCLI()` in `engine/engine.go` — flag parsing for `--collector`, `--formatter`, `--format`, `--output`, `--plugin-registry`, `--list-collectors`, `--list-formatters`
-- [ ] Implement auto-detection logic in `engine/engine.go` — scan source dir for indicator files (`pom.xml`, `go.mod`, `package.json`, etc.) and select the matching collector
-- [ ] Implement `plugin/registry.go` — load `plugins.json` from default path (`~/.config/apilot/plugins.json`) or `--plugin-registry` flag, register valid entries, log and skip invalid ones
-- [ ] Implement `plugin/subprocess.go` — `SupportedLanguages()` / `SupportedFormats()` via subprocess `--supported-languages` / `--supported-formats` flags
-- [ ] Implement `plugin/dynlib.go` — shared library (`.so`/`.dylib`/`.dll`) loader via CGO `dlopen` (v2, deferred)
-- [ ] Write unit tests for `engine/engine.go` — happy path, missing collector, missing formatter, auto-detect
-- [ ] Write unit tests for `plugin/registry.go` — valid registry, missing binary, unknown type, empty file
+- [X] Implement `RunCLI()` in `engine/engine.go` — flag parsing for `--collector`, `--formatter`, `--format`, `--output`, `--plugin-registry`, `--list-collectors`, `--list-formatters`
+- [X] Implement auto-detection logic in `engine/engine.go` — scan source dir for indicator files (`pom.xml`, `go.mod`, `package.json`, etc.) and select the matching collector
+- [X] Implement `plugin/registry.go` — load `plugins.json` from default path (`~/.config/apilot/plugins.json`) or `--plugin-registry` flag, register valid entries, log and skip invalid ones
+- [X] Implement `plugin/subprocess.go` — `SupportedLanguages()` / `SupportedFormats()` via subprocess `--supported-languages` / `--supported-formats` flags
+- [X] Implement `plugin/dynlib.go` — shared library (`.so`/`.dylib`/`.dll`) loader via CGO `dlopen` (v2, deferred)
+- [X] Write unit tests for `engine/engine.go` — happy path, missing collector, missing formatter, auto-detect
+- [X] Write unit tests for `plugin/registry.go` — valid registry, missing binary, unknown type, empty file
 
 ### apilot-cli
 
