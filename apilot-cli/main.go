@@ -1,18 +1,17 @@
-// apilot-cli is the batteries-included CLI binary.
-// It statically links all built-in collectors and formatters and delegates to the api-master engine.
-// No external plugin registry is required for standard use.
 package main
 
 import (
-	"github.com/tangcent/apilot/api-master/engine"
+	"fmt"
+	"os"
 
-	// Collectors
+	"github.com/tangcent/apilot/api-master/engine"
+	"github.com/tangcent/apilot/apilot-cli/build"
+
 	gocollector   "github.com/tangcent/apilot/api-collector-go"
 	javacollector "github.com/tangcent/apilot/api-collector-java"
 	nodecollector "github.com/tangcent/apilot/api-collector-node"
 	pycollector   "github.com/tangcent/apilot/api-collector-python"
 
-	// Formatters
 	curlfmt    "github.com/tangcent/apilot/api-formatter-curl"
 	mdfmt      "github.com/tangcent/apilot/api-formatter-markdown"
 	postmanfmt "github.com/tangcent/apilot/api-formatter-postman"
@@ -30,5 +29,12 @@ func init() {
 }
 
 func main() {
+	for _, arg := range os.Args[1:] {
+		if arg == "--version" || arg == "-v" {
+			fmt.Printf("apilot %s (built %s)\n", build.Version, build.Date)
+			os.Exit(0)
+		}
+	}
+
 	engine.RunCLI()
 }

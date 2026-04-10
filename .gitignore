@@ -1,5 +1,5 @@
 .gradle/
-build/
+/build/
 .idea/
 .kotlin/
 *.jar
@@ -12,6 +12,8 @@ bin/
 .bin/
 .intellijPlatform/
 .DS_Store
+.cursor/
+.claude/
 .kiro/
 .trae/
 .qodo/
