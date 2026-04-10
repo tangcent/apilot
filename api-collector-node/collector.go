@@ -2,7 +2,7 @@
 // Supported frameworks: Express, Fastify, NestJS.
 package nodecollector
 
-import "github.com/tangcent/apilot/api-collector/collector"
+import "github.com/tangcent/apilot/api-collector"
 
 // NodeCollector parses TypeScript/JavaScript source trees for API route definitions.
 type NodeCollector struct{}

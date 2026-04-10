@@ -21,7 +21,7 @@ FAILED=()
 for mod in "${MODULES[@]}"; do
   if [ -f "$mod/go.mod" ]; then
     echo "==> Testing $mod..."
-    if ! go test ./... 2>&1; then
+    if ! (cd "$mod" && go test ./...) 2>&1; then
       FAILED+=("$mod")
     fi
   else

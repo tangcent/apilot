@@ -1,7 +1,7 @@
 // Package gin parses Gin route registrations using Go's standard go/ast package.
 package gin
 
-import "github.com/tangcent/apilot/api-collector/collector"
+import "github.com/tangcent/apilot/api-collector"
 
 // Parse extracts endpoints from Gin route registrations in the given source directory.
 // It walks the AST for gin.RouterGroup.GET/POST/PUT/DELETE/PATCH/HEAD/OPTIONS calls.

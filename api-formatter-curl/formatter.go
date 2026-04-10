@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tangcent/apilot/api-collector/collector"
-	"github.com/tangcent/apilot/api-formatter/formatter"
+	"github.com/tangcent/apilot/api-collector"
+	"github.com/tangcent/apilot/api-formatter"
 )
 
 // CurlFormatter formats endpoints as cURL commands.
