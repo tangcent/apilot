@@ -2,31 +2,61 @@ package plugin
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	fmtr "github.com/tangcent/apilot/api-formatter"
 )
 
-func TestSubprocessCollector_SupportedLanguages(t *testing.T) {
-	tmpDir := t.TempDir()
-	scriptPath := filepath.Join(tmpDir, "test-collector")
+// binaries holds paths to compiled test helper binaries, built once in TestMain.
+var binaries = map[string]string{}
 
-	script := `#!/bin/bash
-if [ "$1" = "--supported-languages" ]; then
-    echo '["java", "kotlin"]'
-else
-    echo '[]'
-fi
-`
-	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
-		t.Fatalf("Failed to create script: %v", err)
+// TestMain builds all fake subprocess binaries before running tests.
+// This is the cross-platform alternative to writing shell scripts.
+func TestMain(m *testing.M) {
+	tmpDir, err := os.MkdirTemp("", "apilot-plugin-test-*")
+	if err != nil {
+		panic("failed to create temp dir: " + err.Error())
+	}
+	defer os.RemoveAll(tmpDir)
+
+	helpers := []string{
+		"fake-collector",
+		"fake-formatter",
+		"fake-plugin-invalid-json",
+		"fake-plugin-empty-array",
+		"fake-plugin-with-args",
 	}
 
+	// Resolve the package directory so paths work regardless of working directory.
+	_, thisFile, _, _ := runtime.Caller(0)
+	pkgDir := filepath.Dir(thisFile)
+
+	for _, name := range helpers {
+		binPath := filepath.Join(tmpDir, name)
+		if runtime.GOOS == "windows" {
+			binPath += ".exe"
+		}
+		srcDir := filepath.Join(pkgDir, "testdata", name)
+		cmd := exec.Command("go", "build", "-o", binPath, srcDir)
+		cmd.Stdout = os.Stderr
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			panic("failed to build " + name + ": " + err.Error())
+		}
+		binaries[name] = binPath
+	}
+
+	os.Exit(m.Run())
+}
+
+func TestSubprocessCollector_SupportedLanguages(t *testing.T) {
 	manifest := PluginManifest{
 		Name:    "test-collector",
 		Type:    "collector",
-		Command: scriptPath,
+		Command: binaries["fake-collector"],
 	}
 
 	collector, err := newSubprocessCollector(manifest)
@@ -62,23 +92,10 @@ func TestSubprocessCollector_SupportedLanguages_Error(t *testing.T) {
 }
 
 func TestSubprocessFormatter_Format_PassesParams(t *testing.T) {
-	tmpDir := t.TempDir()
-	scriptPath := filepath.Join(tmpDir, "test-formatter")
-
-	// Script echoes back the received params field so we can assert it was forwarded.
-	script := `#!/bin/bash
-input=$(cat)
-echo "$input" > /tmp/apilot_test_input.json
-echo -n "ok"
-`
-	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
-		t.Fatalf("Failed to create script: %v", err)
-	}
-
 	manifest := PluginManifest{
 		Name:    "test-formatter",
 		Type:    "formatter",
-		Command: scriptPath,
+		Command: binaries["fake-formatter"],
 	}
 
 	formatter, err := newSubprocessFormatter(manifest)
@@ -95,35 +112,19 @@ echo -n "ok"
 	}
 }
 
-func TestSubprocessFormatter_SupportedFormats_Error(t *testing.T) {
-	manifest := PluginManifest{
-		Name:    "test-formatter",
-		Type:    "formatter",
-		Command: "/nonexistent/binary",
-	}
-
+func TestSubprocessFormatter_SatisfiesInterface(t *testing.T) {
 	// SupportedFormats was removed from the Formatter interface.
-	// Verify the subprocess formatter still satisfies the interface.
-	f := &subprocessFormatter{manifest: manifest}
+	// Verify the subprocess formatter still satisfies it.
+	f := &subprocessFormatter{manifest: PluginManifest{Name: "test-formatter"}}
 	if f.Name() != "test-formatter" {
 		t.Errorf("Expected name 'test-formatter', got: %q", f.Name())
 	}
 }
 
 func TestQuerySubprocessFlag_InvalidJSON(t *testing.T) {
-	tmpDir := t.TempDir()
-	scriptPath := filepath.Join(tmpDir, "test-plugin")
-
-	script := `#!/bin/bash
-echo 'invalid json'
-`
-	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
-		t.Fatalf("Failed to create script: %v", err)
-	}
-
 	manifest := PluginManifest{
 		Name:    "test-plugin",
-		Command: scriptPath,
+		Command: binaries["fake-plugin-invalid-json"],
 	}
 
 	result, err := querySubprocessFlag(manifest, "--test-flag")
@@ -133,19 +134,9 @@ echo 'invalid json'
 }
 
 func TestQuerySubprocessFlag_EmptyArray(t *testing.T) {
-	tmpDir := t.TempDir()
-	scriptPath := filepath.Join(tmpDir, "test-plugin")
-
-	script := `#!/bin/bash
-echo '[]'
-`
-	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
-		t.Fatalf("Failed to create script: %v", err)
-	}
-
 	manifest := PluginManifest{
 		Name:    "test-plugin",
-		Command: scriptPath,
+		Command: binaries["fake-plugin-empty-array"],
 	}
 
 	result, err := querySubprocessFlag(manifest, "--test-flag")
@@ -158,23 +149,9 @@ echo '[]'
 }
 
 func TestQuerySubprocessFlag_WithArgs(t *testing.T) {
-	tmpDir := t.TempDir()
-	scriptPath := filepath.Join(tmpDir, "test-plugin")
-
-	script := `#!/bin/bash
-if [ "$1" = "--arg1" ] && [ "$2" = "--supported-languages" ]; then
-    echo '["test"]'
-else
-    echo '[]'
-fi
-`
-	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
-		t.Fatalf("Failed to create script: %v", err)
-	}
-
 	manifest := PluginManifest{
 		Name:    "test-plugin",
-		Command: scriptPath,
+		Command: binaries["fake-plugin-with-args"],
 		Args:    []string{"--arg1"},
 	}
 
