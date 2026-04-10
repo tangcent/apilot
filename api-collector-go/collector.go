@@ -2,7 +2,7 @@
 // Supported frameworks: Gin, Echo, Fiber.
 package gocollector
 
-import "github.com/tangcent/apilot/api-collector/collector"
+import "github.com/tangcent/apilot/api-collector"
 
 // GoCollector parses Go source trees for API route registrations.
 type GoCollector struct{}

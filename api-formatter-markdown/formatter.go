@@ -7,8 +7,8 @@ import (
 	"bytes"
 	"text/template"
 
-	"github.com/tangcent/apilot/api-collector/collector"
-	"github.com/tangcent/apilot/api-formatter/formatter"
+	"github.com/tangcent/apilot/api-collector"
+	"github.com/tangcent/apilot/api-formatter"
 )
 
 //go:embed templates/simple.md.tmpl

@@ -2,7 +2,7 @@
 // Supported frameworks: Spring MVC, JAX-RS, Feign.
 package javacollector
 
-import "github.com/tangcent/apilot/api-collector/collector"
+import "github.com/tangcent/apilot/api-collector"
 
 // JavaCollector parses Java/Kotlin source trees for API endpoints.
 type JavaCollector struct{}

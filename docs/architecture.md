@@ -152,7 +152,7 @@ For subprocess plugins, `CollectContext` is written as JSON to the subprocess st
 
 Any binary that speaks the stdin/stdout JSON protocol can be registered as a plugin without recompiling `apilot-cli`. See [plugin-protocol.md](plugin-protocol.md).
 
-Register in `~/.config/api-master/plugins.json`:
+Register in `~/.config/apilot/plugins.json`:
 
 ```json
 {
@@ -174,12 +174,12 @@ Register in `~/.config/api-master/plugins.json`:
 ### Go modules
 
 ```bash
-# Build apilot-cli for all platforms
-GOOS=linux   GOARCH=amd64 go build -o bin/apilot-cli-linux-amd64   ./apilot-cli
-GOOS=linux   GOARCH=arm64 go build -o bin/apilot-cli-linux-arm64   ./apilot-cli
-GOOS=darwin  GOARCH=amd64 go build -o bin/apilot-cli-darwin-amd64  ./apilot-cli
-GOOS=darwin  GOARCH=arm64 go build -o bin/apilot-cli-darwin-arm64  ./apilot-cli
-GOOS=windows GOARCH=amd64 go build -o bin/apilot-cli-windows-amd64.exe ./apilot-cli
+# Build apilot for all platforms
+GOOS=linux   GOARCH=amd64 go build -o bin/apilot-linux-amd64   ./apilot-cli
+GOOS=linux   GOARCH=arm64 go build -o bin/apilot-linux-arm64   ./apilot-cli
+GOOS=darwin  GOARCH=amd64 go build -o bin/apilot-darwin-amd64  ./apilot-cli
+GOOS=darwin  GOARCH=arm64 go build -o bin/apilot-darwin-arm64  ./apilot-cli
+GOOS=windows GOARCH=amd64 go build -o bin/apilot-windows-amd64.exe ./apilot-cli
 ```
 
 ### VSCode extension
@@ -206,9 +206,8 @@ cd jetbrains-plugin
 
 | Workflow | Trigger | What it does |
 |----------|---------|--------------|
-| `.github/workflows/ci-go.yml` | push / PR | `go test ./...` + `go vet ./...` for all Go modules |
-| `.github/workflows/ci-jetbrains.yml` | push / PR | `./gradlew test buildPlugin` |
-| `.github/workflows/ci-vscode.yml` | push / PR | `npm ci && npm run compile && npm test` |
+| `.github/workflows/ci.yml` | push / PR | `go test ./...` + `go vet ./...` for all Go modules |
+| `.github/workflows/co.yml` | push / PR | Coverage report upload to Codecov |
 
 ---
 

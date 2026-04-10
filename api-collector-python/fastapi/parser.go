@@ -1,7 +1,7 @@
 // Package fastapi parses FastAPI decorated route functions.
 package fastapi
 
-import "github.com/tangcent/apilot/api-collector/collector"
+import "github.com/tangcent/apilot/api-collector"
 
 // Parse extracts endpoints from FastAPI @app.get, @router.post, etc. decorated functions.
 func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {

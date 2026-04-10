@@ -2,7 +2,7 @@
 // Supported frameworks: FastAPI, Django REST Framework, Flask.
 package pycollector
 
-import "github.com/tangcent/apilot/api-collector/collector"
+import "github.com/tangcent/apilot/api-collector"
 
 // PythonCollector parses Python source trees for API route definitions.
 type PythonCollector struct{}

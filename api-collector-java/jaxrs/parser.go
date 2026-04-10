@@ -1,7 +1,7 @@
 // Package jaxrs parses JAX-RS annotated classes for API endpoints.
 package jaxrs
 
-import "github.com/tangcent/apilot/api-collector/collector"
+import "github.com/tangcent/apilot/api-collector"
 
 // Parse extracts endpoints from JAX-RS annotated source files under sourceDir.
 // It looks for @Path, @GET, @POST, @PUT, @DELETE, @Produces, @Consumes.

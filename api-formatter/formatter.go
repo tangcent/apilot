@@ -2,7 +2,7 @@
 // A Formatter converts []ApiEndpoint into a specific output format (Markdown, cURL, Postman, etc.).
 package formatter
 
-import "github.com/tangcent/apilot/api-collector/collector"
+import "github.com/tangcent/apilot/api-collector"
 
 // Formatter is the interface every output formatter must implement.
 type Formatter interface {
