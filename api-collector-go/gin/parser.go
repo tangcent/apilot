@@ -1,7 +1,8 @@
 // Package gin parses Gin route registrations using Go's standard go/ast package.
 // It walks Go source files for gin.RouterGroup and gin.Engine method calls
 // (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS) and extracts endpoint metadata
-// including path, HTTP method, handler name, and doc comments.
+// including path, HTTP method, handler name, doc comments, parameters,
+// request body, and response body.
 package gin
 
 import (
@@ -29,27 +30,31 @@ var httpMethods = map[string]bool{
 
 // Parse extracts endpoints from Gin route registrations in the given source directory.
 //
-// It performs three passes over the parsed AST files:
-//  1. Collect function doc comments — builds a map from function name to its
+// It performs the following extractions per file:
+//  1. Function doc comments — builds a map from function name to its
 //     Go doc comment text, used later to populate ApiEndpoint.Description.
-//  2. Collect RouterGroup prefixes — finds assignments like
+//  2. Handler body analysis — inspects each function's body for gin.Context
+//     method calls to discover query params, form params, file params,
+//     request body bindings, and response writes.
+//  3. RouterGroup prefixes — finds assignments like
 //     `v1 := r.Group("/v1")` and records the variable-to-prefix mapping,
 //     so that subsequent route calls on that variable (e.g. `v1.GET("/users", ...)`)
 //     resolve to the full path `/v1/users`.
-//  3. Extract route registrations — finds method calls matching the Gin HTTP
+//  4. Route registrations — finds method calls matching the Gin HTTP
 //     method names (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS) and extracts
 //     the path (first argument as a string literal), HTTP method (from the call
 //     selector name), handler function name, and the handler's doc comment.
 //
+// After merging per-file results, path parameters are extracted from the route
+// path string (e.g. `/users/:id` → path param "id"), and the handler body
+// analysis is applied to populate Parameters, RequestBody, and Response.
+//
 // Memory optimization:
 //   - Files are discovered first via filepath.Walk, then parsed and processed
 //     one at a time in goroutines. Each goroutine processes a single file and
-//     sends its partial results (func docs, group prefixes, endpoints) through
-//     channels, so we never hold all ASTs in memory simultaneously beyond what
-//     is needed for the current file.
-//   - The func-doc and group-prefix maps are merged incrementally as results
-//     arrive; endpoint extraction is deferred until all files have contributed
-//     their prefix information.
+//     sends its partial results through channels, so we never hold all ASTs in
+//     memory simultaneously beyond what is needed for the current file.
+//   - Maps are merged incrementally as results arrive.
 //
 // Per the collector contract:
 //   - Returns nil, nil (not an error) when no endpoints are found.
@@ -79,6 +84,7 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 
 	funcDocs := make(map[string]string)
 	groupPrefixes := make(map[string]string)
+	handlerAnalyses := make(map[string]handlerAnalysis)
 	var allRaw []rawEndpoint
 
 	for res := range ch {
@@ -87,6 +93,9 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 		}
 		for k, v := range res.groupPrefixes {
 			groupPrefixes[k] = v
+		}
+		for k, v := range res.handlerAnalyses {
+			handlerAnalyses[k] = v
 		}
 		allRaw = append(allRaw, res.rawEndpoints...)
 	}
@@ -103,25 +112,89 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 			path = prefix + path
 		}
 
-		description := ""
-		if raw.handlerName != "" {
-			shortName := raw.handlerName
-			if idx := strings.LastIndex(shortName, "."); idx >= 0 {
-				shortName = shortName[idx+1:]
-			}
-			description = funcDocs[shortName]
+		handlerKey := raw.handlerName
+		if idx := strings.LastIndex(handlerKey, "."); idx >= 0 {
+			handlerKey = handlerKey[idx+1:]
 		}
 
-		endpoints = append(endpoints, collector.ApiEndpoint{
+		ep := collector.ApiEndpoint{
 			Name:        raw.handlerName,
 			Path:        path,
 			Method:      raw.method,
 			Protocol:    "http",
-			Description: description,
-		})
+			Description: funcDocs[handlerKey],
+		}
+
+		pathParams := extractPathParams(path)
+
+		paramSet := make(map[string]bool)
+		var params []collector.ApiParameter
+		for _, p := range pathParams {
+			params = append(params, collector.ApiParameter{
+				Name:     p.name,
+				In:       p.in,
+				Required: p.required,
+				Type:     p.typ,
+			})
+			paramSet[p.name+"|"+p.in] = true
+		}
+
+		analysis := handlerAnalyses[handlerKey]
+		for _, p := range analysis.params {
+			key := p.name + "|" + p.in
+			if !paramSet[key] {
+				params = append(params, collector.ApiParameter{
+					Name:     p.name,
+					In:       p.in,
+					Required: p.required,
+					Type:     p.typ,
+					Default:  p.def,
+				})
+				paramSet[key] = true
+			}
+		}
+
+		if len(params) > 0 {
+			ep.Parameters = params
+		}
+
+		if analysis.requestBody != nil {
+			ep.RequestBody = &collector.ApiBody{
+				MediaType: analysis.requestBody.mediaType,
+			}
+			if analysis.requestBody.typeName != "" {
+				ep.RequestBody.Schema = map[string]string{"type": analysis.requestBody.typeName}
+			}
+		}
+
+		if analysis.response != nil {
+			ep.Response = &collector.ApiBody{
+				MediaType: analysis.response.mediaType,
+			}
+			if analysis.response.typeName != "" {
+				ep.Response.Schema = map[string]string{"type": analysis.response.typeName}
+			}
+		}
+
+		endpoints = append(endpoints, ep)
 	}
 
 	return endpoints, nil
+}
+
+// rawParam holds parameter info extracted from handler body or path string.
+type rawParam struct {
+	name     string
+	in       string // "path", "query", "form", "header", "cookie"
+	required bool
+	def      string
+	typ      string // "text" or "file"
+}
+
+// rawBody holds request/response body info extracted from handler body.
+type rawBody struct {
+	mediaType string
+	typeName  string
 }
 
 // rawEndpoint holds the raw data extracted from a single route-registration call
@@ -133,11 +206,19 @@ type rawEndpoint struct {
 	receiverVar string
 }
 
+// handlerAnalysis holds the extracted info from analyzing a handler function body.
+type handlerAnalysis struct {
+	params      []rawParam
+	requestBody *rawBody
+	response    *rawBody
+}
+
 // fileResult holds the per-file extraction output produced by processFile.
 type fileResult struct {
-	funcDocs      map[string]string
-	groupPrefixes map[string]string
-	rawEndpoints  []rawEndpoint
+	funcDocs        map[string]string
+	groupPrefixes   map[string]string
+	rawEndpoints    []rawEndpoint
+	handlerAnalyses map[string]handlerAnalysis
 }
 
 // discoverGoFiles walks sourceDir and returns paths to all non-test .go files.
@@ -161,6 +242,7 @@ func discoverGoFiles(sourceDir string) ([]string, error) {
 
 // processFile parses a single Go source file and extracts:
 //   - funcDocs: map of function names to their doc comment text
+//   - handlerAnalyses: map of function names to their handler body analysis
 //   - groupPrefixes: map of variable names to their RouterGroup prefix
 //   - rawEndpoints: route registrations found in this file
 func processFile(filePath string) fileResult {
@@ -171,12 +253,24 @@ func processFile(filePath string) fileResult {
 	}
 
 	funcDocs := make(map[string]string)
+	handlerAnalyses := make(map[string]handlerAnalysis)
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Doc == nil {
+		if !ok {
 			continue
 		}
-		funcDocs[fn.Name.Name] = strings.TrimSpace(fn.Doc.Text())
+		name := fn.Name.Name
+		if fn.Doc != nil {
+			funcDocs[name] = strings.TrimSpace(fn.Doc.Text())
+		}
+		params, reqBody, respBody := analyzeHandlerBody(fn)
+		if len(params) > 0 || reqBody != nil || respBody != nil {
+			handlerAnalyses[name] = handlerAnalysis{
+				params:      params,
+				requestBody: reqBody,
+				response:    respBody,
+			}
+		}
 	}
 
 	groupPrefixes := make(map[string]string)
@@ -236,10 +330,218 @@ func processFile(filePath string) fileResult {
 	})
 
 	return fileResult{
-		funcDocs:      funcDocs,
-		groupPrefixes: groupPrefixes,
-		rawEndpoints:  rawEndpoints,
+		funcDocs:        funcDocs,
+		groupPrefixes:   groupPrefixes,
+		rawEndpoints:    rawEndpoints,
+		handlerAnalyses: handlerAnalyses,
 	}
+}
+
+// analyzeHandlerBody inspects the handler function body to extract query params,
+// form params, file params, header params, request body bindings, and response
+// writes by walking gin.Context method calls.
+//
+// Recognized gin.Context methods:
+//   - Query / DefaultQuery / GetQuery       → query parameter
+//   - PostForm / DefaultPostForm / GetPostForm → form parameter
+//   - FormFile                               → file parameter (type="file")
+//   - GetHeader                              → header parameter
+//   - Cookie                                 → cookie parameter
+//   - ShouldBindJSON / BindJSON              → JSON request body
+//   - ShouldBindXML / BindXML                → XML request body
+//   - ShouldBind / Bind                      → request body (auto-detect)
+//   - JSON                                   → JSON response
+//   - XML                                    → XML response
+//   - String                                 → text/plain response
+//   - Data                                   → binary response (application/octet-stream)
+func analyzeHandlerBody(fn *ast.FuncDecl) ([]rawParam, *rawBody, *rawBody) {
+	if fn.Body == nil {
+		return nil, nil, nil
+	}
+
+	ctxVar := findContextParamName(fn)
+	if ctxVar == "" {
+		return nil, nil, nil
+	}
+
+	var params []rawParam
+	var requestBody *rawBody
+	var response *rawBody
+
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		callExpr, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		selExpr, ok := callExpr.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+
+		ident, ok := selExpr.X.(*ast.Ident)
+		if !ok || ident.Name != ctxVar {
+			return true
+		}
+
+		methodName := selExpr.Sel.Name
+
+		switch methodName {
+		case "Query", "GetQuery":
+			if name := extractStringLiteral(callExpr.Args[0]); name != "" {
+				params = append(params, rawParam{name: name, in: "query", required: true, typ: "text"})
+			}
+		case "DefaultQuery":
+			if len(callExpr.Args) >= 2 {
+				name := extractStringLiteral(callExpr.Args[0])
+				defVal := extractStringLiteral(callExpr.Args[1])
+				if name != "" {
+					params = append(params, rawParam{name: name, in: "query", required: false, def: defVal, typ: "text"})
+				}
+			}
+		case "PostForm", "GetPostForm":
+			if name := extractStringLiteral(callExpr.Args[0]); name != "" {
+				params = append(params, rawParam{name: name, in: "form", required: true, typ: "text"})
+			}
+		case "DefaultPostForm":
+			if len(callExpr.Args) >= 2 {
+				name := extractStringLiteral(callExpr.Args[0])
+				defVal := extractStringLiteral(callExpr.Args[1])
+				if name != "" {
+					params = append(params, rawParam{name: name, in: "form", required: false, def: defVal, typ: "text"})
+				}
+			}
+		case "FormFile":
+			if name := extractStringLiteral(callExpr.Args[0]); name != "" {
+				params = append(params, rawParam{name: name, in: "form", required: true, typ: "file"})
+			}
+		case "GetHeader":
+			if name := extractStringLiteral(callExpr.Args[0]); name != "" {
+				params = append(params, rawParam{name: name, in: "header", required: false, typ: "text"})
+			}
+		case "Cookie":
+			if name := extractStringLiteral(callExpr.Args[0]); name != "" {
+				params = append(params, rawParam{name: name, in: "cookie", required: false, typ: "text"})
+			}
+		case "ShouldBindJSON", "BindJSON":
+			typeName := ""
+			if len(callExpr.Args) >= 1 {
+				typeName = extractTypeName(callExpr.Args[0])
+			}
+			requestBody = &rawBody{mediaType: "application/json", typeName: typeName}
+		case "ShouldBindXML", "BindXML":
+			typeName := ""
+			if len(callExpr.Args) >= 1 {
+				typeName = extractTypeName(callExpr.Args[0])
+			}
+			requestBody = &rawBody{mediaType: "application/xml", typeName: typeName}
+		case "ShouldBind", "Bind":
+			typeName := ""
+			if len(callExpr.Args) >= 1 {
+				typeName = extractTypeName(callExpr.Args[0])
+			}
+			requestBody = &rawBody{mediaType: "application/json", typeName: typeName}
+		case "JSON":
+			typeName := ""
+			if len(callExpr.Args) >= 2 {
+				typeName = extractTypeName(callExpr.Args[1])
+			}
+			response = &rawBody{mediaType: "application/json", typeName: typeName}
+		case "XML":
+			typeName := ""
+			if len(callExpr.Args) >= 2 {
+				typeName = extractTypeName(callExpr.Args[1])
+			}
+			response = &rawBody{mediaType: "application/xml", typeName: typeName}
+		case "String":
+			response = &rawBody{mediaType: "text/plain"}
+		case "Data":
+			response = &rawBody{mediaType: "application/octet-stream"}
+		}
+
+		return true
+	})
+
+	return params, requestBody, response
+}
+
+// findContextParamName returns the variable name of the *gin.Context parameter
+// in the given function declaration. Returns "" if no gin.Context parameter is found.
+func findContextParamName(fn *ast.FuncDecl) string {
+	if fn.Type.Params == nil || len(fn.Type.Params.List) == 0 {
+		return ""
+	}
+
+	for _, param := range fn.Type.Params.List {
+		if isGinContext(param.Type) && len(param.Names) > 0 {
+			return param.Names[0].Name
+		}
+	}
+
+	return ""
+}
+
+// isGinContext checks if the expression represents *gin.Context or gin.Context.
+func isGinContext(expr ast.Expr) bool {
+	if starExpr, ok := expr.(*ast.StarExpr); ok {
+		expr = starExpr.X
+	}
+
+	selExpr, ok := expr.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+
+	if selExpr.Sel.Name != "Context" {
+		return false
+	}
+
+	ident, ok := selExpr.X.(*ast.Ident)
+	return ok && ident.Name == "gin"
+}
+
+// extractTypeName returns a human-readable type name from an expression.
+// Handles:
+//   - &obj  → "obj"
+//   - obj   → "obj"
+//   - Type{} → "Type"
+//   - pkg.Type{} → "pkg.Type"
+func extractTypeName(expr ast.Expr) string {
+	if unary, ok := expr.(*ast.UnaryExpr); ok && unary.Op == token.AND {
+		expr = unary.X
+	}
+
+	switch e := expr.(type) {
+	case *ast.Ident:
+		return e.Name
+	case *ast.SelectorExpr:
+		if x, ok := e.X.(*ast.Ident); ok {
+			return x.Name + "." + e.Sel.Name
+		}
+		return e.Sel.Name
+	case *ast.CompositeLit:
+		return extractTypeName(e.Type)
+	}
+
+	return ""
+}
+
+// extractPathParams parses path parameters from a Gin route path.
+// Gin uses `:paramName` syntax for path parameters (e.g. `/users/:id` → param "id").
+func extractPathParams(path string) []rawParam {
+	var params []rawParam
+	for _, segment := range strings.Split(path, "/") {
+		if strings.HasPrefix(segment, ":") {
+			name := segment[1:]
+			params = append(params, rawParam{
+				name:     name,
+				in:       "path",
+				required: true,
+				typ:      "text",
+			})
+		}
+	}
+	return params
 }
 
 // extractStringLiteral returns the unquoted string value of a BasicLit node,
@@ -261,8 +563,8 @@ func extractStringLiteral(expr ast.Expr) string {
 
 // extractHandlerName returns the handler function name from the second argument
 // of a Gin route-registration call. Supports:
-//   - Simple identifier: listUsers -> "listUsers"
-//   - Selector expression: handler.ListUsers -> "handler.ListUsers"
+//   - Simple identifier: listUsers → "listUsers"
+//   - Selector expression: handler.ListUsers → "handler.ListUsers"
 //   - Any other form (closure, call): returns ""
 func extractHandlerName(expr ast.Expr) string {
 	switch arg := expr.(type) {

@@ -24,11 +24,14 @@ func main() {
 
 // listUsers returns all users.
 func listUsers(c *gin.Context) {
+	c.Query("name")
 	c.JSON(200, gin.H{})
 }
 
 // createUser creates a new user.
 func createUser(c *gin.Context) {
+	var req struct{}
+	_ = c.ShouldBindJSON(&req)
 	c.JSON(201, gin.H{})
 }
 

@@ -33,8 +33,8 @@ func TestParse_BasicRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("basic routes should not error: %v", err)
 	}
-	if len(endpoints) != 8 {
-		t.Fatalf("expected 8 endpoints, got %d", len(endpoints))
+	if len(endpoints) != 9 {
+		t.Fatalf("expected 9 endpoints, got %d", len(endpoints))
 	}
 
 	sort.Slice(endpoints, func(i, j int) bool {
@@ -44,34 +44,79 @@ func TestParse_BasicRoutes(t *testing.T) {
 		return endpoints[i].Path < endpoints[j].Path
 	})
 
-	expected := []collector.ApiEndpoint{
-		{Name: "deleteUser", Path: "/users/:id", Method: "DELETE", Protocol: "http", Description: "deleteUser removes a user by ID."},
-		{Name: "listUsers", Path: "/users", Method: "GET", Protocol: "http", Description: "listUsers returns all users."},
-		{Name: "getUser", Path: "/users/:id", Method: "GET", Protocol: "http", Description: "getUser returns a single user by ID."},
-		{Name: "healthCheck", Path: "/health", Method: "HEAD", Protocol: "http", Description: "healthCheck returns service health status."},
-		{Name: "userOptions", Path: "/users", Method: "OPTIONS", Protocol: "http", Description: "userOptions returns allowed methods for /users."},
-		{Name: "patchUser", Path: "/users/:id", Method: "PATCH", Protocol: "http", Description: "patchUser partially updates a user."},
-		{Name: "createUser", Path: "/users", Method: "POST", Protocol: "http", Description: "createUser creates a new user."},
-		{Name: "updateUser", Path: "/users/:id", Method: "PUT", Protocol: "http", Description: "updateUser updates an existing user."},
-	}
+	assertEndpoint(t, endpoints[0], collector.ApiEndpoint{
+		Name: "deleteUser", Path: "/users/:id", Method: "DELETE", Protocol: "http",
+		Description: "deleteUser removes a user by ID.",
+		Parameters: []collector.ApiParameter{
+			{Name: "id", In: "path", Required: true, Type: "text"},
+		},
+	})
 
-	for i, exp := range expected {
-		if endpoints[i].Name != exp.Name {
-			t.Errorf("endpoint[%d].Name = %q, want %q", i, endpoints[i].Name, exp.Name)
-		}
-		if endpoints[i].Path != exp.Path {
-			t.Errorf("endpoint[%d].Path = %q, want %q", i, endpoints[i].Path, exp.Path)
-		}
-		if endpoints[i].Method != exp.Method {
-			t.Errorf("endpoint[%d].Method = %q, want %q", i, endpoints[i].Method, exp.Method)
-		}
-		if endpoints[i].Protocol != exp.Protocol {
-			t.Errorf("endpoint[%d].Protocol = %q, want %q", i, endpoints[i].Protocol, exp.Protocol)
-		}
-		if endpoints[i].Description != exp.Description {
-			t.Errorf("endpoint[%d].Description = %q, want %q", i, endpoints[i].Description, exp.Description)
-		}
-	}
+	assertEndpoint(t, endpoints[1], collector.ApiEndpoint{
+		Name: "listUsers", Path: "/users", Method: "GET", Protocol: "http",
+		Description: "listUsers returns all users.",
+		Parameters: []collector.ApiParameter{
+			{Name: "name", In: "query", Required: true, Type: "text"},
+			{Name: "role", In: "query", Required: false, Type: "text", Default: "user"},
+		},
+		Response: &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "gin.H"}},
+	})
+
+	assertEndpoint(t, endpoints[2], collector.ApiEndpoint{
+		Name: "getUser", Path: "/users/:id", Method: "GET", Protocol: "http",
+		Description: "getUser returns a single user by ID.",
+		Parameters: []collector.ApiParameter{
+			{Name: "id", In: "path", Required: true, Type: "text"},
+		},
+		Response: &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "gin.H"}},
+	})
+
+	assertEndpoint(t, endpoints[3], collector.ApiEndpoint{
+		Name: "healthCheck", Path: "/health", Method: "HEAD", Protocol: "http",
+		Description: "healthCheck returns service health status.",
+	})
+
+	assertEndpoint(t, endpoints[4], collector.ApiEndpoint{
+		Name: "userOptions", Path: "/users", Method: "OPTIONS", Protocol: "http",
+		Description: "userOptions returns allowed methods for /users.",
+	})
+
+	assertEndpoint(t, endpoints[5], collector.ApiEndpoint{
+		Name: "patchUser", Path: "/users/:id", Method: "PATCH", Protocol: "http",
+		Description: "patchUser partially updates a user.",
+		Parameters: []collector.ApiParameter{
+			{Name: "id", In: "path", Required: true, Type: "text"},
+			{Name: "name", In: "query", Required: false, Type: "text", Default: "unknown"},
+		},
+		Response: &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "gin.H"}},
+	})
+
+	assertEndpoint(t, endpoints[6], collector.ApiEndpoint{
+		Name: "uploadFile", Path: "/upload", Method: "POST", Protocol: "http",
+		Description: "uploadFile handles file uploads.",
+		Parameters: []collector.ApiParameter{
+			{Name: "file", In: "form", Required: true, Type: "file"},
+			{Name: "description", In: "form", Required: true, Type: "text"},
+		},
+		Response: &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "gin.H"}},
+	})
+
+	assertEndpoint(t, endpoints[7], collector.ApiEndpoint{
+		Name: "createUser", Path: "/users", Method: "POST", Protocol: "http",
+		Description: "createUser creates a new user.",
+		RequestBody: &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "req"}},
+		Response:   &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "req"}},
+	})
+
+	assertEndpoint(t, endpoints[8], collector.ApiEndpoint{
+		Name: "updateUser", Path: "/users/:id", Method: "PUT", Protocol: "http",
+		Description: "updateUser updates an existing user.",
+		Parameters: []collector.ApiParameter{
+			{Name: "id", In: "path", Required: true, Type: "text"},
+		},
+		RequestBody: &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "req"}},
+		Response:   &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "req"}},
+	})
 }
 
 func TestParse_GroupRoutes(t *testing.T) {
@@ -90,31 +135,40 @@ func TestParse_GroupRoutes(t *testing.T) {
 		return endpoints[i].Method < endpoints[j].Method
 	})
 
-	expected := []collector.ApiEndpoint{
-		{Name: "listItems", Path: "/api/items", Method: "GET", Protocol: "http", Description: "listItems returns all items."},
-		{Name: "deleteItem", Path: "/api/items/:id", Method: "DELETE", Protocol: "http", Description: "deleteItem removes an item by ID."},
-		{Name: "healthCheck", Path: "/health", Method: "GET", Protocol: "http", Description: "healthCheck returns service health status."},
-		{Name: "listUsers", Path: "/v1/users", Method: "GET", Protocol: "http", Description: "listUsers returns all users."},
-		{Name: "createUser", Path: "/v1/users", Method: "POST", Protocol: "http", Description: "createUser creates a new user."},
-	}
+	assertEndpoint(t, endpoints[0], collector.ApiEndpoint{
+		Name: "listItems", Path: "/api/items", Method: "GET", Protocol: "http",
+		Description: "listItems returns all items.",
+		Response:    &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "gin.H"}},
+	})
 
-	for i, exp := range expected {
-		if endpoints[i].Name != exp.Name {
-			t.Errorf("endpoint[%d].Name = %q, want %q", i, endpoints[i].Name, exp.Name)
-		}
-		if endpoints[i].Path != exp.Path {
-			t.Errorf("endpoint[%d].Path = %q, want %q", i, endpoints[i].Path, exp.Path)
-		}
-		if endpoints[i].Method != exp.Method {
-			t.Errorf("endpoint[%d].Method = %q, want %q", i, endpoints[i].Method, exp.Method)
-		}
-		if endpoints[i].Protocol != exp.Protocol {
-			t.Errorf("endpoint[%d].Protocol = %q, want %q", i, endpoints[i].Protocol, exp.Protocol)
-		}
-		if endpoints[i].Description != exp.Description {
-			t.Errorf("endpoint[%d].Description = %q, want %q", i, endpoints[i].Description, exp.Description)
-		}
-	}
+	assertEndpoint(t, endpoints[1], collector.ApiEndpoint{
+		Name: "deleteItem", Path: "/api/items/:id", Method: "DELETE", Protocol: "http",
+		Description: "deleteItem removes an item by ID.",
+		Parameters: []collector.ApiParameter{
+			{Name: "id", In: "path", Required: true, Type: "text"},
+		},
+	})
+
+	assertEndpoint(t, endpoints[2], collector.ApiEndpoint{
+		Name: "healthCheck", Path: "/health", Method: "GET", Protocol: "http",
+		Description: "healthCheck returns service health status.",
+	})
+
+	assertEndpoint(t, endpoints[3], collector.ApiEndpoint{
+		Name: "listUsers", Path: "/v1/users", Method: "GET", Protocol: "http",
+		Description: "listUsers returns all users.",
+		Parameters: []collector.ApiParameter{
+			{Name: "name", In: "query", Required: true, Type: "text"},
+		},
+		Response: &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "gin.H"}},
+	})
+
+	assertEndpoint(t, endpoints[4], collector.ApiEndpoint{
+		Name: "createUser", Path: "/v1/users", Method: "POST", Protocol: "http",
+		Description: "createUser creates a new user.",
+		RequestBody: &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "req"}},
+		Response:   &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "gin.H"}},
+	})
 }
 
 func TestParse_NonexistentDir(t *testing.T) {
@@ -124,5 +178,118 @@ func TestParse_NonexistentDir(t *testing.T) {
 	}
 	if endpoints != nil {
 		t.Fatalf("expected nil endpoints for nonexistent dir, got %d", len(endpoints))
+	}
+}
+
+func TestExtractPathParams(t *testing.T) {
+	tests := []struct {
+		path     string
+		expected []rawParam
+	}{
+		{"/users", nil},
+		{"/users/:id", []rawParam{{name: "id", in: "path", required: true, typ: "text"}}},
+		{"/users/:id/posts/:postId", []rawParam{
+			{name: "id", in: "path", required: true, typ: "text"},
+			{name: "postId", in: "path", required: true, typ: "text"},
+		}},
+		{"/:category/:item", []rawParam{
+			{name: "category", in: "path", required: true, typ: "text"},
+			{name: "item", in: "path", required: true, typ: "text"},
+		}},
+	}
+
+	for _, tt := range tests {
+		result := extractPathParams(tt.path)
+		if len(result) != len(tt.expected) {
+			t.Errorf("extractPathParams(%q): got %d params, want %d", tt.path, len(result), len(tt.expected))
+			continue
+		}
+		for i, p := range result {
+			if p.name != tt.expected[i].name {
+				t.Errorf("extractPathParams(%q)[%d].name = %q, want %q", tt.path, i, p.name, tt.expected[i].name)
+			}
+			if p.in != tt.expected[i].in {
+				t.Errorf("extractPathParams(%q)[%d].in = %q, want %q", tt.path, i, p.in, tt.expected[i].in)
+			}
+			if p.required != tt.expected[i].required {
+				t.Errorf("extractPathParams(%q)[%d].required = %v, want %v", tt.path, i, p.required, tt.expected[i].required)
+			}
+		}
+	}
+}
+
+func assertEndpoint(t *testing.T, got collector.ApiEndpoint, want collector.ApiEndpoint) {
+	t.Helper()
+
+	if got.Name != want.Name {
+		t.Errorf("Name = %q, want %q", got.Name, want.Name)
+	}
+	if got.Path != want.Path {
+		t.Errorf("Path = %q, want %q", got.Path, want.Path)
+	}
+	if got.Method != want.Method {
+		t.Errorf("Method = %q, want %q", got.Method, want.Method)
+	}
+	if got.Protocol != want.Protocol {
+		t.Errorf("Protocol = %q, want %q", got.Protocol, want.Protocol)
+	}
+	if got.Description != want.Description {
+		t.Errorf("Description = %q, want %q", got.Description, want.Description)
+	}
+
+	assertParams(t, got.Parameters, want.Parameters)
+	assertBody(t, "RequestBody", got.RequestBody, want.RequestBody)
+	assertBody(t, "Response", got.Response, want.Response)
+}
+
+func assertParams(t *testing.T, got, want []collector.ApiParameter) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Errorf("Parameters: got %d, want %d", len(got), len(want))
+		return
+	}
+
+	for i, g := range got {
+		w := want[i]
+		if g.Name != w.Name {
+			t.Errorf("Parameters[%d].Name = %q, want %q", i, g.Name, w.Name)
+		}
+		if g.In != w.In {
+			t.Errorf("Parameters[%d].In = %q, want %q", i, g.In, w.In)
+		}
+		if g.Required != w.Required {
+			t.Errorf("Parameters[%d].Required = %v, want %v", i, g.Required, w.Required)
+		}
+		if g.Type != w.Type {
+			t.Errorf("Parameters[%d].Type = %q, want %q", i, g.Type, w.Type)
+		}
+		if g.Default != w.Default {
+			t.Errorf("Parameters[%d].Default = %q, want %q", i, g.Default, w.Default)
+		}
+	}
+}
+
+func assertBody(t *testing.T, field string, got, want *collector.ApiBody) {
+	t.Helper()
+
+	if got == nil && want == nil {
+		return
+	}
+	if got == nil {
+		t.Errorf("%s: got nil, want %+v", field, want)
+		return
+	}
+	if want == nil {
+		t.Errorf("%s: got %+v, want nil", field, got)
+		return
+	}
+	if got.MediaType != want.MediaType {
+		t.Errorf("%s.MediaType = %q, want %q", field, got.MediaType, want.MediaType)
+	}
+	if want.Schema != nil {
+		if got.Schema == nil {
+			t.Errorf("%s.Schema = nil, want %+v", field, want.Schema)
+		}
 	}
 }
