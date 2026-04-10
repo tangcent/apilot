@@ -116,6 +116,7 @@ func RunCLI() {
 		pluginRegistry string
 		listCollectors bool
 		listFormatters bool
+		showHelp       bool
 	)
 
 	flag.StringVar(&collectorName, "collector", "", "collector name (auto-detect if omitted)")
@@ -125,6 +126,11 @@ func RunCLI() {
 	flag.StringVar(&pluginRegistry, "plugin-registry", "", "path to plugins.json")
 	flag.BoolVar(&listCollectors, "list-collectors", false, "print registered collectors and exit")
 	flag.BoolVar(&listFormatters, "list-formatters", false, "print registered formatters and exit")
+	flag.BoolVar(&showHelp, "help", false, "print help and exit")
+
+	flag.Usage = func() {
+		printHelp()
+	}
 
 	flag.Parse()
 
@@ -135,6 +141,11 @@ func RunCLI() {
 	if err := plugin.LoadRegistry(pluginRegistry, RegisterCollector, RegisterFormatter); err != nil {
 		fmt.Fprintf(os.Stderr, "error loading plugin registry: %v\n", err)
 		os.Exit(1)
+	}
+
+	if showHelp {
+		printHelp()
+		os.Exit(0)
 	}
 
 	if listCollectors {
@@ -149,8 +160,8 @@ func RunCLI() {
 
 	args := flag.Args()
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "error: source path required\n")
-		flag.Usage()
+		fmt.Fprintf(os.Stderr, "error: source path required\n\n")
+		printHelp()
 		os.Exit(1)
 	}
 
@@ -169,6 +180,34 @@ func RunCLI() {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func printHelp() {
+	fmt.Fprintln(os.Stderr, "Usage: apilot <source-path> [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --collector string")
+	fmt.Fprintln(os.Stderr, "        collector name (auto-detect if omitted)")
+	fmt.Fprintln(os.Stderr, "  --formatter string")
+	fmt.Fprintln(os.Stderr, "        formatter name (default: markdown)")
+	fmt.Fprintln(os.Stderr, "  --params string")
+	fmt.Fprintln(os.Stderr, "        formatter params as JSON (e.g. '{\"variant\":\"detailed\"}')")
+	fmt.Fprintln(os.Stderr, "  --output string")
+	fmt.Fprintln(os.Stderr, "        output file path (default: stdout)")
+	fmt.Fprintln(os.Stderr, "  --plugin-registry string")
+	fmt.Fprintln(os.Stderr, "        path to plugins.json")
+	fmt.Fprintln(os.Stderr, "  --list-collectors")
+	fmt.Fprintln(os.Stderr, "        print registered collectors and exit")
+	fmt.Fprintln(os.Stderr, "  --list-formatters")
+	fmt.Fprintln(os.Stderr, "        print registered formatters and exit")
+	fmt.Fprintln(os.Stderr, "  --help")
+	fmt.Fprintln(os.Stderr, "        print help and exit")
+	fmt.Fprintln(os.Stderr, "")
+
+	printCollectors()
+	fmt.Fprintln(os.Stderr, "")
+
+	printFormatters()
 }
 
 func printCollectors() {
