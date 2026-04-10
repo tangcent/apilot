@@ -6,12 +6,13 @@ import (
 	"log"
 	"os"
 
-	"github.com/tangcent/apilot/api-master/engine"
+	"github.com/tangcent/apilot/api-collector"
+	"github.com/tangcent/apilot/api-formatter"
 )
 
 // LoadRegistry reads the plugin registry file at path and registers all valid entries.
 // Invalid or missing plugin paths are logged as warnings and skipped.
-func LoadRegistry(path string) error {
+func LoadRegistry(path string, registerCollector func(collector.Collector), registerFormatter func(formatter.Formatter)) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -26,27 +27,27 @@ func LoadRegistry(path string) error {
 	}
 
 	for _, m := range reg.Plugins {
-		if err := registerManifest(m); err != nil {
+		if err := registerManifest(m, registerCollector, registerFormatter); err != nil {
 			log.Printf("warning: skipping plugin %q: %v", m.Name, err)
 		}
 	}
 	return nil
 }
 
-func registerManifest(m PluginManifest) error {
+func registerManifest(m PluginManifest, registerCollector func(collector.Collector), registerFormatter func(formatter.Formatter)) error {
 	switch m.Type {
 	case "collector":
 		c, err := newSubprocessCollector(m)
 		if err != nil {
 			return err
 		}
-		engine.RegisterCollector(c)
+		registerCollector(c)
 	case "formatter":
 		f, err := newSubprocessFormatter(m)
 		if err != nil {
 			return err
 		}
-		engine.RegisterFormatter(f)
+		registerFormatter(f)
 	default:
 		return fmt.Errorf("unknown plugin type %q", m.Type)
 	}

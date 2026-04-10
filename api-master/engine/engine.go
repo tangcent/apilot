@@ -2,11 +2,14 @@
 package engine
 
 import (
+	"flag"
 	"fmt"
 	"os"
 
-	"github.com/tangcent/apilot/api-collector/collector"
-	"github.com/tangcent/apilot/api-formatter/formatter"
+	"github.com/tangcent/apilot/api-collector"
+	"github.com/tangcent/apilot/api-formatter"
+	"github.com/tangcent/apilot/api-master/config"
+	"github.com/tangcent/apilot/api-master/plugin"
 )
 
 // Config holds the runtime configuration for a single engine run.
@@ -102,7 +105,89 @@ func writeOutput(path string, data []byte) error {
 
 // RunCLI parses os.Args and calls Run. Used by apilot-cli and api-master main.
 func RunCLI() {
-	// TODO: implement flag parsing (--collector, --formatter, --output, --format,
-	//       --plugin-registry, --list-collectors, --list-formatters)
-	panic("RunCLI: not yet implemented")
+	var (
+		collectorName  string
+		formatterName  string
+		formatVariant  string
+		outputPath     string
+		pluginRegistry string
+		listCollectors bool
+		listFormatters bool
+	)
+
+	flag.StringVar(&collectorName, "collector", "", "collector name (auto-detect if omitted)")
+	flag.StringVar(&formatterName, "formatter", "markdown", "formatter name (default: markdown)")
+	flag.StringVar(&formatVariant, "format", "", "format variant passed to formatter")
+	flag.StringVar(&outputPath, "output", "", "output file path (default: stdout)")
+	flag.StringVar(&pluginRegistry, "plugin-registry", "", "path to plugins.json")
+	flag.BoolVar(&listCollectors, "list-collectors", false, "print registered collectors and exit")
+	flag.BoolVar(&listFormatters, "list-formatters", false, "print registered formatters and exit")
+
+	flag.Parse()
+
+	if pluginRegistry == "" {
+		pluginRegistry = config.DefaultPluginRegistryPath()
+	}
+
+	if err := plugin.LoadRegistry(pluginRegistry, RegisterCollector, RegisterFormatter); err != nil {
+		fmt.Fprintf(os.Stderr, "error loading plugin registry: %v\n", err)
+		os.Exit(1)
+	}
+
+	if listCollectors {
+		printCollectors()
+		return
+	}
+
+	if listFormatters {
+		printFormatters()
+		return
+	}
+
+	args := flag.Args()
+	if len(args) == 0 {
+		fmt.Fprintf(os.Stderr, "error: source path required\n")
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	sourceDir := args[0]
+
+	cfg := Config{
+		SourceDir:      sourceDir,
+		CollectorName:  collectorName,
+		FormatterName:  formatterName,
+		FormatVariant:  formatVariant,
+		OutputPath:     outputPath,
+		PluginRegistry: pluginRegistry,
+	}
+
+	if err := Run(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func printCollectors() {
+	collectors := ListCollectors()
+	if len(collectors) == 0 {
+		fmt.Println("No collectors registered.")
+		return
+	}
+	fmt.Println("Registered collectors:")
+	for name, langs := range collectors {
+		fmt.Printf("  %s: %v\n", name, langs)
+	}
+}
+
+func printFormatters() {
+	formatters := ListFormatters()
+	if len(formatters) == 0 {
+		fmt.Println("No formatters registered.")
+		return
+	}
+	fmt.Println("Registered formatters:")
+	for name, formats := range formatters {
+		fmt.Printf("  %s: %v\n", name, formats)
+	}
 }
