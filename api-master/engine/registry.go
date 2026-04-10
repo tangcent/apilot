@@ -49,11 +49,11 @@ func ListCollectors() map[string][]string {
 	return out
 }
 
-// ListFormatters returns all registered formatter names and their supported formats.
-func ListFormatters() map[string][]string {
-	out := make(map[string][]string, len(formatters))
-	for name, f := range formatters {
-		out[name] = f.SupportedFormats()
+// ListFormatters returns all registered formatter names.
+func ListFormatters() []string {
+	out := make([]string, 0, len(formatters))
+	for name := range formatters {
+		out = append(out, name)
 	}
 	return out
 }

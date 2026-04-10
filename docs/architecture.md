@@ -30,7 +30,8 @@ APilot is a multi-module monorepo that parses API source code and exports docume
 
 | Module | Language | Role |
 |--------|----------|------|
-| `api-collector` | Go | Collector interface + ApiEndpoint model |
+| `api-model` | Go | Canonical data types: ApiEndpoint, ApiParameter, ApiHeader, ApiBody |
+| `api-collector` | Go | Collector interface + CollectContext |
 | `api-formatter` | Go | Formatter interface + FormatOptions |
 | `api-master` | Go | Core engine: CLI, registry, plugin loader, orchestration |
 | `apilot-cli` | Go | Bundled CLI: statically links all collectors + formatters |
@@ -61,13 +62,19 @@ apilot-cli
 
 api-master
   ├── api-collector  (interface only)
-  └── api-formatter   (interface only)
+  └── api-formatter  (interface only)
+
+api-collector
+  └── api-model
+
+api-formatter
+  └── api-model
 
 api-collector-{java,go,node,python}
   └── api-collector
 
 api-formatter-{markdown,curl,postman}
-  ├── api-collector  (for ApiEndpoint type)
+  ├── api-model     (for ApiEndpoint type)
   └── api-formatter
 
 vscode-plugin
@@ -77,7 +84,7 @@ jetbrains-plugin
   └── (no dependency on any Go module)
 ```
 
-**Rule:** No module may import a module above it in the graph. `api-collector` and `api-formatter` are the only shared contracts.
+**Rule:** No module may import a module above it in the graph. `api-model` is the only shared data contract; `api-collector` and `api-formatter` are the only shared interface contracts. Formatters depend on `api-model` directly — never on `api-collector`.
 
 ---
 
@@ -132,12 +139,12 @@ For subprocess plugins, `CollectContext` is written as JSON to the subprocess st
 
 1. Create a new module directory: `api-formatter-<name>/`
 2. Add `go.mod` with module path `github.com/tangcent/apilot/api-formatter-<name>`
-3. Declare dependencies on `api-collector` and `api-formatter`
-4. Create `formatter.go` with a struct implementing `formater.Formatter`:
+3. Declare dependencies on `api-model` and `api-formatter`
+4. Create `formatter.go` with a struct implementing `formatter.Formatter`:
    - `Name() string` — unique lowercase identifier (e.g. `"openapi"`)
    - `SupportedFormats() []string` — format variant names
-   - `Format(endpoints []collector.ApiEndpoint, opts formater.FormatOptions) ([]byte, error)`
-5. Export a `New() formater.Formatter` constructor
+   - `Format(endpoints []model.ApiEndpoint, opts formatter.FormatOptions) ([]byte, error)`
+5. Export a `New() formatter.Formatter` constructor
 6. Register in `apilot-cli/main.go`: `engine.RegisterFormatter(openapifmt.New())`
 
 ### Formatter contract
@@ -166,6 +173,62 @@ Register in `~/.config/apilot/plugins.json`:
   ]
 }
 ```
+
+---
+
+## Developing Plugins in External Repositories
+
+Third-party developers can build collectors or formatters for private frameworks or API management tools without contributing to this monorepo. There are two integration paths:
+
+### Path A — Go SDK (in-process, statically linked)
+
+Import the published SDK modules directly:
+
+```go
+// go.mod
+require (
+    github.com/tangcent/apilot/api-model     v<version>
+    github.com/tangcent/apilot/api-collector v<version>  // collectors only
+    github.com/tangcent/apilot/api-formatter v<version>  // formatters only
+)
+```
+
+Implement the interface, build a binary, and distribute it. Users add it to their local `apilot-cli` by forking or by using Path B below.
+
+**Published SDK modules:**
+
+| Module | Purpose |
+|--------|---------|
+| `github.com/tangcent/apilot/api-model` | Data types only — import this for `ApiEndpoint` etc. |
+| `github.com/tangcent/apilot/api-collector` | `Collector` interface + `CollectContext` |
+| `github.com/tangcent/apilot/api-formatter` | `Formatter` interface + `FormatOptions` |
+
+### Path B — Subprocess Plugin (any language)
+
+Build a standalone binary in any language that speaks the stdin/stdout JSON protocol. No Go dependency required. See [plugin-protocol.md](plugin-protocol.md) for the full spec.
+
+```bash
+# Register your plugin
+cat ~/.config/apilot/plugins.json
+{
+  "plugins": [
+    { "name": "my-framework", "type": "collector", "command": "/usr/local/bin/api-collector-myframework" },
+    { "name": "my-tool",      "type": "formatter",  "command": "/usr/local/bin/api-formatter-mytool" }
+  ]
+}
+```
+
+The subprocess protocol is stable and versioned — private or proprietary implementations are fully supported this way.
+
+### Choosing a path
+
+| | Path A (Go SDK) | Path B (Subprocess) |
+|---|---|---|
+| Language | Go only | Any |
+| Performance | Best (in-process) | Good (one subprocess per run) |
+| Distribution | Go module / binary | Any binary |
+| Private framework | ✓ | ✓ |
+| No recompile needed | ✗ (fork apilot-cli) | ✓ |
 
 ---
 

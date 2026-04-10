@@ -5,12 +5,22 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/tangcent/apilot/api-collector"
 	"github.com/tangcent/apilot/api-formatter"
+	apimodel "github.com/tangcent/apilot/api-model"
 	"github.com/tangcent/apilot/api-formatter-postman/model"
 )
 
 const postmanSchema = "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+
+// Params holds postman-specific formatting options.
+type Params struct {
+	// CollectionName is the name of the exported Postman collection.
+	// Defaults to "APilot Export".
+	CollectionName string `json:"collectionName"`
+
+	// BaseURL is prepended to each endpoint path. Defaults to "http://localhost".
+	BaseURL string `json:"baseURL"`
+}
 
 // PostmanFormatter formats endpoints as a Postman Collection v2.1 JSON document.
 type PostmanFormatter struct{}
@@ -20,19 +30,22 @@ func New() formatter.Formatter { return &PostmanFormatter{} }
 
 func (f *PostmanFormatter) Name() string { return "postman" }
 
-func (f *PostmanFormatter) SupportedFormats() []string { return []string{"postman"} }
-
 // Format converts endpoints into a Postman Collection v2.1 JSON document.
 // Endpoints are grouped by their Folder field into Postman folders.
 // An empty endpoints slice returns a valid empty collection.
-func (f *PostmanFormatter) Format(endpoints []collector.ApiEndpoint, opts formatter.FormatOptions) ([]byte, error) {
-	name := opts.Config["name"]
-	if name == "" {
-		name = "APilot Export"
+func (f *PostmanFormatter) Format(endpoints []apimodel.ApiEndpoint, opts formatter.FormatOptions) ([]byte, error) {
+	var p Params
+	if err := opts.DecodeParams(&p); err != nil {
+		return nil, err
+	}
+	if p.CollectionName == "" {
+		p.CollectionName = "APilot Export"
+	}
+	if p.BaseURL == "" {
+		p.BaseURL = "http://localhost"
 	}
 
-	// Group endpoints by folder
-	folderMap := map[string][]collector.ApiEndpoint{}
+	folderMap := map[string][]apimodel.ApiEndpoint{}
 	var folderOrder []string
 	for _, ep := range endpoints {
 		folder := ep.Folder
@@ -49,19 +62,19 @@ func (f *PostmanFormatter) Format(endpoints []collector.ApiEndpoint, opts format
 	for _, folderName := range folderOrder {
 		var items []model.Item
 		for _, ep := range folderMap[folderName] {
-			items = append(items, buildItem(ep))
+			items = append(items, buildItem(ep, p))
 		}
 		groups = append(groups, model.ItemGroup{Name: folderName, Item: items})
 	}
 
 	col := model.Collection{
-		Info: model.Info{Name: name, Schema: postmanSchema},
+		Info: model.Info{Name: p.CollectionName, Schema: postmanSchema},
 		Item: groups,
 	}
 	return json.MarshalIndent(col, "", "  ")
 }
 
-func buildItem(ep collector.ApiEndpoint) model.Item {
+func buildItem(ep apimodel.ApiEndpoint, p Params) model.Item {
 	method := ep.Method
 	if method == "" {
 		method = "GET"
@@ -73,14 +86,14 @@ func buildItem(ep collector.ApiEndpoint) model.Item {
 	}
 
 	var queryParams []model.Query
-	for _, p := range ep.Parameters {
-		if p.In == "query" {
-			queryParams = append(queryParams, model.Query{Key: p.Name, Value: ""})
+	for _, param := range ep.Parameters {
+		if param.In == "query" {
+			queryParams = append(queryParams, model.Query{Key: param.Name, Value: ""})
 		}
 	}
 
 	url := model.URL{
-		Raw:   "http://localhost" + ep.Path,
+		Raw:   p.BaseURL + ep.Path,
 		Path:  splitPath(ep.Path),
 		Query: queryParams,
 	}
@@ -88,8 +101,8 @@ func buildItem(ep collector.ApiEndpoint) model.Item {
 	var body *model.Body
 	if ep.RequestBody != nil {
 		body = &model.Body{
-			Mode: "raw",
-			Raw:  "{}",
+			Mode:    "raw",
+			Raw:     "{}",
 			Options: &model.BodyOptions{Raw: model.RawOptions{Language: "json"}},
 		}
 	}
