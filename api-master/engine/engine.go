@@ -17,7 +17,7 @@ type Config struct {
 	SourceDir      string
 	CollectorName  string // empty = auto-detect
 	FormatterName  string // default: "markdown"
-	FormatVariant  string // passed to FormatOptions.Format
+	FormatParams   string // raw JSON passed as FormatOptions.Params (e.g. `{"variant":"detailed"}`)
 	OutputPath     string // empty = stdout
 	PluginRegistry string // path to plugins.json
 }
@@ -48,7 +48,10 @@ func Run(cfg Config) error {
 	}
 
 	// 4. Format
-	opts := formatter.FormatOptions{Format: cfg.FormatVariant}
+	opts := formatter.FormatOptions{}
+	if cfg.FormatParams != "" {
+		opts.Params = []byte(cfg.FormatParams)
+	}
 	output, err := f.Format(endpoints, opts)
 	if err != nil {
 		return fmt.Errorf("formatting failed: %w", err)
@@ -108,7 +111,7 @@ func RunCLI() {
 	var (
 		collectorName  string
 		formatterName  string
-		formatVariant  string
+		formatParams   string
 		outputPath     string
 		pluginRegistry string
 		listCollectors bool
@@ -117,7 +120,7 @@ func RunCLI() {
 
 	flag.StringVar(&collectorName, "collector", "", "collector name (auto-detect if omitted)")
 	flag.StringVar(&formatterName, "formatter", "markdown", "formatter name (default: markdown)")
-	flag.StringVar(&formatVariant, "format", "", "format variant passed to formatter")
+	flag.StringVar(&formatParams, "params", "", "formatter params as JSON (e.g. '{\"variant\":\"detailed\"}')")
 	flag.StringVar(&outputPath, "output", "", "output file path (default: stdout)")
 	flag.StringVar(&pluginRegistry, "plugin-registry", "", "path to plugins.json")
 	flag.BoolVar(&listCollectors, "list-collectors", false, "print registered collectors and exit")
@@ -157,7 +160,7 @@ func RunCLI() {
 		SourceDir:      sourceDir,
 		CollectorName:  collectorName,
 		FormatterName:  formatterName,
-		FormatVariant:  formatVariant,
+		FormatParams:   formatParams,
 		OutputPath:     outputPath,
 		PluginRegistry: pluginRegistry,
 	}
@@ -187,7 +190,7 @@ func printFormatters() {
 		return
 	}
 	fmt.Println("Registered formatters:")
-	for name, formats := range formatters {
-		fmt.Printf("  %s: %v\n", name, formats)
+	for _, name := range formatters {
+		fmt.Printf("  %s\n", name)
 	}
 }

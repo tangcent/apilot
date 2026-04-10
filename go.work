@@ -1,6 +1,7 @@
 go 1.22
 
 use (
+	./api-model
 	./api-collector
 	./api-formatter
 	./api-collector-go

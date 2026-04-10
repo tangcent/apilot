@@ -7,8 +7,8 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/tangcent/apilot/api-collector"
-	"github.com/tangcent/apilot/api-formatter"
+	collector "github.com/tangcent/apilot/api-collector"
+	formatter "github.com/tangcent/apilot/api-formatter"
 )
 
 // subprocessCollector wraps an external binary as a collector.Collector.
@@ -26,8 +26,11 @@ func newSubprocessCollector(m PluginManifest) (collector.Collector, error) {
 func (s *subprocessCollector) Name() string { return s.manifest.Name }
 
 func (s *subprocessCollector) SupportedLanguages() []string {
-	// TODO: query the subprocess with a --supported-languages flag
-	return nil
+	result, err := querySubprocessFlag(s.manifest, "--supported-languages")
+	if err != nil {
+		return nil
+	}
+	return result
 }
 
 func (s *subprocessCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEndpoint, error) {
@@ -56,15 +59,10 @@ func newSubprocessFormatter(m PluginManifest) (formatter.Formatter, error) {
 
 func (s *subprocessFormatter) Name() string { return s.manifest.Name }
 
-func (s *subprocessFormatter) SupportedFormats() []string {
-	// TODO: query the subprocess with a --supported-formats flag
-	return nil
-}
-
 func (s *subprocessFormatter) Format(endpoints []collector.ApiEndpoint, opts formatter.FormatOptions) ([]byte, error) {
 	envelope := struct {
 		Endpoints []collector.ApiEndpoint `json:"endpoints"`
-		Options   formatter.FormatOptions  `json:"options"`
+		Options   formatter.FormatOptions `json:"options"`
 	}{Endpoints: endpoints, Options: opts}
 
 	input, err := json.Marshal(envelope)
@@ -85,6 +83,24 @@ func runSubprocess(m PluginManifest, stdin []byte) ([]byte, error) {
 		return nil, fmt.Errorf("subprocess %q failed: %w", m.Command, err)
 	}
 	return out, nil
+}
+
+func querySubprocessFlag(m PluginManifest, flag string) ([]string, error) {
+	args := append([]string{}, m.Args...)
+	args = append(args, flag)
+	cmd := exec.Command(m.Command, args...)
+	cmd.Stderr = os.Stderr
+
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("querying %s: %w", flag, err)
+	}
+
+	var result []string
+	if err := json.Unmarshal(out, &result); err != nil {
+		return nil, fmt.Errorf("parsing %s response: %w", flag, err)
+	}
+	return result, nil
 }
 
 func checkExecutable(m PluginManifest) error {

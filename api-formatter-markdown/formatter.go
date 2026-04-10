@@ -1,5 +1,5 @@
 // Package markdown implements the Formatter interface producing Markdown output.
-// Supports two format variants: "simple" (compact) and "detailed" (full schema expansion).
+// Supports two variants via Params: "simple" (default, compact) and "detailed" (full schema expansion).
 package markdown
 
 import (
@@ -7,8 +7,8 @@ import (
 	"bytes"
 	"text/template"
 
-	"github.com/tangcent/apilot/api-collector"
 	"github.com/tangcent/apilot/api-formatter"
+	"github.com/tangcent/apilot/api-model"
 )
 
 //go:embed templates/simple.md.tmpl
@@ -16,6 +16,12 @@ var simpleTmpl string
 
 //go:embed templates/detailed.md.tmpl
 var detailedTmpl string
+
+// Params holds markdown-specific formatting options.
+type Params struct {
+	// Variant selects the output template: "simple" (default) or "detailed".
+	Variant string `json:"variant"`
+}
 
 // MarkdownFormatter formats endpoints as Markdown documents.
 type MarkdownFormatter struct{}
@@ -25,18 +31,16 @@ func New() formatter.Formatter { return &MarkdownFormatter{} }
 
 func (f *MarkdownFormatter) Name() string { return "markdown" }
 
-func (f *MarkdownFormatter) SupportedFormats() []string { return []string{"simple", "detailed"} }
-
 // Format renders endpoints using the selected template variant.
 // An empty endpoints slice returns an empty Markdown document.
-func (f *MarkdownFormatter) Format(endpoints []collector.ApiEndpoint, opts formatter.FormatOptions) ([]byte, error) {
-	variant := opts.Format
-	if variant == "" {
-		variant = "simple"
+func (f *MarkdownFormatter) Format(endpoints []model.ApiEndpoint, opts formatter.FormatOptions) ([]byte, error) {
+	var p Params
+	if err := opts.DecodeParams(&p); err != nil {
+		return nil, err
 	}
 
 	var tmplSrc string
-	switch variant {
+	switch p.Variant {
 	case "detailed":
 		tmplSrc = detailedTmpl
 	default:

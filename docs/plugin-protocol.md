@@ -6,6 +6,22 @@ External collector and formatter plugins communicate with `api-master` via stdin
 
 ## Collector Protocol
 
+### Metadata Queries
+
+Collectors can optionally support the `--supported-languages` flag to report their capabilities:
+
+```bash
+./my-collector --supported-languages
+```
+
+Expected output (JSON array of strings):
+
+```json
+["java", "kotlin"]
+```
+
+If the flag is not supported or fails, the method returns `nil`.
+
 ### Input (stdin)
 
 `api-master` writes a single JSON object representing `CollectContext`:
@@ -49,6 +65,22 @@ An empty result is `[]`.
 ---
 
 ## Formatter Protocol
+
+### Metadata Queries
+
+Formatters can optionally support the `--supported-formats` flag to report their capabilities:
+
+```bash
+./my-formatter --supported-formats
+```
+
+Expected output (JSON array of strings):
+
+```json
+["markdown", "json", "yaml"]
+```
+
+If the flag is not supported or fails, the method returns `nil`.
 
 ### Input (stdin)
 
