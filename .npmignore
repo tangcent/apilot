@@ -1,0 +1,61 @@
+# Go source files and modules
+api-collector/
+api-collector-go/
+api-collector-java/
+api-collector-node/
+api-collector-python/
+api-formatter/
+api-formatter-curl/
+api-formatter-markdown/
+api-formatter-postman/
+api-master/
+apilot-cli/
+*.go
+go.mod
+go.sum
+go.work
+
+# Documentation
+docs/
+
+# GitHub
+.github/
+
+# IDE and editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build artifacts
+bin/
+dist/
+
+# Development files
+.agent/
+.claude/
+.cursor/
+.kiro/
+.qodo/
+.trae/
+*.log
+
+# Test and CI
+scripts/test.sh
+scripts/package.sh
+scripts/init.sh
+
+# JetBrains plugin
+jetbrains-plugin/
+
+# VSCode plugin source (published separately)
+vscode-plugin/
+
+# Misc
+.DS_Store
+.gitignore
+.goreleaser.yml
+.codecov.yml
+CONTRIBUTING.md
+LICENSE
+README.md
