@@ -19,7 +19,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "failed to build binary: %v\n", err)
 		os.Exit(1)
 	}
-	defer os.Remove(binaryPath)
+	defer os.RemoveAll(filepath.Dir(binaryPath))
 
 	os.Exit(m.Run())
 }
@@ -28,17 +28,22 @@ func buildBinary() (string, error) {
 	_, filename, _, _ := runtime.Caller(0)
 	cliDir := filepath.Dir(filename)
 
-	tmpFile, err := os.CreateTemp("", "apilot-test-*")
+	tmpDir, err := os.MkdirTemp("", "apilot-test-*")
 	if err != nil {
 		return "", err
 	}
-	binaryPath := tmpFile.Name()
-	tmpFile.Close()
+
+	binaryName := "apilot-test"
+	if runtime.GOOS == "windows" {
+		binaryName += ".exe"
+	}
+	binaryPath := filepath.Join(tmpDir, binaryName)
 
 	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
 	cmd.Dir = cliDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		os.RemoveAll(tmpDir)
 		return "", fmt.Errorf("build failed: %v\n%s", err, output)
 	}
 
