@@ -22,7 +22,7 @@
 **Media Type:** `{{ .RequestBody.MediaType }}`
 
 ```json
-{{ .RequestBody.Example }}
+{{ .RequestBody.Example | json }}
 ```
 {{ end }}
 
@@ -32,7 +32,7 @@
 **Media Type:** `{{ .Response.MediaType }}`
 
 ```json
-{{ .Response.Example }}
+{{ .Response.Example | json }}
 ```
 {{ end }}
 
