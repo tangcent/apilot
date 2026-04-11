@@ -5,6 +5,7 @@ package markdown
 import (
 	_ "embed"
 	"bytes"
+	"encoding/json"
 	"text/template"
 
 	"github.com/tangcent/apilot/api-formatter"
@@ -47,7 +48,17 @@ func (f *MarkdownFormatter) Format(endpoints []model.ApiEndpoint, opts formatter
 		tmplSrc = simpleTmpl
 	}
 
-	t, err := template.New("md").Parse(tmplSrc)
+	funcMap := template.FuncMap{
+		"json": func(v interface{}) (string, error) {
+			b, err := json.MarshalIndent(v, "", "  ")
+			if err != nil {
+				return "", err
+			}
+			return string(b), nil
+		},
+	}
+
+	t, err := template.New("md").Funcs(funcMap).Parse(tmplSrc)
 	if err != nil {
 		return nil, err
 	}
