@@ -59,13 +59,23 @@ func buildCurl(ep model.ApiEndpoint, p Params) string {
 	}
 
 	var queryParts []string
+	var formParams []model.ApiParameter
 	for _, param := range ep.Parameters {
 		if param.In == "query" {
 			queryParts = append(queryParts, fmt.Sprintf("%s=", param.Name))
 		}
+		if param.In == "form" {
+			formParams = append(formParams, param)
+		}
 	}
 
 	path := ep.Path
+	for _, param := range ep.Parameters {
+		if param.In == "path" {
+			path = strings.ReplaceAll(path, "{"+param.Name+"}", "<"+param.Name+">")
+		}
+	}
+
 	if len(queryParts) > 0 {
 		path += "?" + strings.Join(queryParts, "&")
 	}
@@ -74,6 +84,10 @@ func buildCurl(ep model.ApiEndpoint, p Params) string {
 	if ep.RequestBody != nil {
 		sb.WriteString(" \\\n  -H 'Content-Type: application/json'")
 		sb.WriteString(" \\\n  -d '{}'")
+	}
+
+	for _, param := range formParams {
+		sb.WriteString(fmt.Sprintf(" \\\n  --data-urlencode '%s='", param.Name))
 	}
 
 	return sb.String()
