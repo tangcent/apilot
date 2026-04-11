@@ -252,6 +252,11 @@ func processFile(filePath string) fileResult {
 		return fileResult{}
 	}
 
+	if !importsPackage(f, "github.com/gofiber/fiber/v2") {
+		return fileResult{}
+	}
+
+	fiberHandlers := make(map[string]bool)
 	funcDocs := make(map[string]string)
 	handlerAnalyses := make(map[string]handlerAnalysis)
 	for _, decl := range f.Decls {
@@ -262,6 +267,9 @@ func processFile(filePath string) fileResult {
 		name := fn.Name.Name
 		if fn.Doc != nil {
 			funcDocs[name] = strings.TrimSpace(fn.Doc.Text())
+		}
+		if findContextParamName(fn) != "" {
+			fiberHandlers[name] = true
 		}
 		params, reqBody, respBody := analyzeHandlerBody(fn)
 		if len(params) > 0 || reqBody != nil || respBody != nil {
@@ -319,6 +327,10 @@ func processFile(filePath string) fileResult {
 		path := extractStringLiteral(callExpr.Args[0])
 		handlerName := extractHandlerName(callExpr.Args[1])
 		receiverVar := resolveReceiverVar(selExpr.X)
+
+		if !fiberHandlers[handlerName] {
+			return true
+		}
 
 		rawEndpoints = append(rawEndpoints, rawEndpoint{
 			method:      methodName,
@@ -598,4 +610,15 @@ func resolveReceiverVar(expr ast.Expr) string {
 		return ""
 	}
 	return ident.Name
+}
+
+// importsPackage checks whether the given file imports the specified package path.
+func importsPackage(f *ast.File, pkgPath string) bool {
+	for _, imp := range f.Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		if path == pkgPath {
+			return true
+		}
+	}
+	return false
 }
