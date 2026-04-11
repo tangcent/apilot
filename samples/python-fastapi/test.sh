@@ -19,7 +19,7 @@ mkdir -p "$OUTPUT_DIR"
 
 # Run apilot
 echo "Running apilot on $SAMPLE_NAME..."
-if ! apilot "$SCRIPT_DIR" --formatter markdown --output "$(cd "$OUTPUT_DIR" && pwd)/api.md" 2>&1; then
+if ! apilot --formatter markdown --output "$(cd "$OUTPUT_DIR" && pwd)/api.md" "$SCRIPT_DIR" 2>&1; then
     echo "Error: apilot command failed"
     exit 1
 fi
