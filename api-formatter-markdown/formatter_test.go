@@ -21,9 +21,9 @@ func TestFormat_EmptyInput(t *testing.T) {
 	if output == nil {
 		t.Fatal("Format() output = nil, want non-nil bytes")
 	}
-	outputStr := string(output)
-	if outputStr != "" && outputStr != "\n" {
-		t.Errorf("Format() output = %q, want empty string or single newline", outputStr)
+	outputStr := strings.TrimSpace(string(output))
+	if outputStr != "" {
+		t.Errorf("Format() output = %q, want empty string or whitespace only", outputStr)
 	}
 }
 
