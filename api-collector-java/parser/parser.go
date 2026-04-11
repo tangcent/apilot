@@ -14,34 +14,6 @@ type Parser struct {
 	parser *tree_sitter.Parser
 }
 
-// Annotation represents a Java annotation with its name and parameters.
-type Annotation struct {
-	Name   string            // e.g., "RestController", "GetMapping"
-	Params map[string]string // e.g., {"value": "/api/users"}
-}
-
-// Method represents a Java method with annotations.
-type Method struct {
-	Name        string
-	Annotations []Annotation
-	Parameters  []Parameter
-	ReturnType  string
-}
-
-// Parameter represents a method parameter.
-type Parameter struct {
-	Name        string
-	Type        string
-	Annotations []Annotation
-}
-
-// Class represents a Java class with annotations and methods.
-type Class struct {
-	Name        string
-	Annotations []Annotation
-	Methods     []Method
-}
-
 // NewParser creates a new Java parser.
 func NewParser() (*Parser, error) {
 	parser := tree_sitter.NewParser()
