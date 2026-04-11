@@ -1,16 +1,16 @@
-go 1.22
+go 1.23
 
 use (
-	./api-model
 	./api-collector
-	./api-formatter
 	./api-collector-go
 	./api-collector-java
 	./api-collector-node
 	./api-collector-python
+	./api-formatter
 	./api-formatter-curl
 	./api-formatter-markdown
 	./api-formatter-postman
 	./api-master
+	./api-model
 	./apilot-cli
 )
