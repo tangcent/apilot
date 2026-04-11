@@ -1,0 +1,9 @@
+{
+  "name": "node-nestjs-sample",
+  "version": "1.0.0",
+  "dependencies": {
+    "@nestjs/common": "^10.0.0",
+    "@nestjs/core": "^10.0.0",
+    "reflect-metadata": "^0.1.13"
+  }
+}

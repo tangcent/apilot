@@ -1,0 +1,8 @@
+{
+  "name": "node-fastify-sample",
+  "version": "1.0.0",
+  "main": "app.js",
+  "dependencies": {
+    "fastify": "^4.24.3"
+  }
+}
