@@ -17,6 +17,11 @@ fi
 OUTPUT_DIR="$SCRIPT_DIR/.output"
 mkdir -p "$OUTPUT_DIR"
 
+# Debug: show paths
+echo "DEBUG: SCRIPT_DIR=$SCRIPT_DIR"
+echo "DEBUG: OUTPUT_DIR=$OUTPUT_DIR"
+echo "DEBUG: Absolute output path=$(cd "$OUTPUT_DIR" && pwd)/api.md"
+
 # Run apilot
 echo "Running apilot on $SAMPLE_NAME..."
 if ! apilot "$SCRIPT_DIR" --formatter markdown --output "$(cd "$OUTPUT_DIR" && pwd)/api.md" 2>&1; then
@@ -25,6 +30,17 @@ if ! apilot "$SCRIPT_DIR" --formatter markdown --output "$(cd "$OUTPUT_DIR" && p
 fi
 
 echo "apilot command completed successfully"
+
+# Debug: check if file exists
+echo "DEBUG: Checking if output file exists..."
+if [ -f "$(cd "$OUTPUT_DIR" && pwd)/api.md" ]; then
+    echo "DEBUG: Output file exists at $(cd "$OUTPUT_DIR" && pwd)/api.md"
+    echo "DEBUG: File size: $(wc -c < "$(cd "$OUTPUT_DIR" && pwd)/api.md") bytes"
+else
+    echo "DEBUG: Output file NOT found at $(cd "$OUTPUT_DIR" && pwd)/api.md"
+    echo "DEBUG: Listing files in OUTPUT_DIR:"
+    ls -la "$OUTPUT_DIR"
+fi
 
 # Verify output
 if [ ! -f "$OUTPUT_DIR/api.md" ]; then
