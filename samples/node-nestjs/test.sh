@@ -17,9 +17,9 @@ fi
 OUTPUT_DIR="$SCRIPT_DIR/.output"
 mkdir -p "$OUTPUT_DIR"
 
-# Run apilot export
-echo "Running apilot export on $SAMPLE_NAME..."
-apilot export "$SCRIPT_DIR" --formatter markdown --format simple --output "$OUTPUT_DIR/api.md"
+# Run apilot
+echo "Running apilot on $SAMPLE_NAME..."
+apilot "$SCRIPT_DIR" --formatter markdown --output "$OUTPUT_DIR/api.md"
 
 # Verify output
 if [ ! -f "$OUTPUT_DIR/api.md" ]; then
