@@ -115,6 +115,25 @@ func buildItem(ep apimodel.ApiEndpoint, p Params) model.Item {
 			URL:    url,
 			Body:   body,
 		},
+		Response: buildResponses(ep),
+	}
+}
+
+func buildResponses(ep apimodel.ApiEndpoint) []model.Response {
+	if ep.Response == nil || ep.Response.Example == nil {
+		return nil
+	}
+	bodyBytes, err := json.Marshal(ep.Response.Example)
+	if err != nil {
+		return nil
+	}
+	return []model.Response{
+		{
+			Name:   "Example response",
+			Status: "OK",
+			Code:   200,
+			Body:   string(bodyBytes),
+		},
 	}
 }
 
@@ -123,5 +142,15 @@ func splitPath(path string) []string {
 	if len(parts) == 1 && parts[0] == "" {
 		return nil
 	}
+	for i, p := range parts {
+		parts[i] = convertPathParam(p)
+	}
 	return parts
+}
+
+func convertPathParam(segment string) string {
+	if len(segment) >= 2 && segment[0] == '{' && segment[len(segment)-1] == '}' {
+		return ":" + segment[1:len(segment)-1]
+	}
+	return segment
 }
