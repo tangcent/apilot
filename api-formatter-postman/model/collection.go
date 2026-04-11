@@ -21,6 +21,7 @@ type ItemGroup struct {
 
 // Item represents a single Postman request.
 type Item struct {
-	Name    string  `json:"name"`
-	Request Request `json:"request"`
+	Name     string     `json:"name"`
+	Request  Request    `json:"request"`
+	Response []Response `json:"response,omitempty"`
 }
