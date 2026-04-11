@@ -1,6 +1,7 @@
 {
-  "name": "node-fastify-sample",
+  "name": "node-fastify-demo",
   "version": "1.0.0",
+  "description": "Fastify API demo",
   "main": "app.js",
   "dependencies": {
     "fastify": "^4.24.3"
