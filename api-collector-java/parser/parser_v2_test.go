@@ -219,3 +219,38 @@ func TestParserV2_LogLevels(t *testing.T) {
 		p.Close()
 	}
 }
+
+func TestParserV2_ConcurrentCacheAccess(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	opts := ParserOptions{
+		CacheDir: filepath.Join(tmpDir, "cache"),
+		LogLevel: LogLevelError,
+	}
+
+	p, err := NewParserV2(opts)
+	if err != nil {
+		t.Fatalf("Failed to create parser: %v", err)
+	}
+	defer p.Close()
+
+	testFile := "../testdata/UserController.java"
+
+	// Run 50 concurrent parse operations
+	const numGoroutines = 50
+	errChan := make(chan error, numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			_, err := p.ParseFile(testFile)
+			errChan <- err
+		}()
+	}
+
+	// Collect results
+	for i := 0; i < numGoroutines; i++ {
+		if err := <-errChan; err != nil {
+			t.Errorf("Concurrent parse failed: %v", err)
+		}
+	}
+}

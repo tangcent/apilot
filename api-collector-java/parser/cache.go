@@ -40,13 +40,14 @@ func (c *Cache) Get(filePath string, content []byte) (*ParseResult, bool) {
 		return nil, false
 	}
 
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
 	hash := c.computeHash(content)
 	cacheFile := c.getCacheFilePath(filePath, hash)
 
+	// Hold lock while reading file to prevent TOCTOU race
+	c.mu.RLock()
 	data, err := os.ReadFile(cacheFile)
+	c.mu.RUnlock()
+
 	if err != nil {
 		return nil, false
 	}

@@ -48,6 +48,14 @@
 - [ ] Wire parsers into `collector.go` `Collect()` — discover `.java`/`.kt` files, optionally resolve deps, delegate to framework parsers
 - [ ] Write unit tests for each parser with fixture Java source files
 
+#### Code Quality Improvements (MEDIUM Priority)
+
+- [ ] **Fix error handling in ParseDirectory** — `parser_v2.go:135` ignores ParseFile errors, should collect and report failed files
+- [ ] **Fix error handling in ParseDirectoryParallel** — `parser_v2.go:188` ignores ParseFile errors, should collect and report failed files
+- [ ] **Add input validation** — `parser_v2.go:51,110,143` should validate empty paths, relative paths, and non-.java files
+- [ ] **Fix encapsulation in ParseDirectoryParallel** — `parser_v2.go:179` directly accesses `cache.cacheDir` and `logger.level` private fields, use getter methods or pass ParserOptions
+- [ ] **Validate worker count** — `parser_v2.go:143` ParseDirectoryParallel should validate `workers > 0` to prevent deadlock
+
 ### api-collector-node
 
 - [ ] Spike: evaluate Node.js parsing strategy — `tree-sitter-typescript` CGO bindings vs. pure-Go JS/TS AST (e.g. `goja`) (document decision in `api-collector-node/NOTES.md`)

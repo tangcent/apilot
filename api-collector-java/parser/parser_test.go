@@ -37,6 +37,11 @@ func TestParseSpringMVCController(t *testing.T) {
 		t.Errorf("Expected class name 'UserController', got '%s'", class.Name)
 	}
 
+	// Verify package name
+	if class.Package != "com.example.demo.controller" {
+		t.Errorf("Expected package 'com.example.demo.controller', got '%s'", class.Package)
+	}
+
 	// Verify class annotations
 	if len(class.Annotations) < 2 {
 		t.Errorf("Expected at least 2 class annotations, got %d", len(class.Annotations))
@@ -136,6 +141,7 @@ func TestParseSpringMVCController(t *testing.T) {
 	// Print summary for manual verification
 	fmt.Println("\n=== Parsing Results ===")
 	fmt.Printf("Class: %s\n", class.Name)
+	fmt.Printf("Package: %s\n", class.Package)
 	fmt.Printf("Class Annotations: %d\n", len(class.Annotations))
 	for _, ann := range class.Annotations {
 		fmt.Printf("  - @%s", ann.Name)

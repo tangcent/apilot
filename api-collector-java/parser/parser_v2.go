@@ -15,6 +15,7 @@ type ParserV2 struct {
 	parser *tree_sitter.Parser
 	cache  *Cache
 	logger *Logger
+	mu     sync.Mutex // Protects parser access (tree-sitter is not thread-safe)
 }
 
 // ParserOptions configures parser behavior.
@@ -67,8 +68,11 @@ func (p *ParserV2) ParseFile(path string) (*ParseResult, error) {
 
 	p.logger.Debug("Cache miss for: %s", path)
 
-	// Parse the file
+	// Parse the file (tree-sitter parser is not thread-safe)
+	p.mu.Lock()
 	tree := p.parser.Parse(source, nil)
+	p.mu.Unlock()
+
 	if tree == nil {
 		err := fmt.Errorf("failed to parse file")
 		return &ParseResult{
@@ -219,15 +223,26 @@ func (p *ParserV2) Close() {
 // extractClasses extracts all classes from the AST (same as parser.go).
 func (p *ParserV2) extractClasses(tree *tree_sitter.Tree, source []byte) ([]Class, error) {
 	var classes []Class
+	var packageName string
 
 	rootNode := tree.RootNode()
 	cursor := rootNode.Walk()
 	defer cursor.Close()
 
+	// Extract package name first
+	for i := uint(0); i < rootNode.ChildCount(); i++ {
+		child := rootNode.Child(i)
+		if child.Kind() == "package_declaration" {
+			packageName = extractPackageName(child, source)
+			break
+		}
+	}
+
 	// Walk the tree to find class declarations
 	p.walkTree(cursor, source, func(node *tree_sitter.Node) {
 		if node.Kind() == "class_declaration" {
-			class := p.extractClass(node, source)
+			class := extractClass(node, source)
+			class.Package = packageName
 			classes = append(classes, class)
 		}
 	})
@@ -235,192 +250,9 @@ func (p *ParserV2) extractClasses(tree *tree_sitter.Tree, source []byte) ([]Clas
 	return classes, nil
 }
 
-// extractClass extracts class information (delegates to original parser.go logic).
-func (p *ParserV2) extractClass(node *tree_sitter.Node, source []byte) Class {
-	class := Class{}
-
-	// Extract class name
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		if child.Kind() == "identifier" {
-			class.Name = child.Utf8Text(source)
-			break
-		}
-	}
-
-	// Extract class annotations
-	class.Annotations = p.extractAnnotations(node, source)
-
-	// Extract methods
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		if child.Kind() == "class_body" {
-			class.Methods = p.extractMethods(child, source)
-			break
-		}
-	}
-
-	return class
-}
-
-// extractAnnotations extracts annotations from a node.
-func (p *ParserV2) extractAnnotations(node *tree_sitter.Node, source []byte) []Annotation {
-	var annotations []Annotation
-
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		if child.Kind() == "modifiers" {
-			for j := uint(0); j < child.ChildCount(); j++ {
-				modChild := child.Child(j)
-				if modChild.Kind() == "marker_annotation" || modChild.Kind() == "annotation" {
-					ann := p.extractAnnotation(modChild, source)
-					annotations = append(annotations, ann)
-				}
-			}
-		}
-	}
-
-	return annotations
-}
-
-// extractAnnotation extracts a single annotation.
-func (p *ParserV2) extractAnnotation(node *tree_sitter.Node, source []byte) Annotation {
-	ann := Annotation{
-		Params: make(map[string]string),
-	}
-
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-
-		switch child.Kind() {
-		case "identifier", "scoped_identifier":
-			ann.Name = child.Utf8Text(source)
-		case "annotation_argument_list":
-			p.extractAnnotationParams(child, source, ann.Params)
-		}
-	}
-
-	return ann
-}
-
-// extractAnnotationParams extracts annotation parameters.
-func (p *ParserV2) extractAnnotationParams(node *tree_sitter.Node, source []byte, params map[string]string) {
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-
-		if child.Kind() == "element_value_pair" {
-			var key, value string
-			for j := uint(0); j < child.ChildCount(); j++ {
-				subChild := child.Child(j)
-				if subChild.Kind() == "identifier" {
-					key = subChild.Utf8Text(source)
-				} else if subChild.Kind() == "string_literal" {
-					value = p.extractStringLiteral(subChild, source)
-				}
-			}
-			if key != "" {
-				params[key] = value
-			}
-		} else if child.Kind() == "string_literal" {
-			params["value"] = p.extractStringLiteral(child, source)
-		}
-	}
-}
-
-// extractStringLiteral extracts string content without quotes.
-func (p *ParserV2) extractStringLiteral(node *tree_sitter.Node, source []byte) string {
-	text := node.Utf8Text(source)
-	if len(text) >= 2 && text[0] == '"' && text[len(text)-1] == '"' {
-		return text[1 : len(text)-1]
-	}
-	return text
-}
-
-// extractMethods extracts all methods from a class body.
-func (p *ParserV2) extractMethods(classBody *tree_sitter.Node, source []byte) []Method {
-	var methods []Method
-
-	for i := uint(0); i < classBody.ChildCount(); i++ {
-		child := classBody.Child(i)
-		if child.Kind() == "method_declaration" {
-			method := p.extractMethod(child, source)
-			methods = append(methods, method)
-		}
-	}
-
-	return methods
-}
-
-// extractMethod extracts method information.
-func (p *ParserV2) extractMethod(node *tree_sitter.Node, source []byte) Method {
-	method := Method{}
-
-	method.Annotations = p.extractAnnotations(node, source)
-
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-
-		switch child.Kind() {
-		case "identifier":
-			method.Name = child.Utf8Text(source)
-		case "type_identifier", "generic_type":
-			method.ReturnType = child.Utf8Text(source)
-		case "formal_parameters":
-			method.Parameters = p.extractParameters(child, source)
-		}
-	}
-
-	return method
-}
-
-// extractParameters extracts method parameters.
-func (p *ParserV2) extractParameters(node *tree_sitter.Node, source []byte) []Parameter {
-	var params []Parameter
-
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		if child.Kind() == "formal_parameter" {
-			param := p.extractParameter(child, source)
-			params = append(params, param)
-		}
-	}
-
-	return params
-}
-
-// extractParameter extracts a single parameter.
-func (p *ParserV2) extractParameter(node *tree_sitter.Node, source []byte) Parameter {
-	param := Parameter{}
-
-	param.Annotations = p.extractAnnotations(node, source)
-
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-
-		switch child.Kind() {
-		case "type_identifier", "generic_type", "integral_type":
-			param.Type = child.Utf8Text(source)
-		case "identifier":
-			param.Name = child.Utf8Text(source)
-		}
-	}
-
-	return param
-}
-
 // walkTree walks the AST recursively.
 func (p *ParserV2) walkTree(cursor *tree_sitter.TreeCursor, source []byte, callback func(*tree_sitter.Node)) {
-	node := cursor.Node()
-	callback(node)
-
-	if cursor.GotoFirstChild() {
-		p.walkTree(cursor, source, callback)
-		cursor.GotoParent()
-	}
-
-	if cursor.GotoNextSibling() {
-		p.walkTree(cursor, source, callback)
-	}
+	walkTreeWithDepth(cursor, source, callback, 0)
 }
 
 // countErrors counts parse results with errors.
