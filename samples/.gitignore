@@ -1,0 +1,4 @@
+# Output directories from test runs
+.output/
+*.md
+!README.md

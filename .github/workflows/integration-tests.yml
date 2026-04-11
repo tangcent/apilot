@@ -1,4 +1,4 @@
-name: CI
+name: Integration Tests
 
 on:
   push:
@@ -30,30 +30,42 @@ jobs:
               core.setOutput('should-skip', 'false');
             }
 
-  build-test:
+  integration-test:
     needs: check-skip
     if: ${{ github.event_name != 'pull_request' || needs.check-skip.outputs.should-skip != 'true' }}
-    name: "Test on ${{ matrix.os }} / Go ${{ matrix.go-version }}"
+    name: "Integration Tests on ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
-        go-version: [ "1.22", "1.23" ]
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Go ${{ matrix.go-version }}
+      - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ matrix.go-version }}
+          go-version: "1.23"
 
-      - name: Test all modules
+      - name: Build apilot-cli
+        run: go build -o apilot ./apilot-cli
+        if: runner.os != 'Windows'
+
+      - name: Build apilot-cli (Windows)
+        run: go build -o apilot.exe ./apilot-cli
+        if: runner.os == 'Windows'
+
+      - name: Run integration tests
         shell: bash
         run: |
-          for mod in api-collector api-formatter api-collector-go api-collector-java api-collector-node api-collector-python api-formatter-curl api-formatter-markdown api-formatter-postman api-master apilot-cli; do
-            if [ -f "$mod/go.mod" ]; then
-              echo "==> Testing $mod"
-              (cd "$mod" && go test ./... && go vet ./...)
-            fi
-          done
+          # Make apilot accessible in PATH
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            export PATH="$PWD:$PATH"
+          else
+            chmod +x apilot
+            sudo mv apilot /usr/local/bin/
+          fi
+          
+          # Run integration tests
+          cd samples
+          bash run_all_tests.sh
