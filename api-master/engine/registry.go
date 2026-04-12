@@ -57,3 +57,15 @@ func ListFormatters() []string {
 	}
 	return out
 }
+
+// ListFormatterSettings returns all settings declared by registered formatters
+// that implement the SettingsProvider interface.
+func ListFormatterSettings() []formatter.SettingDef {
+	var all []formatter.SettingDef
+	for _, f := range formatters {
+		if sp, ok := f.(formatter.SettingsProvider); ok {
+			all = append(all, sp.RequiredSettings()...)
+		}
+	}
+	return all
+}

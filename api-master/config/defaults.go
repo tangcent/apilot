@@ -8,16 +8,35 @@ import (
 
 const (
 	DefaultPluginRegistryFilename = "plugins.json"
+	DefaultSettingsFilename       = "settings.json"
 	DefaultConfigDir              = ".config/apilot"
 )
 
-// DefaultPluginRegistryPath returns the default path to plugins.json,
-// respecting the API_MASTER_CONFIG_DIR environment variable if set.
-func DefaultPluginRegistryPath() string {
-	dir := os.Getenv("API_MASTER_CONFIG_DIR")
+// ConfigDir returns the base configuration directory path.
+//
+// The path is determined in the following order of precedence:
+//  1. APILOT_CONFIG_DIR environment variable (if set)
+//  2. ~/.config/apilot (default)
+//
+// Returns an empty string if the home directory cannot be determined
+// and APILOT_CONFIG_DIR is not set.
+func ConfigDir() string {
+	dir := os.Getenv("APILOT_CONFIG_DIR")
 	if dir == "" {
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
 		dir = filepath.Join(home, DefaultConfigDir)
+	}
+	return dir
+}
+
+// DefaultPluginRegistryPath returns the default path to plugins.json.
+func DefaultPluginRegistryPath() string {
+	dir := ConfigDir()
+	if dir == "" {
+		return ""
 	}
 	return filepath.Join(dir, DefaultPluginRegistryFilename)
 }
