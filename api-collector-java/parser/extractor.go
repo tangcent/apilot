@@ -43,6 +43,34 @@ func extractClass(node *tree_sitter.Node, source []byte) Class {
 	return class
 }
 
+// extractInterface extracts interface information including annotations and methods.
+func extractInterface(node *tree_sitter.Node, source []byte) Class {
+	class := Class{IsInterface: true}
+
+	// Extract interface name
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "identifier" {
+			class.Name = child.Utf8Text(source)
+			break
+		}
+	}
+
+	// Extract interface annotations
+	class.Annotations = extractAnnotations(node, source)
+
+	// Extract methods from interface body
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "interface_body" {
+			class.Methods = extractMethods(child, source)
+			break
+		}
+	}
+
+	return class
+}
+
 // extractAnnotations extracts annotations from a node.
 func extractAnnotations(node *tree_sitter.Node, source []byte) []Annotation {
 	var annotations []Annotation

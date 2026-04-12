@@ -22,10 +22,11 @@ type Parameter struct {
 	Annotations []Annotation
 }
 
-// Class represents a Java class with annotations and methods.
+// Class represents a Java class or interface with annotations and methods.
 type Class struct {
 	Name        string
 	Package     string
+	IsInterface bool
 	Annotations []Annotation
 	Methods     []Method
 }
