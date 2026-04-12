@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/tangcent/apilot/api-collector"
-	"github.com/tangcent/apilot/api-formatter"
+	collector "github.com/tangcent/apilot/api-collector"
+	formatter "github.com/tangcent/apilot/api-formatter"
 	"github.com/tangcent/apilot/api-master/config"
 	"github.com/tangcent/apilot/api-master/plugin"
 )

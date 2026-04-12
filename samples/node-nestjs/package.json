@@ -1,9 +1,10 @@
 {
-  "name": "node-nestjs-sample",
+  "name": "node-nestjs-demo",
   "version": "1.0.0",
+  "description": "NestJS API demo",
+  "main": "main.ts",
   "dependencies": {
     "@nestjs/common": "^10.0.0",
-    "@nestjs/core": "^10.0.0",
-    "reflect-metadata": "^0.1.13"
+    "@nestjs/core": "^10.0.0"
   }
 }
