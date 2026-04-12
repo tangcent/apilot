@@ -356,6 +356,8 @@ func TestListFormatterSettings(t *testing.T) {
 }
 
 func TestRunCLI_SettingsCommand(t *testing.T) {
+	ResetRegistry()
+
 	originalArgs := os.Args
 	defer func() { os.Args = originalArgs }()
 

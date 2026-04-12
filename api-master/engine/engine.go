@@ -305,17 +305,17 @@ func maskValue(value string) string {
 }
 
 func printHelp() {
-	fmt.Fprintln(os.Stderr, "Usage: apilot <command> [arguments]")
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "Commands:")
-	fmt.Fprintln(os.Stderr, "  export <source-path> [flags]  Export API endpoints from source code")
-	fmt.Fprintln(os.Stderr, "  settings                      List settings required by formatters")
-	fmt.Fprintln(os.Stderr, "  set <key> <value>             Set a configuration value")
-	fmt.Fprintln(os.Stderr, "  get <key>                     Get a configuration value")
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "Run 'apilot export --help' for export flags.")
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "Shorthand: 'apilot <source-path> [flags]' is equivalent to 'apilot export <source-path> [flags]'.")
+	fmt.Println("Usage: apilot <command> [arguments]")
+	fmt.Println("")
+	fmt.Println("Commands:")
+	fmt.Println("  export <source-path> [flags]  Export API endpoints from source code")
+	fmt.Println("  settings                      List settings required by formatters")
+	fmt.Println("  set <key> <value>             Set a configuration value")
+	fmt.Println("  get <key>                     Get a configuration value")
+	fmt.Println("")
+	fmt.Println("Run 'apilot export --help' for export flags.")
+	fmt.Println("")
+	fmt.Println("Shorthand: 'apilot <source-path> [flags]' is equivalent to 'apilot export <source-path> [flags]'.")
 }
 
 func printExportHelp() {

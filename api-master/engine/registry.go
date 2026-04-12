@@ -12,6 +12,11 @@ var (
 	formatters = map[string]formatter.Formatter{}
 )
 
+func ResetRegistry() {
+	collectors = map[string]collector.Collector{}
+	formatters = map[string]formatter.Formatter{}
+}
+
 // RegisterCollector adds a Collector to the in-process registry.
 func RegisterCollector(c collector.Collector) {
 	collectors[c.Name()] = c
