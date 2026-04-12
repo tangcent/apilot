@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/tangcent/apilot/api-formatter-postman/model"
 )
 
 const defaultPostmanAPIBase = "https://api.getpostman.com"
@@ -21,8 +23,8 @@ type CreateCollectionRequest struct {
 }
 
 type CollectionWrapper struct {
-	Info CollectionInfo `json:"info"`
-	Item []ItemGroup    `json:"item"`
+	Info CollectionInfo    `json:"info"`
+	Item []model.ItemGroup `json:"item"`
 }
 
 type CollectionInfo struct {
@@ -65,7 +67,7 @@ func newPostmanClient(apiKey string) PostmanClient {
 	}
 }
 
-func (c PostmanClient) CreateCollection(workspaceID string, col Collection) (*CreateCollectionResponse, error) {
+func (c PostmanClient) CreateCollection(workspaceID string, col model.Collection) (*CreateCollectionResponse, error) {
 	reqBody := CreateCollectionRequest{
 		Collection: CollectionWrapper{
 			Info: CollectionInfo{
@@ -120,7 +122,7 @@ func (c PostmanClient) CreateCollection(workspaceID string, col Collection) (*Cr
 	return &result, nil
 }
 
-func (c PostmanClient) UpdateCollection(collectionUID string, col Collection) (*UpdateCollectionResponse, error) {
+func (c PostmanClient) UpdateCollection(collectionUID string, col model.Collection) (*UpdateCollectionResponse, error) {
 	reqBody := CreateCollectionRequest{
 		Collection: CollectionWrapper{
 			Info: CollectionInfo{
