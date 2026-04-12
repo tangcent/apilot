@@ -140,7 +140,7 @@ func RunCLI() {
 	case "export":
 		handleExport(args[1:])
 	case "--help", "-h", "help":
-		printHelp()
+		printExportHelp()
 	default:
 		if strings.HasPrefix(subcommand, "-") {
 			handleExport(args)
@@ -319,29 +319,29 @@ func printHelp() {
 }
 
 func printExportHelp() {
-	fmt.Fprintln(os.Stderr, "Usage: apilot export <source-path> [flags]")
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "Flags:")
-	fmt.Fprintln(os.Stderr, "  --collector string")
-	fmt.Fprintln(os.Stderr, "        collector name (auto-detect if omitted)")
-	fmt.Fprintln(os.Stderr, "  --formatter string")
-	fmt.Fprintln(os.Stderr, "        formatter name (default: markdown)")
-	fmt.Fprintln(os.Stderr, "  --params string")
-	fmt.Fprintln(os.Stderr, "        formatter params as JSON (e.g. '{\"variant\":\"detailed\"}')")
-	fmt.Fprintln(os.Stderr, "  --output string")
-	fmt.Fprintln(os.Stderr, "        output file path (default: stdout)")
-	fmt.Fprintln(os.Stderr, "  --plugin-registry string")
-	fmt.Fprintln(os.Stderr, "        path to plugins.json")
-	fmt.Fprintln(os.Stderr, "  --list-collectors")
-	fmt.Fprintln(os.Stderr, "        print registered collectors and exit")
-	fmt.Fprintln(os.Stderr, "  --list-formatters")
-	fmt.Fprintln(os.Stderr, "        print registered formatters and exit")
-	fmt.Fprintln(os.Stderr, "  --help")
-	fmt.Fprintln(os.Stderr, "        print help and exit")
-	fmt.Fprintln(os.Stderr, "")
+	fmt.Println("Usage: apilot <source-path> [flags]")
+	fmt.Println("")
+	fmt.Println("Flags:")
+	fmt.Println("  --collector string")
+	fmt.Println("        collector name (auto-detect if omitted)")
+	fmt.Println("  --formatter string")
+	fmt.Println("        formatter name (default: markdown)")
+	fmt.Println("  --params string")
+	fmt.Println("        formatter params as JSON (e.g. '{\"variant\":\"detailed\"}')")
+	fmt.Println("  --output string")
+	fmt.Println("        output file path (default: stdout)")
+	fmt.Println("  --plugin-registry string")
+	fmt.Println("        path to plugins.json")
+	fmt.Println("  --list-collectors")
+	fmt.Println("        print registered collectors and exit")
+	fmt.Println("  --list-formatters")
+	fmt.Println("        print registered formatters and exit")
+	fmt.Println("  --help")
+	fmt.Println("        print help and exit")
+	fmt.Println("")
 
 	printCollectors()
-	fmt.Fprintln(os.Stderr, "")
+	fmt.Println("")
 
 	printFormatters()
 }

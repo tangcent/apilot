@@ -331,8 +331,9 @@ func TestConfigDir_Default(t *testing.T) {
 	if dir == "" {
 		t.Fatal("ConfigDir() returned empty string")
 	}
-	if !strings.HasSuffix(dir, ".config/apilot") {
-		t.Errorf("Expected dir to end with '.config/apilot', got %q", dir)
+	expectedSuffix := filepath.FromSlash(".config/apilot")
+	if !strings.HasSuffix(dir, expectedSuffix) {
+		t.Errorf("Expected dir to end with %q, got %q", expectedSuffix, dir)
 	}
 }
 

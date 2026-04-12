@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tangcent/apilot/api-collector"
-	"github.com/tangcent/apilot/api-formatter"
+	collector "github.com/tangcent/apilot/api-collector"
+	formatter "github.com/tangcent/apilot/api-formatter"
 	"github.com/tangcent/apilot/api-master/config"
 )
 
@@ -188,9 +188,9 @@ func TestRun_CollectorError(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	RegisterCollector(&mockCollector{
-		name:          "error-collector",
+		name:           "error-collector",
 		supportedLangs: []string{"test"},
-		collectError:  fmt.Errorf("collection failed"),
+		collectError:   fmt.Errorf("collection failed"),
 	})
 
 	cfg := Config{
@@ -442,8 +442,8 @@ func TestRunCLI_HelpCommand(t *testing.T) {
 	output.ReadFrom(r)
 
 	result := output.String()
-	if !strings.Contains(result, "Commands:") {
-		t.Errorf("Expected 'Commands:' in help output, got: %s", result)
+	if !strings.Contains(result, "Flags:") {
+		t.Errorf("Expected 'Flags:' in help output, got: %s", result)
 	}
 }
 
