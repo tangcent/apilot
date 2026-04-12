@@ -9,7 +9,7 @@ import (
 
 func TestIntegration_ParseRealController(t *testing.T) {
 	// Create parser
-	p, err := parser.NewParserV2(parser.ParserOptions{
+	p, err := parser.NewParser(parser.ParserOptions{
 		LogLevel: parser.LogLevelError,
 	})
 	if err != nil {
@@ -109,7 +109,7 @@ func TestIntegration_ParseRealController(t *testing.T) {
 
 func TestIntegration_ParseDirectory(t *testing.T) {
 	// Create parser
-	p, err := parser.NewParserV2(parser.ParserOptions{
+	p, err := parser.NewParser(parser.ParserOptions{
 		LogLevel: parser.LogLevelError,
 	})
 	if err != nil {
