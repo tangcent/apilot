@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	collector "github.com/tangcent/apilot/api-collector"
 	formatter "github.com/tangcent/apilot/api-formatter"
@@ -12,32 +13,27 @@ import (
 	"github.com/tangcent/apilot/api-master/plugin"
 )
 
-// Config holds the runtime configuration for a single engine run.
 type Config struct {
 	SourceDir      string
-	CollectorName  string // empty = auto-detect
-	FormatterName  string // default: "markdown"
-	FormatParams   string // raw JSON passed as FormatOptions.Params (e.g. `{"variant":"detailed"}`)
-	OutputPath     string // empty = stdout
-	PluginRegistry string // path to plugins.json
+	CollectorName  string
+	FormatterName  string
+	FormatParams   string
+	OutputPath     string
+	PluginRegistry string
 }
 
-// Run executes the full collect → format → output pipeline.
 func Run(cfg Config) error {
-	// 1. Resolve collector
 	c, err := resolveCollector(cfg)
 	if err != nil {
 		return fmt.Errorf("collector: %w", err)
 	}
 
-	// 2. Collect endpoints
 	ctx := collector.CollectContext{SourceDir: cfg.SourceDir}
 	endpoints, err := c.Collect(ctx)
 	if err != nil {
 		return fmt.Errorf("collection failed: %w", err)
 	}
 
-	// 3. Resolve formatter
 	formatterName := cfg.FormatterName
 	if formatterName == "" {
 		formatterName = "markdown"
@@ -47,8 +43,15 @@ func Run(cfg Config) error {
 		return fmt.Errorf("formatter: %w", err)
 	}
 
-	// 4. Format
-	opts := formatter.FormatOptions{}
+	settings := config.NewLazySettings()
+
+	if checkErr := checkRequiredSettings(f, settings); checkErr != nil {
+		return checkErr
+	}
+
+	opts := formatter.FormatOptions{
+		Settings: settings,
+	}
 	if cfg.FormatParams != "" {
 		opts.Params = []byte(cfg.FormatParams)
 	}
@@ -57,8 +60,22 @@ func Run(cfg Config) error {
 		return fmt.Errorf("formatting failed: %w", err)
 	}
 
-	// 5. Write output
 	return writeOutput(cfg.OutputPath, output)
+}
+
+func checkRequiredSettings(f formatter.Formatter, settings formatter.Settings) error {
+	sp, ok := f.(formatter.SettingsProvider)
+	if !ok {
+		return nil
+	}
+	for _, def := range sp.RequiredSettings() {
+		if def.Required {
+			if settings.Get(def.Key) == "" {
+				return fmt.Errorf("setting %q is required for formatter %q but not configured. Set it with: apilot set %s <value>", def.Key, f.Name(), def.Key)
+			}
+		}
+	}
+	return nil
 }
 
 func resolveCollector(cfg Config) (collector.Collector, error) {
@@ -73,8 +90,6 @@ func resolveCollector(cfg Config) (collector.Collector, error) {
 	return LookupCollector(name)
 }
 
-// detectCollector inspects the source directory for well-known indicator files
-// and returns the name of the most appropriate registered collector.
 func detectCollector(sourceDir string) (string, error) {
 	indicators := []struct {
 		file      string
@@ -106,8 +121,100 @@ func writeOutput(path string, data []byte) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-// RunCLI parses os.Args and calls Run. Used by apilot-cli and api-master main.
 func RunCLI() {
+	args := os.Args[1:]
+
+	if len(args) == 0 {
+		printHelp()
+		os.Exit(1)
+	}
+
+	subcommand := args[0]
+	switch subcommand {
+	case "settings":
+		handleSettings()
+	case "set":
+		handleSet(args[1:])
+	case "get":
+		handleGet(args[1:])
+	case "export":
+		handleExport(args[1:])
+	case "--help", "-h", "help":
+		printExportHelp()
+	default:
+		if strings.HasPrefix(subcommand, "-") {
+			handleExport(args)
+		} else {
+			handleExport(args)
+		}
+	}
+}
+
+func handleSettings() {
+	loadPlugins()
+
+	settingDefs := ListFormatterSettings()
+	if len(settingDefs) == 0 {
+		fmt.Println("No settings required by registered formatters.")
+		return
+	}
+
+	settings, err := config.LoadSettings()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not load settings: %v\n", err)
+		settings = map[string]string{}
+	}
+	settingsReader := config.NewMapSettings(settings)
+
+	fmt.Println("Settings:")
+	for _, def := range settingDefs {
+		value := settingsReader.Get(def.Key)
+		if value != "" {
+			masked := maskValue(value)
+			fmt.Printf("  %-30s %s (current: %s)\n", def.Key, def.Description, masked)
+		} else {
+			required := ""
+			if def.Required {
+				required = " [required]"
+			}
+			fmt.Printf("  %-30s %s%s\n", def.Key, def.Description, required)
+		}
+	}
+}
+
+func handleSet(args []string) {
+	if len(args) < 2 {
+		fmt.Fprintf(os.Stderr, "Usage: apilot set <key> <value>\n")
+		os.Exit(1)
+	}
+	key := args[0]
+	value := args[1]
+	if err := config.SetSetting(key, value); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Set %s\n", key)
+}
+
+func handleGet(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr, "Usage: apilot get <key>\n")
+		os.Exit(1)
+	}
+	key := args[0]
+	value, err := config.GetSetting(key)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	if value == "" {
+		fmt.Fprintf(os.Stderr, "Setting %q not found\n", key)
+		os.Exit(1)
+	}
+	fmt.Println(value)
+}
+
+func handleExport(args []string) {
 	var (
 		collectorName  string
 		formatterName  string
@@ -119,20 +226,21 @@ func RunCLI() {
 		showHelp       bool
 	)
 
-	flag.StringVar(&collectorName, "collector", "", "collector name (auto-detect if omitted)")
-	flag.StringVar(&formatterName, "formatter", "markdown", "formatter name (default: markdown)")
-	flag.StringVar(&formatParams, "params", "", "formatter params as JSON (e.g. '{\"variant\":\"detailed\"}')")
-	flag.StringVar(&outputPath, "output", "", "output file path (default: stdout)")
-	flag.StringVar(&pluginRegistry, "plugin-registry", "", "path to plugins.json")
-	flag.BoolVar(&listCollectors, "list-collectors", false, "print registered collectors and exit")
-	flag.BoolVar(&listFormatters, "list-formatters", false, "print registered formatters and exit")
-	flag.BoolVar(&showHelp, "help", false, "print help and exit")
+	fs := flag.NewFlagSet("export", flag.ContinueOnError)
+	fs.StringVar(&collectorName, "collector", "", "collector name (auto-detect if omitted)")
+	fs.StringVar(&formatterName, "formatter", "markdown", "formatter name (default: markdown)")
+	fs.StringVar(&formatParams, "params", "", "formatter params as JSON (e.g. '{\"variant\":\"detailed\"}')")
+	fs.StringVar(&outputPath, "output", "", "output file path (default: stdout)")
+	fs.StringVar(&pluginRegistry, "plugin-registry", "", "path to plugins.json")
+	fs.BoolVar(&listCollectors, "list-collectors", false, "print registered collectors and exit")
+	fs.BoolVar(&listFormatters, "list-formatters", false, "print registered formatters and exit")
+	fs.BoolVar(&showHelp, "help", false, "print help and exit")
 
-	flag.Usage = func() {
-		printHelp()
+	fs.Usage = func() {
+		printExportHelp()
 	}
 
-	flag.Parse()
+	fs.Parse(args)
 
 	if pluginRegistry == "" {
 		pluginRegistry = config.DefaultPluginRegistryPath()
@@ -144,7 +252,7 @@ func RunCLI() {
 	}
 
 	if showHelp {
-		printHelp()
+		printExportHelp()
 		os.Exit(0)
 	}
 
@@ -158,14 +266,14 @@ func RunCLI() {
 		return
 	}
 
-	args := flag.Args()
-	if len(args) == 0 {
+	remaining := fs.Args()
+	if len(remaining) == 0 {
 		fmt.Fprintf(os.Stderr, "error: source path required\n\n")
-		printHelp()
+		printExportHelp()
 		os.Exit(1)
 	}
 
-	sourceDir := args[0]
+	sourceDir := remaining[0]
 
 	cfg := Config{
 		SourceDir:      sourceDir,
@@ -182,30 +290,58 @@ func RunCLI() {
 	}
 }
 
+func loadPlugins() {
+	pluginRegistry := config.DefaultPluginRegistryPath()
+	if err := plugin.LoadRegistry(pluginRegistry, RegisterCollector, RegisterFormatter); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not load plugin registry: %v\n", err)
+	}
+}
+
+func maskValue(value string) string {
+	if len(value) <= 8 {
+		return "****"
+	}
+	return value[:4] + "****" + value[len(value)-4:]
+}
+
 func printHelp() {
-	fmt.Fprintln(os.Stderr, "Usage: apilot <source-path> [flags]")
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "Flags:")
-	fmt.Fprintln(os.Stderr, "  --collector string")
-	fmt.Fprintln(os.Stderr, "        collector name (auto-detect if omitted)")
-	fmt.Fprintln(os.Stderr, "  --formatter string")
-	fmt.Fprintln(os.Stderr, "        formatter name (default: markdown)")
-	fmt.Fprintln(os.Stderr, "  --params string")
-	fmt.Fprintln(os.Stderr, "        formatter params as JSON (e.g. '{\"variant\":\"detailed\"}')")
-	fmt.Fprintln(os.Stderr, "  --output string")
-	fmt.Fprintln(os.Stderr, "        output file path (default: stdout)")
-	fmt.Fprintln(os.Stderr, "  --plugin-registry string")
-	fmt.Fprintln(os.Stderr, "        path to plugins.json")
-	fmt.Fprintln(os.Stderr, "  --list-collectors")
-	fmt.Fprintln(os.Stderr, "        print registered collectors and exit")
-	fmt.Fprintln(os.Stderr, "  --list-formatters")
-	fmt.Fprintln(os.Stderr, "        print registered formatters and exit")
-	fmt.Fprintln(os.Stderr, "  --help")
-	fmt.Fprintln(os.Stderr, "        print help and exit")
-	fmt.Fprintln(os.Stderr, "")
+	fmt.Println("Usage: apilot <command> [arguments]")
+	fmt.Println("")
+	fmt.Println("Commands:")
+	fmt.Println("  export <source-path> [flags]  Export API endpoints from source code")
+	fmt.Println("  settings                      List settings required by formatters")
+	fmt.Println("  set <key> <value>             Set a configuration value")
+	fmt.Println("  get <key>                     Get a configuration value")
+	fmt.Println("")
+	fmt.Println("Run 'apilot export --help' for export flags.")
+	fmt.Println("")
+	fmt.Println("Shorthand: 'apilot <source-path> [flags]' is equivalent to 'apilot export <source-path> [flags]'.")
+}
+
+func printExportHelp() {
+	fmt.Println("Usage: apilot <source-path> [flags]")
+	fmt.Println("")
+	fmt.Println("Flags:")
+	fmt.Println("  --collector string")
+	fmt.Println("        collector name (auto-detect if omitted)")
+	fmt.Println("  --formatter string")
+	fmt.Println("        formatter name (default: markdown)")
+	fmt.Println("  --params string")
+	fmt.Println("        formatter params as JSON (e.g. '{\"variant\":\"detailed\"}')")
+	fmt.Println("  --output string")
+	fmt.Println("        output file path (default: stdout)")
+	fmt.Println("  --plugin-registry string")
+	fmt.Println("        path to plugins.json")
+	fmt.Println("  --list-collectors")
+	fmt.Println("        print registered collectors and exit")
+	fmt.Println("  --list-formatters")
+	fmt.Println("        print registered formatters and exit")
+	fmt.Println("  --help")
+	fmt.Println("        print help and exit")
+	fmt.Println("")
 
 	printCollectors()
-	fmt.Fprintln(os.Stderr, "")
+	fmt.Println("")
 
 	printFormatters()
 }

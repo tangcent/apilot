@@ -212,3 +212,118 @@ func TestFormat_NoResponseWhenNil(t *testing.T) {
 		t.Errorf("Expected no response examples, got %d", len(item.Response))
 	}
 }
+
+func TestRequiredSettings(t *testing.T) {
+	f := New()
+	sp, ok := f.(formatter.SettingsProvider)
+	if !ok {
+		t.Fatal("PostmanFormatter should implement SettingsProvider")
+	}
+
+	settings := sp.RequiredSettings()
+	if len(settings) != 1 {
+		t.Fatalf("Expected 1 setting, got %d", len(settings))
+	}
+	if settings[0].Key != "postman.api.key" {
+		t.Errorf("Expected key 'postman.api.key', got %q", settings[0].Key)
+	}
+	if settings[0].Required {
+		t.Error("postman.api.key should not be required (formatter works in file mode)")
+	}
+}
+
+func TestResolveAPIKey_FromSettings(t *testing.T) {
+	p := Params{PostmanAPIKey: "from-params"}
+	opts := formatter.FormatOptions{
+		Settings: &mapSettings{"postman.api.key": "from-settings"},
+	}
+
+	key := resolveAPIKey(p, opts)
+	if key != "from-settings" {
+		t.Errorf("Expected 'from-settings', got %q", key)
+	}
+}
+
+func TestResolveAPIKey_FromParams(t *testing.T) {
+	p := Params{PostmanAPIKey: "from-params"}
+	opts := formatter.FormatOptions{}
+
+	key := resolveAPIKey(p, opts)
+	if key != "from-params" {
+		t.Errorf("Expected 'from-params', got %q", key)
+	}
+}
+
+func TestResolveAPIKey_SettingsTakesPrecedence(t *testing.T) {
+	p := Params{PostmanAPIKey: "from-params"}
+	opts := formatter.FormatOptions{
+		Settings: &mapSettings{"postman.api.key": "from-settings"},
+	}
+
+	key := resolveAPIKey(p, opts)
+	if key != "from-settings" {
+		t.Errorf("Settings should take precedence over params, got %q", key)
+	}
+}
+
+func TestResolveAPIKey_EmptySettings(t *testing.T) {
+	p := Params{PostmanAPIKey: "from-params"}
+	opts := formatter.FormatOptions{
+		Settings: &mapSettings{"postman.api.key": ""},
+	}
+
+	key := resolveAPIKey(p, opts)
+	if key != "from-params" {
+		t.Errorf("Empty settings value should fall back to params, got %q", key)
+	}
+}
+
+func TestResolveAPIKey_None(t *testing.T) {
+	p := Params{}
+	opts := formatter.FormatOptions{}
+
+	key := resolveAPIKey(p, opts)
+	if key != "" {
+		t.Errorf("Expected empty string when no key configured, got %q", key)
+	}
+}
+
+func TestFormat_APIMode_NoAPIKey(t *testing.T) {
+	f := New()
+	endpoints := []model.ApiEndpoint{
+		{Name: "Get Users", Path: "/users", Method: "GET"},
+	}
+	params := Params{Mode: "api"}
+	paramsJSON, _ := json.Marshal(params)
+	opts := formatter.FormatOptions{Params: paramsJSON}
+
+	_, err := f.Format(endpoints, opts)
+	if err == nil {
+		t.Fatal("Expected error for api mode without API key, got nil")
+	}
+	if !strings.Contains(err.Error(), "postman api key is required") {
+		t.Errorf("Expected 'postman api key is required' in error, got: %v", err)
+	}
+}
+
+func TestFormat_FileMode_Default(t *testing.T) {
+	f := New()
+	endpoints := []model.ApiEndpoint{
+		{Name: "Get Users", Path: "/users", Method: "GET"},
+	}
+	opts := formatter.FormatOptions{}
+
+	output, err := f.Format(endpoints, opts)
+	if err != nil {
+		t.Fatalf("Format() error = %v", err)
+	}
+
+	var col postmanmodel.Collection
+	if err := json.Unmarshal(output, &col); err != nil {
+		t.Fatalf("Output should be valid collection JSON: %v", err)
+	}
+}
+
+type mapSettings map[string]string
+
+func (s mapSettings) Get(key string) string { return s[key] }

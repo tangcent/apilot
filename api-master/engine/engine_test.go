@@ -2,27 +2,21 @@ package engine
 
 import (
 	"bytes"
-	"flag"
 	"fmt"
 	"os"
 	"strings"
 	"testing"
 
-	"github.com/tangcent/apilot/api-collector"
-	"github.com/tangcent/apilot/api-formatter"
+	collector "github.com/tangcent/apilot/api-collector"
+	formatter "github.com/tangcent/apilot/api-formatter"
+	"github.com/tangcent/apilot/api-master/config"
 )
 
-func resetFlags() {
-	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
-	flag.CommandLine.SetOutput(&bytes.Buffer{})
-}
-
 func TestRunCLI_ListCollectors(t *testing.T) {
-	resetFlags()
 	originalArgs := os.Args
 	defer func() { os.Args = originalArgs }()
 
-	os.Args = []string{"api-master", "--list-collectors"}
+	os.Args = []string{"apilot", "export", "--list-collectors"}
 
 	var output bytes.Buffer
 	originalStdout := os.Stdout
@@ -42,11 +36,10 @@ func TestRunCLI_ListCollectors(t *testing.T) {
 }
 
 func TestRunCLI_ListFormatters(t *testing.T) {
-	resetFlags()
 	originalArgs := os.Args
 	defer func() { os.Args = originalArgs }()
 
-	os.Args = []string{"api-master", "--list-formatters"}
+	os.Args = []string{"apilot", "export", "--list-formatters"}
 
 	var output bytes.Buffer
 	originalStdout := os.Stdout
@@ -75,8 +68,8 @@ func TestRun_HappyPath(t *testing.T) {
 	})
 
 	RegisterFormatter(&mockFormatter{
-		name:           "test-formatter",
-		formatOutput:   []byte("formatted output"),
+		name:         "test-formatter",
+		formatOutput: []byte("formatted output"),
 	})
 
 	cfg := Config{
@@ -164,8 +157,8 @@ func TestRun_WriteToFile(t *testing.T) {
 	})
 
 	RegisterFormatter(&mockFormatter{
-		name:           "test-formatter",
-		formatOutput:   []byte("formatted output to file"),
+		name:         "test-formatter",
+		formatOutput: []byte("formatted output to file"),
 	})
 
 	cfg := Config{
@@ -195,9 +188,9 @@ func TestRun_CollectorError(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	RegisterCollector(&mockCollector{
-		name:          "error-collector",
+		name:           "error-collector",
 		supportedLangs: []string{"test"},
-		collectError:  fmt.Errorf("collection failed"),
+		collectError:   fmt.Errorf("collection failed"),
 	})
 
 	cfg := Config{
@@ -227,8 +220,8 @@ func TestRun_FormatterError(t *testing.T) {
 	})
 
 	RegisterFormatter(&mockFormatter{
-		name:          "error-formatter",
-		formatError:   fmt.Errorf("formatting failed"),
+		name:        "error-formatter",
+		formatError: fmt.Errorf("formatting failed"),
 	})
 
 	cfg := Config{
@@ -248,18 +241,210 @@ func TestRun_FormatterError(t *testing.T) {
 	}
 }
 
-type mockFormatter struct {
-	name         string
-	formatOutput []byte
-	formatError  error
+func TestRun_SettingsInjectedIntoFormatOptions(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir := tmpDir + "/config"
+	os.Setenv("APILOT_CONFIG_DIR", configDir)
+	defer os.Unsetenv("APILOT_CONFIG_DIR")
+
+	config.SetSetting("test.key", "test-value")
+
+	RegisterCollector(&mockCollector{
+		name:             "test-collector",
+		supportedLangs:   []string{"test"},
+		collectEndpoints: []collector.ApiEndpoint{{Name: "test-endpoint"}},
+	})
+
+	RegisterFormatter(&mockFormatterWithSettings{
+		name: "settings-formatter",
+	})
+
+	cfg := Config{
+		SourceDir:      tmpDir,
+		CollectorName:  "test-collector",
+		FormatterName:  "settings-formatter",
+		OutputPath:     "",
+		PluginRegistry: "",
+	}
+
+	err := Run(cfg)
+	if err != nil {
+		t.Errorf("Expected no error, got: %v", err)
+	}
 }
 
-func (m *mockFormatter) Name() string {
-	return m.name
+func TestRun_RequiredSettingMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir := tmpDir + "/config2"
+	os.Setenv("APILOT_CONFIG_DIR", configDir)
+	defer os.Unsetenv("APILOT_CONFIG_DIR")
+
+	RegisterCollector(&mockCollector{
+		name:             "test-collector",
+		supportedLangs:   []string{"test"},
+		collectEndpoints: []collector.ApiEndpoint{{Name: "test-endpoint"}},
+	})
+
+	RegisterFormatter(&mockFormatterWithRequiredSetting{
+		name: "required-setting-formatter",
+	})
+
+	cfg := Config{
+		SourceDir:      tmpDir,
+		CollectorName:  "test-collector",
+		FormatterName:  "required-setting-formatter",
+		OutputPath:     "",
+		PluginRegistry: "",
+	}
+
+	err := Run(cfg)
+	if err == nil {
+		t.Error("Expected error for missing required setting, got nil")
+	}
+	if !strings.Contains(err.Error(), "required.key") {
+		t.Errorf("Expected 'required.key' in error, got: %v", err)
+	}
 }
 
-func (m *mockFormatter) Format(endpoints []collector.ApiEndpoint, opts formatter.FormatOptions) ([]byte, error) {
-	return m.formatOutput, m.formatError
+func TestRun_RequiredSettingPresent(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir := tmpDir + "/config3"
+	os.Setenv("APILOT_CONFIG_DIR", configDir)
+	defer os.Unsetenv("APILOT_CONFIG_DIR")
+
+	config.SetSetting("required.key", "required-value")
+
+	RegisterCollector(&mockCollector{
+		name:             "test-collector",
+		supportedLangs:   []string{"test"},
+		collectEndpoints: []collector.ApiEndpoint{{Name: "test-endpoint"}},
+	})
+
+	RegisterFormatter(&mockFormatterWithRequiredSetting{
+		name: "required-setting-formatter",
+	})
+
+	cfg := Config{
+		SourceDir:      tmpDir,
+		CollectorName:  "test-collector",
+		FormatterName:  "required-setting-formatter",
+		OutputPath:     "",
+		PluginRegistry: "",
+	}
+
+	err := Run(cfg)
+	if err != nil {
+		t.Errorf("Expected no error when required setting is present, got: %v", err)
+	}
+}
+
+func TestListFormatterSettings(t *testing.T) {
+	saved := formatters
+	formatters = map[string]formatter.Formatter{}
+	defer func() { formatters = saved }()
+
+	RegisterFormatter(&mockFormatterWithSettings{name: "fmt-with-settings"})
+	RegisterFormatter(&mockFormatter{name: "fmt-without-settings"})
+
+	settingDefs := ListFormatterSettings()
+	if len(settingDefs) != 1 {
+		t.Fatalf("Expected 1 setting, got %d", len(settingDefs))
+	}
+	if settingDefs[0].Key != "test.key" {
+		t.Errorf("Expected key 'test.key', got %q", settingDefs[0].Key)
+	}
+}
+
+func TestRunCLI_SettingsCommand(t *testing.T) {
+	ResetRegistry()
+
+	originalArgs := os.Args
+	defer func() { os.Args = originalArgs }()
+
+	os.Args = []string{"apilot", "settings"}
+
+	var output bytes.Buffer
+	originalStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	RunCLI()
+
+	w.Close()
+	os.Stdout = originalStdout
+	output.ReadFrom(r)
+
+	result := output.String()
+	if !strings.Contains(result, "No settings required") {
+		t.Errorf("Expected 'No settings required' in output, got: %s", result)
+	}
+}
+
+func TestRunCLI_SetAndGetCommand(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir := tmpDir + "/config"
+	os.Setenv("APILOT_CONFIG_DIR", configDir)
+	defer os.Unsetenv("APILOT_CONFIG_DIR")
+
+	originalArgs := os.Args
+	defer func() { os.Args = originalArgs }()
+
+	os.Args = []string{"apilot", "set", "test.cli.key", "test-cli-value"}
+
+	var setOutput bytes.Buffer
+	setStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	RunCLI()
+
+	w.Close()
+	os.Stdout = setStdout
+	setOutput.ReadFrom(r)
+
+	if !strings.Contains(setOutput.String(), "Set test.cli.key") {
+		t.Errorf("Expected 'Set test.cli.key' in output, got: %s", setOutput.String())
+	}
+
+	os.Args = []string{"apilot", "get", "test.cli.key"}
+
+	var getOutput bytes.Buffer
+	getStdout := os.Stdout
+	r2, w2, _ := os.Pipe()
+	os.Stdout = w2
+
+	RunCLI()
+
+	w2.Close()
+	os.Stdout = getStdout
+	getOutput.ReadFrom(r2)
+
+	if !strings.Contains(getOutput.String(), "test-cli-value") {
+		t.Errorf("Expected 'test-cli-value' in output, got: %s", getOutput.String())
+	}
+}
+
+func TestRunCLI_HelpCommand(t *testing.T) {
+	originalArgs := os.Args
+	defer func() { os.Args = originalArgs }()
+
+	os.Args = []string{"apilot", "--help"}
+
+	var output bytes.Buffer
+	originalStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	RunCLI()
+
+	w.Close()
+	os.Stdout = originalStdout
+	output.ReadFrom(r)
+
+	result := output.String()
+	if !strings.Contains(result, "Flags:") {
+		t.Errorf("Expected 'Flags:' in help output, got: %s", result)
+	}
 }
 
 func TestDetectCollector_Java(t *testing.T) {
@@ -287,7 +472,7 @@ func TestDetectCollector_Java(t *testing.T) {
 				t.Errorf("Expected no error, got: %v", err)
 			}
 			if result != "java" {
-				t.Errorf("Expected 'java', got: %q", result)
+				t.Errorf("Expected 'java', got %q", result)
 			}
 		})
 	}
@@ -307,7 +492,7 @@ func TestDetectCollector_Go(t *testing.T) {
 		t.Errorf("Expected no error, got: %v", err)
 	}
 	if result != "go" {
-		t.Errorf("Expected 'go', got: %q", result)
+		t.Errorf("Expected 'go', got %q", result)
 	}
 }
 
@@ -325,7 +510,7 @@ func TestDetectCollector_Node(t *testing.T) {
 		t.Errorf("Expected no error, got: %v", err)
 	}
 	if result != "node" {
-		t.Errorf("Expected 'node', got: %q", result)
+		t.Errorf("Expected 'node', got %q", result)
 	}
 }
 
@@ -353,7 +538,7 @@ func TestDetectCollector_Python(t *testing.T) {
 				t.Errorf("Expected no error, got: %v", err)
 			}
 			if result != "python" {
-				t.Errorf("Expected 'python', got: %q", result)
+				t.Errorf("Expected 'python', got %q", result)
 			}
 		})
 	}
@@ -378,7 +563,6 @@ func TestDetectCollector_CollectorNotRegistered(t *testing.T) {
 		t.Fatalf("Failed to create indicator file: %v", err)
 	}
 
-	// Temporarily clear the registry so "go" is not registered.
 	saved := collectors
 	collectors = map[string]collector.Collector{}
 	defer func() { collectors = saved }()
@@ -411,7 +595,85 @@ func TestDetectCollector_FirstMatchWins(t *testing.T) {
 	}
 
 	if result != "java" {
-		t.Errorf("Expected 'java' (first match), got: %q", result)
+		t.Errorf("Expected 'java' (first match), got %q", result)
+	}
+}
+
+func TestMaskValue(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"short", "****"},
+		{"PMAK-12345678-abcdef", "PMAK****cdef"},
+		{"123456789", "1234****6789"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := maskValue(tt.input)
+			if result != tt.expected {
+				t.Errorf("maskValue(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+type mockFormatter struct {
+	name         string
+	formatOutput []byte
+	formatError  error
+}
+
+func (m *mockFormatter) Name() string {
+	return m.name
+}
+
+func (m *mockFormatter) Format(endpoints []collector.ApiEndpoint, opts formatter.FormatOptions) ([]byte, error) {
+	return m.formatOutput, m.formatError
+}
+
+type mockFormatterWithSettings struct {
+	name string
+}
+
+func (m *mockFormatterWithSettings) Name() string {
+	return m.name
+}
+
+func (m *mockFormatterWithSettings) Format(endpoints []collector.ApiEndpoint, opts formatter.FormatOptions) ([]byte, error) {
+	return []byte("ok"), nil
+}
+
+func (m *mockFormatterWithSettings) RequiredSettings() []formatter.SettingDef {
+	return []formatter.SettingDef{
+		{
+			Key:         "test.key",
+			Description: "A test setting",
+			Required:    false,
+		},
+	}
+}
+
+type mockFormatterWithRequiredSetting struct {
+	name string
+}
+
+func (m *mockFormatterWithRequiredSetting) Name() string {
+	return m.name
+}
+
+func (m *mockFormatterWithRequiredSetting) Format(endpoints []collector.ApiEndpoint, opts formatter.FormatOptions) ([]byte, error) {
+	return []byte("ok"), nil
+}
+
+func (m *mockFormatterWithRequiredSetting) RequiredSettings() []formatter.SettingDef {
+	return []formatter.SettingDef{
+		{
+			Key:         "required.key",
+			Description: "A required setting",
+			Required:    true,
+		},
 	}
 }
 

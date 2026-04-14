@@ -5,7 +5,7 @@ package formatter
 import (
 	"encoding/json"
 
-	"github.com/tangcent/apilot/api-model"
+	model "github.com/tangcent/apilot/api-model"
 )
 
 // Formatter is the interface every output formatter must implement.
@@ -18,6 +18,17 @@ type Formatter interface {
 	Format(endpoints []model.ApiEndpoint, opts FormatOptions) ([]byte, error)
 }
 
+// Settings provides lazy-loaded access to user settings.
+// Implementations may load settings from disk on first access.
+type Settings interface {
+	Get(key string) string
+}
+
+// noopSettings is the zero-value Settings implementation that always returns empty strings.
+type noopSettings struct{}
+
+func (noopSettings) Get(string) string { return "" }
+
 // FormatOptions carries formatter-specific configuration as raw JSON.
 // Each formatter implementation decodes Params into its own typed options struct
 // via DecodeParams, so there are no magic string keys and options are self-documenting.
@@ -29,6 +40,11 @@ type FormatOptions struct {
 	// Params holds formatter-specific configuration as raw JSON.
 	// Formatters unmarshal this into their own typed struct using DecodeParams.
 	Params json.RawMessage `json:"params,omitempty"`
+
+	// Settings provides access to persistent user settings (e.g. API keys).
+	// Settings are injected by the engine at runtime; formatters call Settings.Get(key).
+	// Not serialized — omitted from JSON marshaling.
+	Settings Settings `json:"-"`
 }
 
 // DecodeParams unmarshals Params into v.
@@ -38,4 +54,14 @@ func (o FormatOptions) DecodeParams(v any) error {
 		return nil
 	}
 	return json.Unmarshal(o.Params, v)
+}
+
+type SettingDef struct {
+	Key         string
+	Description string
+	Required    bool
+}
+
+type SettingsProvider interface {
+	RequiredSettings() []SettingDef
 }

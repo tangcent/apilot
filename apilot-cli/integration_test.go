@@ -165,7 +165,7 @@ func TestGoProjectWithPostmanFormatter(t *testing.T) {
 }
 
 func TestMissingSourcePath(t *testing.T) {
-	output, exitCode := runCLIWithExitCode()
+	output, exitCode := runCLIWithExitCode("--collector", "go")
 	if exitCode != 1 {
 		t.Fatalf("expected exit code 1 for missing source path, got %d, output: %s", exitCode, output)
 	}

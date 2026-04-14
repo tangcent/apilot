@@ -12,6 +12,11 @@ var (
 	formatters = map[string]formatter.Formatter{}
 )
 
+func ResetRegistry() {
+	collectors = map[string]collector.Collector{}
+	formatters = map[string]formatter.Formatter{}
+}
+
 // RegisterCollector adds a Collector to the in-process registry.
 func RegisterCollector(c collector.Collector) {
 	collectors[c.Name()] = c
@@ -56,4 +61,16 @@ func ListFormatters() []string {
 		out = append(out, name)
 	}
 	return out
+}
+
+// ListFormatterSettings returns all settings declared by registered formatters
+// that implement the SettingsProvider interface.
+func ListFormatterSettings() []formatter.SettingDef {
+	var all []formatter.SettingDef
+	for _, f := range formatters {
+		if sp, ok := f.(formatter.SettingsProvider); ok {
+			all = append(all, sp.RequiredSettings()...)
+		}
+	}
+	return all
 }
