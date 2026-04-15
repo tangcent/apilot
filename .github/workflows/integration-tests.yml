@@ -33,11 +33,13 @@ jobs:
   integration-test:
     needs: check-skip
     if: ${{ github.event_name != 'pull_request' || needs.check-skip.outputs.should-skip != 'true' }}
-    name: "Integration Tests on ${{ matrix.os }}"
+    name: "${{ matrix.framework }} on ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
+        framework: [ Go, Java, Node.js, Python ]
+      fail-fast: false
 
     steps:
       - uses: actions/checkout@v4
@@ -55,7 +57,7 @@ jobs:
         run: go build -o apilot.exe ./apilot-cli
         if: runner.os == 'Windows'
 
-      - name: Run integration tests
+      - name: Run ${{ matrix.framework }} integration tests
         shell: bash
         run: |
           # Make apilot accessible in PATH
@@ -66,6 +68,6 @@ jobs:
             sudo mv apilot /usr/local/bin/
           fi
           
-          # Run integration tests
+          # Run integration tests for specific framework
           cd samples
-          bash run_all_tests.sh
+          bash run_all_tests.sh "${{ matrix.framework }}"
