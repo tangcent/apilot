@@ -116,9 +116,9 @@ func TestParseUrlPatterns(t *testing.T) {
 	}
 
 	expectedPaths := []string{
-		"users/",
-		"users/<int:pk>/",
-		"posts/",
+		"/users/",
+		"/users/{pk}/",
+		"/posts/",
 	}
 
 	for _, expectedPath := range expectedPaths {
@@ -140,11 +140,11 @@ func TestExtractPathParams(t *testing.T) {
 		path     string
 		expected []string
 	}{
-		{"users/<int:id>/", []string{"id"}},
-		{"users/<id>/", []string{"id"}},
-		{"users/{id}/", []string{"id"}},
-		{"users/<int:user_id>/posts/<int:post_id>/", []string{"user_id", "post_id"}},
-		{"users/", []string{}},
+		{"/users/{id}/", []string{"id"}},
+		{"/users/{id}/", []string{"id"}},
+		{"/users/{id}/", []string{"id"}},
+		{"/users/{user_id}/posts/{post_id}/", []string{"user_id", "post_id"}},
+		{"/users/", []string{}},
 	}
 
 	for _, test := range tests {
@@ -176,6 +176,26 @@ func TestConvertRegexToPath(t *testing.T) {
 		result := convertRegexToPath(test.regex)
 		if result != test.expected {
 			t.Errorf("Regex %s: expected %s, got %s", test.regex, test.expected, result)
+		}
+	}
+}
+
+func TestNormalizePath(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"users/", "/users/"},
+		{"users/<int:pk>/", "/users/{pk}/"},
+		{"users/<pk>/", "/users/{pk}/"},
+		{"posts/<int:post_id>/comments/<int:comment_id>/", "/posts/{post_id}/comments/{comment_id}/"},
+		{"/users/", "/users/"},
+	}
+
+	for _, test := range tests {
+		result := normalizePath(test.input)
+		if result != test.expected {
+			t.Errorf("Input %s: expected %s, got %s", test.input, test.expected, result)
 		}
 	}
 }

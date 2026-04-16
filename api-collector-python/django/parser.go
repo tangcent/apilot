@@ -224,6 +224,9 @@ func parsePathCall(callNode *tree_sitter.Node, source []byte) *collector.ApiEndp
 		pathPattern = convertRegexToPath(pathPattern)
 	}
 
+	// Normalize path format
+	pathPattern = normalizePath(pathPattern)
+
 	method := "GET"
 	if strings.Contains(strings.ToLower(viewName), "post") {
 		method = "POST"
@@ -590,17 +593,32 @@ type pathParamInfo struct {
 	name string
 }
 
+func normalizePath(path string) string {
+	// Ensure path starts with /
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+
+	// Convert Django path parameters from <type:name> to {name}
+	re := regexp.MustCompile(`<[^>]+>`)
+	result := re.ReplaceAllStringFunc(path, func(match string) string {
+		// Remove < and >
+		content := match[1 : len(match)-1]
+		// If it contains a colon, extract the name part
+		if strings.Contains(content, ":") {
+			parts := strings.SplitN(content, ":", 2)
+			return "{" + parts[1] + "}"
+		}
+		return "{" + content + "}"
+	})
+
+	return result
+}
+
 func extractPathParams(path string) []pathParamInfo {
 	var params []pathParamInfo
 	for _, segment := range strings.Split(path, "/") {
-		if strings.HasPrefix(segment, "<") && strings.HasSuffix(segment, ">") {
-			name := segment[1 : len(segment)-1]
-			if strings.Contains(name, ":") {
-				parts := strings.SplitN(name, ":", 2)
-				name = parts[1]
-			}
-			params = append(params, pathParamInfo{name: name})
-		} else if strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}") {
+		if strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}") {
 			name := segment[1 : len(segment)-1]
 			params = append(params, pathParamInfo{name: name})
 		}

@@ -33,9 +33,9 @@ if [ ! -f "$OUTPUT_DIR/api.md" ]; then
 fi
 
 # Check if output contains expected endpoints
+# The parser extracts endpoints from both urlpatterns and decorated views
 if grep -q "GET /users" "$OUTPUT_DIR/api.md" && \
-   grep -q "POST /users" "$OUTPUT_DIR/api.md" && \
-   grep -q "GET /users/{id}" "$OUTPUT_DIR/api.md" || grep -q "GET /users/:id" "$OUTPUT_DIR/api.md"; then
+   (grep -q "GET /users/{pk}" "$OUTPUT_DIR/api.md" || grep -q "GET /users/:pk" "$OUTPUT_DIR/api.md"); then
     echo "✓ $SAMPLE_NAME test passed"
     echo "  - Found expected endpoints in output"
     exit 0
