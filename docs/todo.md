@@ -73,6 +73,7 @@
 - [X] Wire parsers into `collector.go` `Collect()` — discover `.py` files, delegate to framework parsers
 - [X] Write unit tests for fastapi parser with fixture Python source files
 - [X] Write unit tests for django parser with fixture Python source files
+- [X] Write unit tests for flask parser with fixture Python source files
 
 ---
 
