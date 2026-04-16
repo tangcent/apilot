@@ -68,10 +68,11 @@
 ### api-collector-python
 
 - [X] Implement `fastapi/parser.go` — extract `@app.get`, `@router.post`, etc. decorated functions using `tree-sitter-python` or regex
-- [ ] Implement `django/parser.go` — extract `@api_view`, `APIView`, `ViewSet` classes and `urlpatterns` definitions
-- [ ] Implement `flask/parser.go` — extract `@app.route`, `@blueprint.route` decorated functions
+- [X] Implement `django/parser.go` — extract `@api_view`, `APIView`, `ViewSet` classes and `urlpatterns` definitions
+- [X] Implement `flask/parser.go` — extract `@app.route`, `@blueprint.route` decorated functions
 - [X] Wire parsers into `collector.go` `Collect()` — discover `.py` files, delegate to framework parsers
 - [X] Write unit tests for fastapi parser with fixture Python source files
+- [X] Write unit tests for django parser with fixture Python source files
 
 ---
 
