@@ -30,17 +30,14 @@ jobs:
               core.setOutput('should-skip', 'false');
             }
 
-  integration-test:
+  build:
     needs: check-skip
     if: ${{ github.event_name != 'pull_request' || needs.check-skip.outputs.should-skip != 'true' }}
-    name: "${{ matrix.framework }} on ${{ matrix.os }}"
-    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
-        framework: [ Go, Java, Node.js, Python ]
       fail-fast: false
-
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -57,17 +54,161 @@ jobs:
         run: go build -o apilot.exe ./apilot-cli
         if: runner.os == 'Windows'
 
-      - name: Run ${{ matrix.framework }} integration tests
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apilot-${{ runner.os }}-${{ runner.arch }}
+          path: apilot*
+          retention-days: 1
+
+  go-tests:
+    needs: build
+    if: ${{ github.event_name != 'pull_request' || needs.check-skip.outputs.should-skip != 'true' }}
+    name: "Go / ${{ matrix.framework }}"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        framework: [ go-echo, go-fiber, go-gin ]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download apilot binary
+        uses: actions/download-artifact@v4
+        with:
+          name: apilot-${{ runner.os }}-${{ runner.arch }}
+          path: .
+
+      - name: Make binary executable
+        run: chmod +x apilot
+        if: runner.os != 'Windows'
+
+      - name: Run ${{ matrix.framework }} test
         shell: bash
         run: |
-          # Make apilot accessible in PATH
           if [ "$RUNNER_OS" = "Windows" ]; then
             export PATH="$PWD:$PATH"
           else
-            chmod +x apilot
             sudo mv apilot /usr/local/bin/
           fi
-          
-          # Run integration tests for specific framework
-          cd samples
-          bash run_all_tests.sh "${{ matrix.framework }}"
+          bash samples/${{ matrix.framework }}/test.sh
+
+  java-tests:
+    needs: build
+    if: ${{ github.event_name != 'pull_request' || needs.check-skip.outputs.should-skip != 'true' }}
+    name: "Java / ${{ matrix.framework }}"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        framework: [ java-feign, java-jaxrs, java-springmvc ]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download apilot binary
+        uses: actions/download-artifact@v4
+        with:
+          name: apilot-${{ runner.os }}-${{ runner.arch }}
+          path: .
+
+      - name: Make binary executable
+        run: chmod +x apilot
+        if: runner.os != 'Windows'
+
+      - name: Run ${{ matrix.framework }} test
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            export PATH="$PWD:$PATH"
+          else
+            sudo mv apilot /usr/local/bin/
+          fi
+          bash samples/${{ matrix.framework }}/test.sh
+
+  node-tests:
+    needs: build
+    if: ${{ github.event_name != 'pull_request' || needs.check-skip.outputs.should-skip != 'true' }}
+    name: "Node.js / ${{ matrix.framework }}"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        framework: [ node-express, node-fastify, node-nestjs ]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download apilot binary
+        uses: actions/download-artifact@v4
+        with:
+          name: apilot-${{ runner.os }}-${{ runner.arch }}
+          path: .
+
+      - name: Make binary executable
+        run: chmod +x apilot
+        if: runner.os != 'Windows'
+
+      - name: Run ${{ matrix.framework }} test
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            export PATH="$PWD:$PATH"
+          else
+            sudo mv apilot /usr/local/bin/
+          fi
+          bash samples/${{ matrix.framework }}/test.sh
+
+  python-tests:
+    needs: build
+    if: ${{ github.event_name != 'pull_request' || needs.check-skip.outputs.should-skip != 'true' }}
+    name: "Python / ${{ matrix.framework }}"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        framework: [ python-django, python-fastapi, python-flask ]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download apilot binary
+        uses: actions/download-artifact@v4
+        with:
+          name: apilot-${{ runner.os }}-${{ runner.arch }}
+          path: .
+
+      - name: Make binary executable
+        run: chmod +x apilot
+        if: runner.os != 'Windows'
+
+      - name: Run ${{ matrix.framework }} test
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            export PATH="$PWD:$PATH"
+          else
+            sudo mv apilot /usr/local/bin/
+          fi
+          bash samples/${{ matrix.framework }}/test.sh
+
+  summary:
+    needs: [ go-tests, java-tests, node-tests, python-tests ]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all tests passed
+        run: |
+          if [ "${{ needs.go-tests.result }}" != "success" ] || \
+             [ "${{ needs.java-tests.result }}" != "success" ] || \
+             [ "${{ needs.node-tests.result }}" != "success" ] || \
+             [ "${{ needs.python-tests.result }}" != "success" ]; then
+            echo "Some tests failed"
+            echo "Go tests: ${{ needs.go-tests.result }}"
+            echo "Java tests: ${{ needs.java-tests.result }}"
+            echo "Node.js tests: ${{ needs.node-tests.result }}"
+            echo "Python tests: ${{ needs.python-tests.result }}"
+            exit 1
+          fi
+          echo "All tests passed!"
