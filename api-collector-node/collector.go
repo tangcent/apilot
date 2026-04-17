@@ -2,7 +2,14 @@
 // Supported frameworks: Express, Fastify, NestJS.
 package nodecollector
 
-import "github.com/tangcent/apilot/api-collector"
+import (
+	"log"
+	"sync"
+
+	"github.com/tangcent/apilot/api-collector"
+	"github.com/tangcent/apilot/api-collector-node/express"
+	"github.com/tangcent/apilot/api-collector-node/fastify"
+)
 
 // NodeCollector parses TypeScript/JavaScript source trees for API route definitions.
 type NodeCollector struct{}
@@ -15,9 +22,53 @@ func (c *NodeCollector) Name() string { return "node" }
 func (c *NodeCollector) SupportedLanguages() []string { return []string{"typescript", "javascript"} }
 
 // Collect walks the source directory and extracts endpoints from Express, Fastify, and NestJS sources.
+// Each framework parser is invoked concurrently. Results are merged into a
+// single slice. If a parser returns an error, a warning is logged and
+// collection continues with the remaining parsers.
 func (c *NodeCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEndpoint, error) {
-	// TODO: implement
-	// Preferred: tree-sitter-typescript Go bindings (no external runtime dependency)
-	// Fallback: invoke node/ts-node subprocess
-	return nil, nil
+	type parseResult struct {
+		endpoints []collector.ApiEndpoint
+		err       error
+		framework string
+	}
+
+	parsers := []struct {
+		name  string
+		parse func(string) ([]collector.ApiEndpoint, error)
+	}{
+		{"express", express.Parse},
+		{"fastify", fastify.Parse},
+	}
+
+	ch := make(chan parseResult, len(parsers))
+	var wg sync.WaitGroup
+
+	for _, p := range parsers {
+		wg.Add(1)
+		go func(name string, fn func(string) ([]collector.ApiEndpoint, error)) {
+			defer wg.Done()
+			endpoints, err := fn(ctx.SourceDir)
+			ch <- parseResult{endpoints: endpoints, err: err, framework: name}
+		}(p.name, p.parse)
+	}
+
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
+	var all []collector.ApiEndpoint
+	for res := range ch {
+		if res.err != nil {
+			log.Printf("warning: %s parser failed: %v", res.framework, res.err)
+			continue
+		}
+		all = append(all, res.endpoints...)
+	}
+
+	if len(all) == 0 {
+		return nil, nil
+	}
+
+	return all, nil
 }
