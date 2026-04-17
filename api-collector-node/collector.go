@@ -6,9 +6,10 @@ import (
 	"log"
 	"sync"
 
-	"github.com/tangcent/apilot/api-collector"
+	collector "github.com/tangcent/apilot/api-collector"
 	"github.com/tangcent/apilot/api-collector-node/express"
 	"github.com/tangcent/apilot/api-collector-node/fastify"
+	"github.com/tangcent/apilot/api-collector-node/nestjs"
 )
 
 // NodeCollector parses TypeScript/JavaScript source trees for API route definitions.
@@ -38,6 +39,7 @@ func (c *NodeCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 	}{
 		{"express", express.Parse},
 		{"fastify", fastify.Parse},
+		{"nestjs", nestjs.Parse},
 	}
 
 	ch := make(chan parseResult, len(parsers))

@@ -5,6 +5,7 @@ go 1.23
 toolchain go1.24.4
 
 require github.com/tangcent/apilot/api-collector v0.0.0
+require github.com/tangcent/apilot/api-model v0.0.0 // indirect
 
 require (
 	github.com/mattn/go-pointer v0.0.1 // indirect
