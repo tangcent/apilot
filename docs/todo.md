@@ -59,11 +59,11 @@
 ### api-collector-node
 
 - [ ] Spike: evaluate Node.js parsing strategy — `tree-sitter-typescript` CGO bindings vs. pure-Go JS/TS AST (e.g. `goja`) (document decision in `api-collector-node/NOTES.md`)
-- [ ] Implement `express/parser.go` — extract `app.get`, `app.post`, `router.use`, etc. route registrations
-- [ ] Implement `fastify/parser.go` — extract `fastify.get`, `fastify.post`, etc. route registrations
-- [ ] Implement `nestjs/parser.go` — extract `@Controller`, `@Get`, `@Post`, `@Put`, `@Delete`, `@Patch` decorated classes and methods
-- [ ] Wire parsers into `collector.go` `Collect()` — discover `.ts`/`.js` files, delegate to framework parsers
-- [ ] Write unit tests for each parser with fixture TypeScript/JavaScript source files
+- [X] Implement `express/parser.go` — extract `app.get`, `app.post`, `router.use`, etc. route registrations
+- [X] Implement `fastify/parser.go` — extract `fastify.get`, `fastify.post`, etc. route registrations
+- [X] Implement `nestjs/parser.go` — extract `@Controller`, `@Get`, `@Post`, `@Put`, `@Delete`, `@Patch` decorated classes and methods
+- [X] Wire parsers into `collector.go` `Collect()` — discover `.ts`/`.js` files, delegate to framework parsers
+- [X] Write unit tests for each parser with fixture TypeScript/JavaScript source files
 
 ### api-collector-python
 
