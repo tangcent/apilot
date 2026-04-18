@@ -4,10 +4,12 @@ package javacollector
 
 import (
 	"fmt"
+	"log"
 
 	collector "github.com/tangcent/apilot/api-collector"
 	"github.com/tangcent/apilot/api-collector-java/feign"
 	"github.com/tangcent/apilot/api-collector-java/jaxrs"
+	"github.com/tangcent/apilot/api-collector-java/maven"
 	"github.com/tangcent/apilot/api-collector-java/parser"
 	"github.com/tangcent/apilot/api-collector-java/springmvc"
 )
@@ -23,7 +25,18 @@ func (c *JavaCollector) Name() string { return "java" }
 func (c *JavaCollector) SupportedLanguages() []string { return []string{"java", "kotlin"} }
 
 // Collect walks the source directory and extracts endpoints from Spring MVC, JAX-RS, and Feign sources.
+// When maven-indexer-cli is available and a build file (pom.xml/build.gradle) is present,
+// it attempts to resolve dependency JARs for improved type analysis.
 func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEndpoint, error) {
+	if maven.HasBuildFile(ctx.SourceDir) && maven.IsAvailable() {
+		jarPaths, err := maven.Resolve(ctx.SourceDir)
+		if err != nil {
+			log.Printf("[maven] dependency resolution skipped: %v", err)
+		} else if len(jarPaths) > 0 {
+			log.Printf("[maven] resolved %d dependency JARs", len(jarPaths))
+		}
+	}
+
 	p, err := parser.NewParser(parser.ParserOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create java parser: %w", err)
