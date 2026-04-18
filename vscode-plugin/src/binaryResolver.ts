@@ -14,7 +14,7 @@ export function resolveBinary(settings: Settings): string {
   const platform = process.platform;  // "linux" | "darwin" | "win32"
   const arch = process.arch;          // "x64" | "arm64"
   const suffix = platform === 'win32' ? '.exe' : '';
-  const name = `apilot-cli-${platform}-${arch}${suffix}`;
+  const name = `apilot-${platform}-${arch}${suffix}`;
   const bundledPath = path.join(__dirname, '..', 'bin', name);
 
   if (!fs.existsSync(bundledPath)) {
