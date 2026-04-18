@@ -1,0 +1,40 @@
+name: CI VSCode
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'vscode-plugin/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'vscode-plugin/**'
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    name: "VSCode Extension on ${{ matrix.os }}"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: vscode-plugin
+        run: npm ci
+
+      - name: Compile
+        working-directory: vscode-plugin
+        run: npm run compile
+
+      - name: Test
+        working-directory: vscode-plugin
+        run: npm test

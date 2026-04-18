@@ -1,6 +1,5 @@
 import * as cp from 'child_process';
 import * as vscode from 'vscode';
-import * as fs from 'fs';
 import { Settings } from './settings';
 import { resolveBinary } from './binaryResolver';
 
@@ -20,7 +19,9 @@ export async function runExport(sourceDir: string, settings: Settings): Promise<
   }
 
   const args = [
+    'export',
     '--formatter', settings.formatter,
+    '--params', JSON.stringify({ variant: settings.format }),
     sourceDir,
   ];
 

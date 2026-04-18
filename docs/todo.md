@@ -101,14 +101,14 @@
 
 ## VSCode Extension
 
-- [ ] Implement `vscode-plugin/src/extension.ts` — register `apilot.export` command, resolve source dir from right-click URI or active editor
-- [ ] Implement `vscode-plugin/src/runner.ts` — spawn `apilot-cli` subprocess, stream stdout to output channel, show error notification on non-zero exit
-- [ ] Implement `vscode-plugin/src/binaryResolver.ts` — resolve bundled platform binary path, throw descriptive error if not found
-- [ ] Implement `vscode-plugin/src/settings.ts` — typed wrapper for `apilot.formatter`, `apilot.outputDestination`, `apilot.outputFile`, `apilot.binaryPath`
-- [ ] Update `vscode-plugin/package.json` — rename all `easyapi.*` contribution keys to `apilot.*`, update command title to "APilot: Export"
-- [ ] Add `vscode-plugin/tsconfig.json` — configure TypeScript compilation
-- [ ] Write VSCode extension tests — mock subprocess, assert output channel content and error notification behavior
-- [ ] Add CI workflow `ci-vscode.yml` — `npm ci && npm run compile && npm test`
+- [X] Implement `vscode-plugin/src/extension.ts` — register `apilot.export` command, resolve source dir from right-click URI or active editor
+- [X] Implement `vscode-plugin/src/runner.ts` — spawn `apilot-cli` subprocess, stream stdout to output channel, show error notification on non-zero exit
+- [X] Implement `vscode-plugin/src/binaryResolver.ts` — resolve bundled platform binary path, throw descriptive error if not found
+- [X] Implement `vscode-plugin/src/settings.ts` — typed wrapper for `apilot.formatter`, `apilot.format`, `apilot.outputDestination`, `apilot.outputFile`, `apilot.binaryPath`
+- [X] Update `vscode-plugin/package.json` — rename all `easyapi.*` contribution keys to `apilot.*`, update command title to "APilot: Export"
+- [X] Add `vscode-plugin/tsconfig.json` — configure TypeScript compilation
+- [X] Write VSCode extension tests — mock subprocess, assert output channel content and error notification behavior
+- [X] Add CI workflow `ci-vscode.yml` — `npm ci && npm run compile && npm test`
 
 ---
 
@@ -124,7 +124,7 @@
 
 - [ ] Add `build.Version` / `build.Date` ldflags wiring in `apilot-cli` — create `apilot-cli/build/version.go` with `Version` and `Date` vars
 - [ ] Verify `.goreleaser.yml` produces correct archive names (`apilot-{version}-{os}-{arch}.tar.gz`) matching what `scripts/install.js` expects
-- [ ] Add `ci-vscode.yml` workflow — build and test the VSCode extension on push/PR
+- [X] Add `ci-vscode.yml` workflow — build and test the VSCode extension on push/PR
 - [ ] Add `NPM_TOKEN` secret to GitHub repo for npm publish step in `release.yml`
 - [ ] Test full release flow end-to-end with a `v0.1.0` tag — GoReleaser produces archives, npm publish succeeds, `npm install -g @tangcent/apilot` downloads and runs correctly
 
