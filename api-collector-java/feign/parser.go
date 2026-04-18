@@ -35,29 +35,55 @@ func (p *Parser) ExtractClients(results []parser.ParseResult) []FeignClient {
 
 func (p *Parser) extractClient(class parser.Class) *FeignClient {
 	ann := findAnnotation(class.Annotations, "FeignClient")
-	if ann == nil {
-		return nil
-	}
+	if ann != nil {
+		name := ann.Params["name"]
+		if name == "" {
+			name = ann.Params["value"]
+		}
 
-	name := ann.Params["name"]
-	if name == "" {
-		name = ann.Params["value"]
-	}
+		var endpoints []Endpoint
+		for _, method := range class.Methods {
+			if ep := p.extractEndpoint(method, class); ep != nil {
+				endpoints = append(endpoints, *ep)
+			}
+		}
 
-	var endpoints []Endpoint
-	for _, method := range class.Methods {
-		if ep := p.extractEndpoint(method, class); ep != nil {
-			endpoints = append(endpoints, *ep)
+		return &FeignClient{
+			Name:        class.Name,
+			Package:     class.Package,
+			ServiceName: name,
+			URL:         ann.Params["url"],
+			Endpoints:   endpoints,
 		}
 	}
 
-	return &FeignClient{
-		Name:        class.Name,
-		Package:     class.Package,
-		ServiceName: name,
-		URL:         ann.Params["url"],
-		Endpoints:   endpoints,
+	if class.IsInterface && p.hasRequestLineMethods(class) {
+		var endpoints []Endpoint
+		for _, method := range class.Methods {
+			if ep := p.extractEndpoint(method, class); ep != nil {
+				endpoints = append(endpoints, *ep)
+			}
+		}
+
+		if len(endpoints) > 0 {
+			return &FeignClient{
+				Name:      class.Name,
+				Package:   class.Package,
+				Endpoints: endpoints,
+			}
+		}
 	}
+
+	return nil
+}
+
+func (p *Parser) hasRequestLineMethods(class parser.Class) bool {
+	for _, method := range class.Methods {
+		if findAnnotation(method.Annotations, "RequestLine") != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Parser) extractEndpoint(method parser.Method, class parser.Class) *Endpoint {
@@ -172,7 +198,7 @@ func (p *Parser) extractRequestLineEndpoint(method parser.Method, class parser.C
 
 	var params []EndpointParameter
 	for _, param := range method.Parameters {
-		if ep := p.extractFeignParam(param); ep != nil {
+		if ep := p.extractFeignParam(param, methodPath); ep != nil {
 			params = append(params, *ep)
 		}
 	}
@@ -213,17 +239,37 @@ func parseRequestLine(value string) (HTTPMethod, string) {
 	}
 }
 
-func (p *Parser) extractFeignParam(param parser.Parameter) *EndpointParameter {
-	// Netflix Feign uses @Param for path/query variables
+func (p *Parser) extractFeignParam(param parser.Parameter, methodPath string) *EndpointParameter {
 	ann := findAnnotation(param.Annotations, "Param")
 	if ann == nil {
+		if param.Type != "" && !isJavaPrimitive(param.Type) {
+			return &EndpointParameter{Name: param.Name, Type: param.Type, ParamType: "body", Required: true}
+		}
 		return nil
 	}
 	name := ann.Params["value"]
 	if name == "" {
 		name = param.Name
 	}
-	return &EndpointParameter{Name: name, Type: param.Type, ParamType: "query", Required: false}
+	paramType := "query"
+	pathPart := methodPath
+	if idx := strings.Index(methodPath, "?"); idx >= 0 {
+		pathPart = methodPath[:idx]
+	}
+	if strings.Contains(pathPart, "{"+name+"}") {
+		paramType = "path"
+	}
+	return &EndpointParameter{Name: name, Type: param.Type, ParamType: paramType, Required: paramType == "path"}
+}
+
+func isJavaPrimitive(typ string) bool {
+	switch typ {
+	case "byte", "short", "int", "long", "float", "double", "boolean", "char",
+		"Byte", "Short", "Integer", "Long", "Float", "Double", "Boolean", "Character",
+		"String", "void", "Void":
+		return true
+	}
+	return false
 }
 
 func findAnnotation(annotations []parser.Annotation, name string) *parser.Annotation {

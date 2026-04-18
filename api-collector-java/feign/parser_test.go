@@ -171,10 +171,136 @@ func TestParser_NetflixFeignRequestLine(t *testing.T) {
 	if ep0.Path != "/orders/{id}" {
 		t.Errorf("Expected '/orders/{id}', got '%s'", ep0.Path)
 	}
+	if len(ep0.Parameters) != 1 || ep0.Parameters[0].ParamType != "path" {
+		t.Errorf("Expected path parameter, got %v", ep0.Parameters)
+	}
 
 	ep1 := client.Endpoints[1]
 	if ep1.Method != DELETE {
 		t.Errorf("Expected DELETE, got %s", ep1.Method)
+	}
+	if len(ep1.Parameters) != 1 || ep1.Parameters[0].ParamType != "path" {
+		t.Errorf("Expected path parameter, got %v", ep1.Parameters)
+	}
+}
+
+func TestParser_NetflixFeignWithoutFeignClientAnnotation(t *testing.T) {
+	results := []parser.ParseResult{
+		{
+			FilePath: "UserClient.java",
+			Classes: []parser.Class{
+				{
+					Name:        "UserClient",
+					Package:     "com.example",
+					IsInterface: true,
+					Annotations: []parser.Annotation{},
+					Methods: []parser.Method{
+						{
+							Name: "listUsers",
+							Annotations: []parser.Annotation{
+								{Name: "RequestLine", Params: map[string]string{"value": "GET /users?name={name}&role={role}"}},
+							},
+							Parameters: []parser.Parameter{
+								{
+									Name: "name",
+									Type: "String",
+									Annotations: []parser.Annotation{
+										{Name: "Param", Params: map[string]string{"value": "name"}},
+									},
+								},
+								{
+									Name: "role",
+									Type: "String",
+									Annotations: []parser.Annotation{
+										{Name: "Param", Params: map[string]string{"value": "role"}},
+									},
+								},
+							},
+							ReturnType: "String",
+						},
+						{
+							Name: "createUser",
+							Annotations: []parser.Annotation{
+								{Name: "RequestLine", Params: map[string]string{"value": "POST /users"}},
+							},
+							Parameters: []parser.Parameter{
+								{
+									Name: "req",
+									Type: "CreateUserReq",
+									Annotations: []parser.Annotation{},
+								},
+							},
+							ReturnType: "String",
+						},
+						{
+							Name: "getUser",
+							Annotations: []parser.Annotation{
+								{Name: "RequestLine", Params: map[string]string{"value": "GET /users/{id}"}},
+							},
+							Parameters: []parser.Parameter{
+								{
+									Name: "id",
+									Type: "String",
+									Annotations: []parser.Annotation{
+										{Name: "Param", Params: map[string]string{"value": "id"}},
+									},
+								},
+							},
+							ReturnType: "String",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	p := NewParser()
+	clients := p.ExtractClients(results)
+
+	if len(clients) != 1 {
+		t.Fatalf("Expected 1 client, got %d", len(clients))
+	}
+
+	client := clients[0]
+	if client.Name != "UserClient" {
+		t.Errorf("Expected 'UserClient', got '%s'", client.Name)
+	}
+	if client.ServiceName != "" {
+		t.Errorf("Expected empty service name, got '%s'", client.ServiceName)
+	}
+	if len(client.Endpoints) != 3 {
+		t.Fatalf("Expected 3 endpoints, got %d", len(client.Endpoints))
+	}
+
+	ep0 := client.Endpoints[0]
+	if ep0.Method != GET {
+		t.Errorf("Expected GET, got %s", ep0.Method)
+	}
+	if len(ep0.Parameters) != 2 {
+		t.Errorf("Expected 2 query params, got %d", len(ep0.Parameters))
+	} else {
+		if ep0.Parameters[0].ParamType != "query" {
+			t.Errorf("Expected query param, got %s", ep0.Parameters[0].ParamType)
+		}
+		if ep0.Parameters[1].ParamType != "query" {
+			t.Errorf("Expected query param, got %s", ep0.Parameters[1].ParamType)
+		}
+	}
+
+	ep1 := client.Endpoints[1]
+	if ep1.Method != POST {
+		t.Errorf("Expected POST, got %s", ep1.Method)
+	}
+	if len(ep1.Parameters) != 1 || ep1.Parameters[0].ParamType != "body" {
+		t.Errorf("Expected body parameter, got %v", ep1.Parameters)
+	}
+
+	ep2 := client.Endpoints[2]
+	if ep2.Method != GET {
+		t.Errorf("Expected GET, got %s", ep2.Method)
+	}
+	if len(ep2.Parameters) != 1 || ep2.Parameters[0].ParamType != "path" {
+		t.Errorf("Expected path parameter, got %v", ep2.Parameters)
 	}
 }
 
