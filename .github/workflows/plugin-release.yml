@@ -1,0 +1,169 @@
+name: 'Plugin Release'
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: >
+      contains(github.event.head_commit.message, 'release: plugin') ||
+      contains(github.event.head_commit.message, 'plugin-release/')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version
+        id: extract_version
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          COMMIT_FIRST_LINE=$(echo "$COMMIT_MSG" | head -1)
+
+          if echo "$COMMIT_FIRST_LINE" | grep -qE 'release: plugin v[0-9]+\.[0-9]+\.[0-9]+'; then
+            VERSION=$(echo "$COMMIT_FIRST_LINE" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          elif echo "$COMMIT_FIRST_LINE" | grep -qE 'plugin-release/v[0-9]+\.[0-9]+\.[0-9]+'; then
+            VERSION=$(echo "$COMMIT_FIRST_LINE" | grep -oE 'plugin-release/v[0-9]+\.[0-9]+\.[0-9]+' | sed 's/plugin-release\/v//')
+          else
+            echo "Error: Could not extract version from commit message: $COMMIT_FIRST_LINE"
+            exit 1
+          fi
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: Invalid version format: $VERSION"
+            exit 1
+          fi
+
+          VERSION="v$VERSION"
+          echo "Extracted version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check if tag exists
+        id: check_tag
+        run: |
+          TAG_NAME="plugin-${{ steps.extract_version.outputs.version }}"
+          if git tag -l "${TAG_NAME}" | grep -q "${TAG_NAME}"; then
+            echo "Tag ${TAG_NAME} already exists. Skipping release creation."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Tag ${TAG_NAME} does not exist. Proceeding with release creation."
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Create and push tag
+        if: steps.check_tag.outputs.skip == 'false'
+        run: |
+          git tag ${{ steps.check_tag.outputs.tag_name }}
+          git push origin ${{ steps.check_tag.outputs.tag_name }}
+
+      - name: Set up Node.js
+        if: steps.check_tag.outputs.skip == 'false'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        if: steps.check_tag.outputs.skip == 'false'
+        working-directory: vscode-plugin
+        run: npm ci
+
+      - name: Compile
+        if: steps.check_tag.outputs.skip == 'false'
+        working-directory: vscode-plugin
+        run: npm run compile
+
+      - name: Download CLI binaries
+        if: steps.check_tag.outputs.skip == 'false'
+        working-directory: vscode-plugin
+        run: |
+          mkdir -p bin tmp
+          CLI_VERSION=$(git tag -l "v*.*.*" | sort -V | tail -n1 | sed 's/^v//')
+          BASE_URL="https://github.com/${{ github.repository }}/releases/download/v${CLI_VERSION}"
+          download_binary() {
+            local os=$1
+            local arch=$2
+            local ext=$3
+            local archive="apilot-${CLI_VERSION}-${os}-${arch}${ext}"
+            local target="bin/apilot-${os}-${arch}"
+            if [ "$os" = "windows" ]; then
+              target="${target}.exe"
+            fi
+            echo "  Downloading ${archive}..."
+            curl -fsSL "${BASE_URL}/${archive}" -o "tmp/${archive}"
+            if [ "$os" = "windows" ]; then
+              unzip -o "tmp/${archive}" -d tmp
+            else
+              tar -xzf "tmp/${archive}" -C tmp
+            fi
+            cp "tmp/apilot" "$target" 2>/dev/null || cp "tmp/apilot.exe" "$target" 2>/dev/null || true
+            chmod +x "$target"
+          }
+          download_binary darwin arm64 ".tar.gz"
+          download_binary darwin amd64 ".tar.gz"
+          download_binary linux arm64 ".tar.gz"
+          download_binary linux amd64 ".tar.gz"
+          download_binary windows amd64 ".zip"
+          rm -rf tmp
+
+      - name: Install vsce
+        if: steps.check_tag.outputs.skip == 'false'
+        run: npm install -g @vscode/vsce
+
+      - name: Package VSIX
+        if: steps.check_tag.outputs.skip == 'false'
+        working-directory: vscode-plugin
+        run: |
+          VERSION=${{ steps.extract_version.outputs.version }}
+          npm pkg set version="${VERSION#v}"
+          vsce package --allow-missing-repository --skip-license
+
+      - name: Generate Release Notes
+        if: steps.check_tag.outputs.skip == 'false'
+        id: generate_notes
+        run: |
+          PREV_TAG=$(git tag -l "plugin-v*" | sort -V | tail -n2 | head -n1)
+          CURRENT_TAG=${{ steps.check_tag.outputs.tag_name }}
+
+          if [ -n "$PREV_TAG" ] && [ "$PREV_TAG" != "$CURRENT_TAG" ]; then
+            NOTES="**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${CURRENT_TAG}\n\n"
+            COMMITS=$(git log --pretty=format:"* %s" $PREV_TAG..HEAD | grep -E '^\* (refactor|feat|fix|perf|docs)' || true)
+          else
+            NOTES="**Initial Release**\n\n"
+            COMMITS=$(git log --pretty=format:"* %s" | grep -E '^\* (refactor|feat|fix|perf|docs)' || true)
+          fi
+
+          if [ -n "$COMMITS" ]; then
+            NOTES="${NOTES}### Changes\n${COMMITS}\n\n"
+          fi
+
+          NOTES="${NOTES}---\n\n"
+          NOTES="${NOTES}### Downloads\n\n"
+          NOTES="${NOTES}| Plugin | IDE Support |\n"
+          NOTES="${NOTES}| ------ | ----------- |\n"
+          DOWNLOAD_VERSION=$(echo "$CURRENT_TAG" | sed 's/^plugin-v//')
+          NOTES="${NOTES}| [apilot-${DOWNLOAD_VERSION}.vsix](https://github.com/${{ github.repository }}/releases/download/${CURRENT_TAG}/apilot-${DOWNLOAD_VERSION}.vsix) | VSCode 1.85+ |\n"
+
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        if: steps.check_tag.outputs.skip == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.check_tag.outputs.tag_name }}
+          name: ${{ steps.check_tag.outputs.tag_name }}
+          body: ${{ steps.generate_notes.outputs.notes }}
+          draft: true
+          prerelease: true
+          files: |
+            vscode-plugin/apilot-*.vsix
