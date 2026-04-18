@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - master
 
 jobs:
   update-pr:
@@ -17,45 +18,65 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.ref }}
 
-      - name: Check if release branch and add label
-        id: check_branch
+      - name: Determine release type
+        id: release_type
         run: |
-          if [[ "${{ github.event.pull_request.head.ref }}" == release/* ]]; then
-            LABELS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-              -H "Accept: application/vnd.github.v3+json" \
-              https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels)
-            if ! echo "$LABELS" | grep -q '"name": "release"'; then
-              curl -s -X POST \
-                -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                -H "Accept: application/vnd.github.v3+json" \
-                https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels \
-                -d '{"labels":["release"]}'
-            fi
-            echo "result=true" >> $GITHUB_OUTPUT
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+          if [[ "$BRANCH" == cli-release/* ]]; then
+            echo "type=cli" >> $GITHUB_OUTPUT
+            echo "label=cli-release" >> $GITHUB_OUTPUT
+          elif [[ "$BRANCH" == plugin-release/* ]]; then
+            echo "type=plugin" >> $GITHUB_OUTPUT
+            echo "label=plugin-release" >> $GITHUB_OUTPUT
           else
-            echo "result=false" >> $GITHUB_OUTPUT
+            echo "type=none" >> $GITHUB_OUTPUT
+            echo "label=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Add release label
+        if: steps.release_type.outputs.type != 'none'
+        run: |
+          LABEL="${{ steps.release_type.outputs.label }}"
+          LABELS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels)
+          if ! echo "$LABELS" | grep -q "\"name\": \"${LABEL}\""; then
+            curl -s -X POST \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github.v3+json" \
+              https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels \
+              -d "{\"labels\":[\"${LABEL}\"]}"
           fi
 
       - name: Generate PR content
-        if: contains(github.event.pull_request.labels.*.name, 'release') || steps.check_branch.outputs.result == 'true'
+        if: steps.release_type.outputs.type != 'none'
         id: generate_content
         run: |
           git fetch --tags
-          LATEST_TAG=$(git tag -l "v*.*.*" | sort -V | tail -n1)
+          RELEASE_TYPE="${{ steps.release_type.outputs.type }}"
+          if [ "$RELEASE_TYPE" = "cli" ]; then
+            LATEST_TAG=$(git tag -l "v*.*.*" | sort -V | tail -n1)
+          else
+            LATEST_TAG=$(git tag -l "plugin-v*.*.*" | sort -V | tail -n1)
+          fi
           if [ -z "$LATEST_TAG" ]; then
             COMMITS=$(git log --pretty=format:"* %s" HEAD~1)
           else
             COMMITS=$(git log --pretty=format:"* %s" $LATEST_TAG..HEAD~1)
           fi
           [ -z "$COMMITS" ] && COMMITS="* No new commits since last release tag ($LATEST_TAG)"
-          PR_BODY="## Release Changes\n\n${COMMITS}"
+          if [ "$RELEASE_TYPE" = "cli" ]; then
+            PR_BODY="## CLI Release Changes\n\n${COMMITS}"
+          else
+            PR_BODY="## Plugin Release Changes\n\n${COMMITS}"
+          fi
           echo -e "$PR_BODY" > pr_body.txt
           echo "pr_body<<EOF" >> $GITHUB_OUTPUT
           cat pr_body.txt >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Update Pull Request
-        if: contains(github.event.pull_request.labels.*.name, 'release') || steps.check_branch.outputs.result == 'true'
+        if: steps.release_type.outputs.type != 'none'
         run: |
           PR_BODY=$(jq -Rs . < pr_body.txt)
           curl -s -X PATCH \
