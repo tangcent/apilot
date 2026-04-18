@@ -1,12 +1,162 @@
-name: Release
+name: 'CLI Release'
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    branches:
+      - main
+      - master
 
 jobs:
-  goreleaser:
+  prepare:
+    runs-on: ubuntu-latest
+    if: >
+      contains(github.event.head_commit.message, 'release: cli') ||
+      contains(github.event.head_commit.message, 'cli-release/')
+    outputs:
+      tag_name: ${{ steps.check_tag.outputs.tag_name }}
+      skip: ${{ steps.check_tag.outputs.skip }}
+      version: ${{ steps.extract_version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version
+        id: extract_version
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          COMMIT_FIRST_LINE=$(echo "$COMMIT_MSG" | head -1)
+
+          if echo "$COMMIT_FIRST_LINE" | grep -qE 'release: cli v[0-9]+\.[0-9]+\.[0-9]+'; then
+            VERSION=$(echo "$COMMIT_FIRST_LINE" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          elif echo "$COMMIT_FIRST_LINE" | grep -qE 'cli-release/v[0-9]+\.[0-9]+\.[0-9]+'; then
+            VERSION=$(echo "$COMMIT_FIRST_LINE" | grep -oE 'cli-release/v[0-9]+\.[0-9]+\.[0-9]+' | sed 's/cli-release\/v//')
+          else
+            echo "Error: Could not extract version from commit message: $COMMIT_FIRST_LINE"
+            exit 1
+          fi
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: Invalid version format: $VERSION"
+            exit 1
+          fi
+
+          VERSION="v$VERSION"
+          echo "Extracted version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check if release exists
+        id: check_tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="${{ steps.extract_version.outputs.version }}"
+          # Check for existing tag or GitHub release
+          if git tag -l "${TAG_NAME}" | grep -q "${TAG_NAME}"; then
+            echo "Tag ${TAG_NAME} already exists. Skipping release."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          elif gh release view "${TAG_NAME}" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            echo "Release ${TAG_NAME} already exists. Skipping."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "No existing tag or release for ${TAG_NAME}. Proceeding."
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.skip == 'false'
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            arch: x64
+            cc: gcc
+            ext: ""
+            setup: |
+              sudo apt-get update
+              sudo apt-get install -y gcc
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            arch: arm64
+            cc: aarch64-linux-gnu-gcc
+            ext: ""
+            setup: |
+              sudo apt-get update
+              sudo apt-get install -y gcc-aarch64-linux-gnu
+          - runner: macos-latest
+            goos: darwin
+            goarch: arm64
+            arch: arm64
+            cc: ""
+            ext: ""
+            setup: ""
+          - runner: ubuntu-latest
+            goos: windows
+            goarch: amd64
+            arch: x64
+            cc: x86_64-w64-mingw32-gcc
+            ext: ".exe"
+            setup: |
+              sudo apt-get update
+              sudo apt-get install -y gcc-mingw-w64-x86-64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install toolchain
+        if: matrix.setup != ''
+        run: ${{ matrix.setup }}
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "1"
+          CC: ${{ matrix.cc }}
+        run: |
+          VERSION="${{ needs.prepare.outputs.tag_name }}"
+          VERSION="${VERSION#v}"
+          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          BINARY="apilot${{ matrix.ext }}"
+
+          go build \
+            -ldflags="-s -w -X github.com/tangcent/apilot/apilot-cli/build.Version=${VERSION} -X github.com/tangcent/apilot/apilot-cli/build.Date=${DATE}" \
+            -o "${BINARY}" \
+            ./apilot-cli
+
+      - name: Package archive
+        run: |
+          VERSION="${{ needs.prepare.outputs.tag_name }}"
+          VERSION="${VERSION#v}"
+          ARCHIVE_NAME="apilot-${VERSION}-${{ matrix.goos }}-${{ matrix.arch }}"
+
+          mkdir -p dist
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            zip "dist/${ARCHIVE_NAME}.zip" apilot${{ matrix.ext }} README.md LICENSE CHANGELOG.md
+          else
+            tar czf "dist/${ARCHIVE_NAME}.tar.gz" apilot${{ matrix.ext }} README.md LICENSE CHANGELOG.md
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.goos }}-${{ matrix.arch }}
+          path: dist/apilot-*
+          retention-days: 1
+
+  release:
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -15,22 +165,70 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
         with:
-          go-version: "1.22"
+          path: artifacts
+          pattern: dist-*
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: latest
-          args: release --clean
+      - name: Collect release assets
+        id: collect
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release-assets/ \;
+
+          # Generate checksums
+          cd release-assets
+          sha256sum * > checksums.txt
+          cd ..
+
+          ls -la release-assets/
+
+      - name: Generate Release Notes
+        id: generate_notes
+        run: |
+          PREV_TAG=$(git tag -l "v*.*.*" | sort -V | tail -n2 | head -n1)
+          CURRENT_TAG=${{ needs.prepare.outputs.tag_name }}
+
+          if [ -n "$PREV_TAG" ] && [ "$PREV_TAG" != "$CURRENT_TAG" ]; then
+            NOTES="**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${CURRENT_TAG}\n\n"
+            COMMITS=$(git log --pretty=format:"* %s" $PREV_TAG..HEAD | grep -E '^\* (refactor|feat|fix|perf|docs)' || true)
+          else
+            NOTES="**Initial Release**\n\n"
+            COMMITS=$(git log --pretty=format:"* %s" | grep -E '^\* (refactor|feat|fix|perf|docs)' || true)
+          fi
+
+          if [ -n "$COMMITS" ]; then
+            NOTES="${NOTES}### Changes\n${COMMITS}\n\n"
+          fi
+
+          NOTES="${NOTES}---\n\n"
+          NOTES="${NOTES}### Downloads\n\n"
+          NOTES="${NOTES}| Platform | Architecture |\n"
+          NOTES="${NOTES}| -------- | ------------ |\n"
+          DOWNLOAD_VERSION=$(echo "$CURRENT_TAG" | sed 's/^v//')
+          NOTES="${NOTES}| [apilot-${DOWNLOAD_VERSION}-darwin-arm64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${CURRENT_TAG}/apilot-${DOWNLOAD_VERSION}-darwin-arm64.tar.gz) | macOS Apple Silicon |\n"
+          NOTES="${NOTES}| [apilot-${DOWNLOAD_VERSION}-linux-x64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${CURRENT_TAG}/apilot-${DOWNLOAD_VERSION}-linux-x64.tar.gz) | Linux x64 |\n"
+          NOTES="${NOTES}| [apilot-${DOWNLOAD_VERSION}-linux-arm64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${CURRENT_TAG}/apilot-${DOWNLOAD_VERSION}-linux-arm64.tar.gz) | Linux ARM64 |\n"
+          NOTES="${NOTES}| [apilot-${DOWNLOAD_VERSION}-windows-x64.zip](https://github.com/${{ github.repository }}/releases/download/${CURRENT_TAG}/apilot-${DOWNLOAD_VERSION}-windows-x64.zip) | Windows x64 |\n"
+
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag_name }}
+          name: ${{ needs.prepare.outputs.tag_name }}
+          body: ${{ steps.generate_notes.outputs.notes }}
+          draft: true
+          files: release-assets/*
 
   npm-publish:
-    needs: goreleaser
+    needs: [prepare, release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,9 +239,20 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Extract version from tag
+      - name: Extract version
         id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          COMMIT_FIRST_LINE=$(echo "$COMMIT_MSG" | head -1)
+          if echo "$COMMIT_FIRST_LINE" | grep -qE 'release: cli v[0-9]+\.[0-9]+\.[0-9]+'; then
+            VERSION=$(echo "$COMMIT_FIRST_LINE" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          elif echo "$COMMIT_FIRST_LINE" | grep -qE 'cli-release/v[0-9]+\.[0-9]+\.[0-9]+'; then
+            VERSION=$(echo "$COMMIT_FIRST_LINE" | grep -oE 'cli-release/v[0-9]+\.[0-9]+\.[0-9]+' | sed 's/cli-release\/v//')
+          else
+            VERSION=$(node -p "require('./package.json').version")
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Update package.json version
         run: |
@@ -55,7 +264,23 @@ jobs:
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
 
+      - name: Check if version exists on npm
+        id: check_npm
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          STATUS=$(npm view @tangcent/apilot@${VERSION} version 2>/dev/null || echo "not_found")
+          if [ "$STATUS" = "$VERSION" ]; then
+            echo "Version ${VERSION} already exists on npm. Skipping publish."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Version ${VERSION} not found on npm. Proceeding with publish."
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Publish to npm
+        if: steps.check_npm.outputs.skip == 'false'
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
