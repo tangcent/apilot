@@ -49,7 +49,7 @@ jobs:
             
             const validTypes = Object.keys(typeToLabel);
             const pattern = new RegExp(`^(${validTypes.join('|')})(\(.+\))?!?: .+`);
-            const releaseVersionPattern = new RegExp(`^release\\s+v?\\d+\\.\\d+\\.\\d+$`);
+            const releaseVersionPattern = new RegExp(`^release:\\s+(cli|plugin)\\s+v?\\d+\\.\\d+\\.\\d+$`);
             
             let isValid = true;
             let invalidCommits = [];
@@ -124,7 +124,8 @@ jobs:
               \`\`\`
               type: description
               # or for releases:
-              release x.y.z
+              release: cli v1.2.3
+              release: plugin v1.2.3
               \`\`\`
             
               Valid types:
