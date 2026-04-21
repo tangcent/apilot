@@ -6,7 +6,14 @@ APilot scans your source code, extracts API endpoints, and exports them to the f
 
 [![CI](https://github.com/tangcent/apilot/actions/workflows/ci.yml/badge.svg)](https://github.com/tangcent/apilot/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/tangcent/apilot/branch/master/graph/badge.svg)](https://codecov.io/gh/tangcent/apilot)
+[![npm version](https://img.shields.io/npm/v/@tangcent/apilot.svg)](https://www.npmjs.com/package/@tangcent/apilot)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+1 AI Agent [Skill](./skills/)
+
+| Skill | Description |
+|-------|-------------|
+| `apilot` | Scan source code and export API endpoints to Postman, Markdown, cURL, and more |
 
 ---
 
@@ -45,7 +52,49 @@ It detects your language and framework automatically, walks the source tree, and
 
 ---
 
+## Quick Start (AI Agent)
+
+> The following steps are for AI Agents (Claude Code, Cursor, etc.).
+
+**Step 1 — Install**
+
+```bash
+# Install CLI
+npm install -g @tangcent/apilot
+
+# Install CLI SKILL (required)
+npx skills add tangcent/apilot -y -g
+```
+
+**Step 2 — Export APIs**
+
+```bash
+# Scan source code and export to Postman
+apilot export ./my-service --formatter postman --output api.postman_collection.json
+
+# Generate Markdown documentation
+apilot export ./my-service --formatter markdown --format detailed --output API.md
+
+# Generate cURL commands
+apilot export ./my-service --formatter curl
+```
+
+**Step 3 — Verify**
+
+```bash
+apilot export --list-collectors
+apilot export --list-formatters
+```
+
+---
+
 ## Installation
+
+### npm (recommended)
+
+```bash
+npm install -g @tangcent/apilot
+```
 
 ### Download binary
 
