@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/tangcent/apilot/api-collector"
+	model "github.com/tangcent/apilot/api-model"
 )
 
 func TestParse_EmptyDir(t *testing.T) {
@@ -59,7 +60,7 @@ func TestParse_BasicRoutes(t *testing.T) {
 			{Name: "name", In: "query", Required: true, Type: "text"},
 			{Name: "role", In: "query", Required: false, Type: "text", Default: "user"},
 		},
-		Response: &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "gin.H"}},
+		Response: &collector.ApiBody{MediaType: "application/json", Body: model.SingleModel("gin.H")},
 	})
 
 	assertEndpoint(t, endpoints[2], collector.ApiEndpoint{
@@ -68,7 +69,7 @@ func TestParse_BasicRoutes(t *testing.T) {
 		Parameters: []collector.ApiParameter{
 			{Name: "id", In: "path", Required: true, Type: "text"},
 		},
-		Response: &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "gin.H"}},
+		Response: &collector.ApiBody{MediaType: "application/json", Body: model.SingleModel("gin.H")},
 	})
 
 	assertEndpoint(t, endpoints[3], collector.ApiEndpoint{
@@ -88,7 +89,7 @@ func TestParse_BasicRoutes(t *testing.T) {
 			{Name: "id", In: "path", Required: true, Type: "text"},
 			{Name: "name", In: "query", Required: false, Type: "text", Default: "unknown"},
 		},
-		Response: &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "gin.H"}},
+		Response: &collector.ApiBody{MediaType: "application/json", Body: model.SingleModel("gin.H")},
 	})
 
 	assertEndpoint(t, endpoints[6], collector.ApiEndpoint{
@@ -98,14 +99,14 @@ func TestParse_BasicRoutes(t *testing.T) {
 			{Name: "file", In: "form", Required: true, Type: "file"},
 			{Name: "description", In: "form", Required: true, Type: "text"},
 		},
-		Response: &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "gin.H"}},
+		Response: &collector.ApiBody{MediaType: "application/json", Body: model.SingleModel("gin.H")},
 	})
 
 	assertEndpoint(t, endpoints[7], collector.ApiEndpoint{
 		Name: "createUser", Path: "/users", Method: "POST", Protocol: "http",
 		Description: "createUser creates a new user.",
-		RequestBody: &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "req"}},
-		Response:   &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "req"}},
+		RequestBody: &collector.ApiBody{MediaType: "application/json", Body: model.SingleModel("req")},
+		Response:   &collector.ApiBody{MediaType: "application/json", Body: model.SingleModel("req")},
 	})
 
 	assertEndpoint(t, endpoints[8], collector.ApiEndpoint{
@@ -114,8 +115,8 @@ func TestParse_BasicRoutes(t *testing.T) {
 		Parameters: []collector.ApiParameter{
 			{Name: "id", In: "path", Required: true, Type: "text"},
 		},
-		RequestBody: &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "req"}},
-		Response:   &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "req"}},
+		RequestBody: &collector.ApiBody{MediaType: "application/json", Body: model.SingleModel("req")},
+		Response:   &collector.ApiBody{MediaType: "application/json", Body: model.SingleModel("req")},
 	})
 }
 
@@ -138,7 +139,7 @@ func TestParse_GroupRoutes(t *testing.T) {
 	assertEndpoint(t, endpoints[0], collector.ApiEndpoint{
 		Name: "listItems", Path: "/api/items", Method: "GET", Protocol: "http",
 		Description: "listItems returns all items.",
-		Response:    &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "gin.H"}},
+		Response:    &collector.ApiBody{MediaType: "application/json", Body: model.SingleModel("gin.H")},
 	})
 
 	assertEndpoint(t, endpoints[1], collector.ApiEndpoint{
@@ -160,14 +161,14 @@ func TestParse_GroupRoutes(t *testing.T) {
 		Parameters: []collector.ApiParameter{
 			{Name: "name", In: "query", Required: true, Type: "text"},
 		},
-		Response: &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "gin.H"}},
+		Response: &collector.ApiBody{MediaType: "application/json", Body: model.SingleModel("gin.H")},
 	})
 
 	assertEndpoint(t, endpoints[4], collector.ApiEndpoint{
 		Name: "createUser", Path: "/v1/users", Method: "POST", Protocol: "http",
 		Description: "createUser creates a new user.",
-		RequestBody: &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "req"}},
-		Response:   &collector.ApiBody{MediaType: "application/json", Schema: map[string]string{"type": "gin.H"}},
+		RequestBody: &collector.ApiBody{MediaType: "application/json", Body: model.SingleModel("req")},
+		Response:   &collector.ApiBody{MediaType: "application/json", Body: model.SingleModel("gin.H")},
 	})
 }
 
@@ -287,9 +288,9 @@ func assertBody(t *testing.T, field string, got, want *collector.ApiBody) {
 	if got.MediaType != want.MediaType {
 		t.Errorf("%s.MediaType = %q, want %q", field, got.MediaType, want.MediaType)
 	}
-	if want.Schema != nil {
-		if got.Schema == nil {
-			t.Errorf("%s.Schema = nil, want %+v", field, want.Schema)
+	if want.Body != nil {
+		if got.Body == nil {
+			t.Errorf("%s.Body = nil, want %+v", field, want.Body)
 		}
 	}
 }

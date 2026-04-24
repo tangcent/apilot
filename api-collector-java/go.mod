@@ -2,7 +2,10 @@ module github.com/tangcent/apilot/api-collector-java
 
 go 1.23
 
-require github.com/tangcent/apilot/api-collector v0.0.0
+require (
+	github.com/tangcent/apilot/api-collector v0.0.0
+	github.com/tangcent/apilot/api-model v0.0.0
+)
 
 require (
 	github.com/mattn/go-pointer v0.0.1 // indirect
@@ -11,3 +14,5 @@ require (
 )
 
 replace github.com/tangcent/apilot/api-collector => ../api-collector
+
+replace github.com/tangcent/apilot/api-model => ../api-model
