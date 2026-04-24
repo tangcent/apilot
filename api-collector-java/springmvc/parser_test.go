@@ -292,3 +292,30 @@ func TestParser_NonControllerClass(t *testing.T) {
 		t.Errorf("Expected 0 controllers, got %d", len(controllers))
 	}
 }
+
+func TestUnwrapSpringResponseType(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"ResponseEntity<User>", "ResponseEntity<User>", "User"},
+		{"ResponseEntity<List<User>>", "ResponseEntity<List<User>>", "List<User>"},
+		{"ResponseEntity<Void>", "ResponseEntity<Void>", "Void"},
+		{"ResponseEntity<Map<String, Object>>", "ResponseEntity<Map<String, Object>>", "Map<String, Object>"},
+		{"non-ResponseEntity type", "User", "User"},
+		{"List<User>", "List<User>", "List<User>"},
+		{"plain String", "String", "String"},
+		{"ResponseEntity without generics", "ResponseEntity", "ResponseEntity"},
+		{"incomplete ResponseEntity", "ResponseEntity<User", "ResponseEntity<User"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := unwrapSpringResponseType(tt.input)
+			if result != tt.expected {
+				t.Errorf("unwrapSpringResponseType(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}

@@ -22,13 +22,24 @@ type Parameter struct {
 	Annotations []Annotation
 }
 
+// Field represents a Java class field declaration.
+type Field struct {
+	Name        string
+	Type        string
+	Annotations []Annotation
+}
+
 // Class represents a Java class or interface with annotations and methods.
 type Class struct {
-	Name        string
-	Package     string
-	IsInterface bool
-	Annotations []Annotation
-	Methods     []Method
+	Name              string
+	Package           string
+	IsInterface       bool
+	Annotations       []Annotation
+	Methods           []Method
+	Fields            []Field
+	SuperClass        string
+	SuperClassTypeArgs []string
+	TypeParameters    []string
 }
 
 // ParseResult contains the parsing result for a single file.

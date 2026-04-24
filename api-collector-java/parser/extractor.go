@@ -19,7 +19,6 @@ func extractPackageName(node *tree_sitter.Node, source []byte) string {
 func extractClass(node *tree_sitter.Node, source []byte) Class {
 	class := Class{}
 
-	// Extract class name
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "identifier" {
@@ -28,14 +27,15 @@ func extractClass(node *tree_sitter.Node, source []byte) Class {
 		}
 	}
 
-	// Extract class annotations
 	class.Annotations = extractAnnotations(node, source)
+	class.SuperClass, class.SuperClassTypeArgs = extractSuperClass(node, source)
+	class.TypeParameters = extractTypeParameters(node, source)
 
-	// Extract methods
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "class_body" {
 			class.Methods = extractMethods(child, source)
+			class.Fields = extractFields(child, source)
 			break
 		}
 	}
@@ -171,7 +171,7 @@ func extractMethod(node *tree_sitter.Node, source []byte) Method {
 		switch child.Kind() {
 		case "identifier":
 			method.Name = child.Utf8Text(source)
-		case "type_identifier", "generic_type":
+		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type", "void_type":
 			method.ReturnType = child.Utf8Text(source)
 		case "formal_parameters":
 			method.Parameters = extractParameters(child, source)
@@ -206,7 +206,7 @@ func extractParameter(node *tree_sitter.Node, source []byte) Parameter {
 		child := node.Child(i)
 
 		switch child.Kind() {
-		case "type_identifier", "generic_type", "integral_type":
+		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type":
 			param.Type = child.Utf8Text(source)
 		case "identifier":
 			param.Name = child.Utf8Text(source)
@@ -214,6 +214,136 @@ func extractParameter(node *tree_sitter.Node, source []byte) Parameter {
 	}
 
 	return param
+}
+
+// extractFields extracts all field declarations from a class body.
+func extractFields(classBody *tree_sitter.Node, source []byte) []Field {
+	var fields []Field
+
+	for i := uint(0); i < classBody.ChildCount(); i++ {
+		child := classBody.Child(i)
+		if child.Kind() == "field_declaration" {
+			if field := extractField(child, source); field != nil {
+				fields = append(fields, *field)
+			}
+		}
+	}
+
+	return fields
+}
+
+// extractField extracts a single field declaration.
+func extractField(node *tree_sitter.Node, source []byte) *Field {
+	field := &Field{}
+
+	field.Annotations = extractAnnotations(node, source)
+
+	var fieldType string
+	var fieldName string
+
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+
+		switch child.Kind() {
+		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type":
+			fieldType = child.Utf8Text(source)
+		case "variable_declarator":
+			for j := uint(0); j < child.ChildCount(); j++ {
+				vdChild := child.Child(j)
+				if vdChild.Kind() == "identifier" {
+					fieldName = vdChild.Utf8Text(source)
+					break
+				}
+			}
+		}
+	}
+
+	if fieldType == "" || fieldName == "" {
+		return nil
+	}
+
+	field.Type = fieldType
+	field.Name = fieldName
+
+	return field
+}
+
+// extractSuperClass extracts superclass name and type arguments from a class declaration.
+func extractSuperClass(node *tree_sitter.Node, source []byte) (string, []string) {
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "superclass" {
+			for j := uint(0); j < child.ChildCount(); j++ {
+				scChild := child.Child(j)
+				switch scChild.Kind() {
+				case "type_identifier":
+					return scChild.Utf8Text(source), nil
+				case "generic_type":
+					return extractGenericBaseAndArgs(scChild, source)
+				}
+			}
+		}
+	}
+	return "", nil
+}
+
+// extractGenericBaseAndArgs extracts the base name and type arguments from a generic_type node.
+func extractGenericBaseAndArgs(node *tree_sitter.Node, source []byte) (string, []string) {
+	var baseName string
+	var typeArgs []string
+
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		switch child.Kind() {
+		case "type_identifier":
+			baseName = child.Utf8Text(source)
+		case "type_arguments":
+			typeArgs = extractTypeArguments(child, source)
+		}
+	}
+
+	return baseName, typeArgs
+}
+
+// extractTypeArguments extracts type argument strings from a type_arguments node.
+func extractTypeArguments(node *tree_sitter.Node, source []byte) []string {
+	var args []string
+
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		switch child.Kind() {
+		case "type_identifier":
+			args = append(args, child.Utf8Text(source))
+		case "generic_type":
+			args = append(args, child.Utf8Text(source))
+		}
+	}
+
+	return args
+}
+
+// extractTypeParameters extracts type parameter names from a class declaration.
+func extractTypeParameters(node *tree_sitter.Node, source []byte) []string {
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "type_parameters" {
+			var params []string
+			for j := uint(0); j < child.ChildCount(); j++ {
+				tpChild := child.Child(j)
+				if tpChild.Kind() == "type_parameter" {
+					for k := uint(0); k < tpChild.ChildCount(); k++ {
+						identChild := tpChild.Child(k)
+						if identChild.Kind() == "identifier" || identChild.Kind() == "type_identifier" {
+							params = append(params, identChild.Utf8Text(source))
+							break
+						}
+					}
+				}
+			}
+			return params
+		}
+	}
+	return nil
 }
 
 // walkTreeWithDepth walks the AST with depth limit to prevent stack overflow.

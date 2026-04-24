@@ -127,6 +127,15 @@ func springmvcEndpointToAPI(ep springmvc.Endpoint, folder string) collector.ApiE
 			})
 		}
 	}
+	if ep.RequestBodySchema != nil && out.RequestBody != nil {
+		out.RequestBody.Body = ep.RequestBodySchema
+	}
+	if ep.ResponseSchema != nil {
+		out.Response = &collector.ApiBody{
+			MediaType: "application/json",
+			Body:      ep.ResponseSchema,
+		}
+	}
 	return out
 }
 

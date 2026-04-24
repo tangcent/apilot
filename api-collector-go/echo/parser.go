@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	collector "github.com/tangcent/apilot/api-collector"
+	model "github.com/tangcent/apilot/api-model"
 )
 
 // echoMethods maps Echo route-registration method names that we recognize.
@@ -161,7 +162,7 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 				MediaType: analysis.requestBody.mediaType,
 			}
 			if analysis.requestBody.typeName != "" {
-				ep.RequestBody.Schema = map[string]string{"type": analysis.requestBody.typeName}
+				ep.RequestBody.Body = model.SingleModel(analysis.requestBody.typeName)
 			}
 		}
 
@@ -170,7 +171,7 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 				MediaType: analysis.response.mediaType,
 			}
 			if analysis.response.typeName != "" {
-				ep.Response.Schema = map[string]string{"type": analysis.response.typeName}
+				ep.Response.Body = model.SingleModel(analysis.response.typeName)
 			}
 		}
 

@@ -308,12 +308,9 @@ func TestFormat_AllFields(t *testing.T) {
 			},
 			RequestBody: &model.ApiBody{
 				MediaType: "application/json",
-				Schema: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"name": map[string]string{"type": "string"},
-					},
-				},
+				Body: model.ObjectModelFrom(map[string]*model.FieldModel{
+					"name": {Model: model.SingleModel(model.JsonTypeString)},
+				}),
 				Example: map[string]interface{}{"name": "Updated Name"},
 			},
 			Response: &model.ApiBody{
