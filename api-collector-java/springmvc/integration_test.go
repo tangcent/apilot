@@ -108,7 +108,6 @@ func TestIntegration_ParseRealController(t *testing.T) {
 }
 
 func TestIntegration_ParseDirectory(t *testing.T) {
-	// Create parser
 	p, err := parser.NewParser(parser.ParserOptions{
 		LogLevel: parser.LogLevelError,
 	})
@@ -117,13 +116,11 @@ func TestIntegration_ParseDirectory(t *testing.T) {
 	}
 	defer p.Close()
 
-	// Parse entire testdata directory
 	results, err := p.ParseDirectory(filepath.Join("..", "testdata"))
 	if err != nil {
 		t.Fatalf("Failed to parse directory: %v", err)
 	}
 
-	// Extract Spring MVC endpoints
 	springParser := NewParser()
 	controllers := springParser.ExtractControllers(results)
 
@@ -131,7 +128,6 @@ func TestIntegration_ParseDirectory(t *testing.T) {
 		t.Error("Expected at least one controller")
 	}
 
-	// Verify we found UserController
 	found := false
 	for _, controller := range controllers {
 		if controller.Name == "UserController" {
@@ -144,5 +140,148 @@ func TestIntegration_ParseDirectory(t *testing.T) {
 
 	if !found {
 		t.Error("UserController not found in parsed controllers")
+	}
+}
+
+func TestIntegration_InheritedFieldResolution(t *testing.T) {
+	p, err := parser.NewParser(parser.ParserOptions{
+		LogLevel: parser.LogLevelError,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create parser: %v", err)
+	}
+	defer p.Close()
+
+	results, err := p.ParseDirectory(filepath.Join("..", "testdata"))
+	if err != nil {
+		t.Fatalf("Failed to parse directory: %v", err)
+	}
+
+	springParser := NewParser()
+	controllers := springParser.ExtractControllers(results)
+
+	var orderController *Controller
+	for i := range controllers {
+		if controllers[i].Name == "OrderController" {
+			orderController = &controllers[i]
+			break
+		}
+	}
+	if orderController == nil {
+		t.Fatal("Expected OrderController in parsed controllers")
+	}
+
+	var createEp *Endpoint
+	for i := range orderController.Endpoints {
+		if orderController.Endpoints[i].MethodName == "create" {
+			createEp = &orderController.Endpoints[i]
+			break
+		}
+	}
+	if createEp == nil {
+		t.Fatal("Expected 'create' endpoint in OrderController")
+	}
+
+	if createEp.RequestBodySchema == nil {
+		t.Fatal("Expected RequestBodySchema for create endpoint")
+	}
+
+	reqBody := createEp.RequestBodySchema
+	if !reqBody.IsObject() {
+		t.Fatalf("Expected object model for CreateOrderReq, got kind=%s", reqBody.Kind)
+	}
+
+	expectedFields := []string{"orderId", "customerName", "amount", "items", "metadata"}
+	for _, name := range expectedFields {
+		if _, ok := reqBody.Fields[name]; !ok {
+			t.Errorf("Expected field '%s' in CreateOrderReq", name)
+		}
+	}
+
+	if createEp.ResponseSchema == nil {
+		t.Fatal("Expected ResponseSchema for create endpoint")
+	}
+
+	respBody := createEp.ResponseSchema
+	if !respBody.IsObject() {
+		t.Fatalf("Expected object model for Result<OrderVO>, got kind=%s", respBody.Kind)
+	}
+
+	dataField, ok := respBody.Fields["data"]
+	if !ok {
+		t.Fatal("Expected 'data' field in Result<OrderVO>")
+	}
+	if dataField.Model == nil {
+		t.Fatal("Expected 'data' field to have a model")
+	}
+	if !dataField.Model.IsObject() {
+		t.Errorf("Expected 'data' field to be object (OrderVO), got kind=%s", dataField.Model.Kind)
+	}
+
+	orderVOFields := []string{"id", "orderId", "customerName", "total", "tags", "attributes"}
+	for _, name := range orderVOFields {
+		if _, ok := dataField.Model.Fields[name]; !ok {
+			t.Errorf("Expected field '%s' in OrderVO", name)
+		}
+	}
+}
+
+func TestIntegration_GenericBaseControllerResolution(t *testing.T) {
+	p, err := parser.NewParser(parser.ParserOptions{
+		LogLevel: parser.LogLevelError,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create parser: %v", err)
+	}
+	defer p.Close()
+
+	results, err := p.ParseDirectory(filepath.Join("..", "testdata"))
+	if err != nil {
+		t.Fatalf("Failed to parse directory: %v", err)
+	}
+
+	springParser := NewParser()
+	controllers := springParser.ExtractControllers(results)
+
+	var genericCtrl *Controller
+	for i := range controllers {
+		if controllers[i].Name == "GenericBaseController" {
+			genericCtrl = &controllers[i]
+			break
+		}
+	}
+	if genericCtrl == nil {
+		t.Fatal("Expected GenericBaseController in parsed controllers")
+	}
+
+	var infoEp *Endpoint
+	for i := range genericCtrl.Endpoints {
+		if genericCtrl.Endpoints[i].MethodName == "getInfo" {
+			infoEp = &genericCtrl.Endpoints[i]
+			break
+		}
+	}
+	if infoEp == nil {
+		t.Fatal("Expected 'getInfo' endpoint in GenericBaseController")
+	}
+
+	if infoEp.ResponseSchema == nil {
+		t.Fatal("Expected ResponseSchema for getInfo endpoint")
+	}
+
+	resp := infoEp.ResponseSchema
+	if !resp.IsObject() {
+		t.Fatalf("Expected object model for Result<R>, got kind=%s", resp.Kind)
+	}
+
+	dataField, ok := resp.Fields["data"]
+	if !ok {
+		t.Fatal("Expected 'data' field in Result<R>")
+	}
+	if dataField.Model == nil {
+		t.Fatal("Expected 'data' field to have a model")
+	}
+	if !dataField.Generic {
+		t.Error("Expected 'data' field to be marked as Generic since R is unbound")
 	}
 }

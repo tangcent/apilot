@@ -423,4 +423,100 @@ func TestCollect_SchemaResolution_GenericBaseController(t *testing.T) {
 	if dataField.Model == nil {
 		t.Fatal("Expected 'data' field to have a model")
 	}
+	if !dataField.Generic {
+		t.Error("Expected 'data' field to be marked as Generic since R is unbound")
+	}
+}
+
+func TestCollect_SchemaResolution_InheritedModelFields(t *testing.T) {
+	c := New()
+	testdataDir, _ := filepath.Abs("testdata")
+
+	endpoints, err := c.Collect(collector.CollectContext{
+		SourceDir:  testdataDir,
+		Frameworks: []string{"spring-mvc"},
+	})
+	if err != nil {
+		t.Fatalf("Collect failed: %v", err)
+	}
+
+	var getUserEp *collector.ApiEndpoint
+	for i := range endpoints {
+		if endpoints[i].Name == "getUser" && endpoints[i].Folder == "UserController" {
+			getUserEp = &endpoints[i]
+			break
+		}
+	}
+	if getUserEp == nil {
+		t.Fatal("Expected getUser endpoint from UserController")
+	}
+
+	if getUserEp.Response == nil || getUserEp.Response.Body == nil {
+		t.Fatal("Expected Response body for getUser (returns ResponseEntity<User>)")
+	}
+
+	resp := getUserEp.Response.Body
+	if !resp.IsObject() {
+		t.Fatalf("Expected object model for User, got kind=%s", resp.Kind)
+	}
+
+	if resp.TypeName != "User" {
+		t.Errorf("Expected typeName 'User', got '%s'", resp.TypeName)
+	}
+
+	expectedOwnFields := []struct {
+		name     string
+		kind     model.ObjectModelKind
+		typeName string
+	}{
+		{"name", model.KindSingle, model.JsonTypeString},
+		{"email", model.KindSingle, model.JsonTypeString},
+		{"active", model.KindSingle, model.JsonTypeBoolean},
+	}
+
+	for _, ef := range expectedOwnFields {
+		field, ok := resp.Fields[ef.name]
+		if !ok {
+			t.Errorf("Expected field '%s' in User", ef.name)
+			continue
+		}
+		if field.Model == nil {
+			t.Errorf("Field '%s' has nil model", ef.name)
+			continue
+		}
+		if field.Model.Kind != ef.kind {
+			t.Errorf("Field '%s': expected kind %s, got %s", ef.name, ef.kind, field.Model.Kind)
+		}
+		if field.Model.TypeName != ef.typeName {
+			t.Errorf("Field '%s': expected typeName %s, got %s", ef.name, ef.typeName, field.Model.TypeName)
+		}
+	}
+
+	expectedInheritedFields := []struct {
+		name     string
+		kind     model.ObjectModelKind
+		typeName string
+	}{
+		{"id", model.KindSingle, model.JsonTypeLong},
+		{"createdAt", model.KindSingle, "LocalDateTime"},
+		{"updatedAt", model.KindSingle, "LocalDateTime"},
+	}
+
+	for _, ef := range expectedInheritedFields {
+		field, ok := resp.Fields[ef.name]
+		if !ok {
+			t.Errorf("Expected inherited field '%s' from BaseEntity in User", ef.name)
+			continue
+		}
+		if field.Model == nil {
+			t.Errorf("Inherited field '%s' has nil model", ef.name)
+			continue
+		}
+		if field.Model.Kind != ef.kind {
+			t.Errorf("Inherited field '%s': expected kind %s, got %s", ef.name, ef.kind, field.Model.Kind)
+		}
+		if field.Model.TypeName != ef.typeName {
+			t.Errorf("Inherited field '%s': expected typeName %s, got %s", ef.name, ef.typeName, field.Model.TypeName)
+		}
+	}
 }
