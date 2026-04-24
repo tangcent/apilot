@@ -353,3 +353,308 @@ func TestParser_ClassLevelProducesInherited(t *testing.T) {
 		t.Errorf("Expected inherited produces, got %v", ep.Produces)
 	}
 }
+
+func TestParser_ImplicitBodyParameter(t *testing.T) {
+	results := []parser.ParseResult{
+		{
+			Classes: []parser.Class{
+				{
+					Name: "TestResource",
+					Annotations: []parser.Annotation{
+						{Name: "Path", Params: map[string]string{"value": "/test"}},
+					},
+					Methods: []parser.Method{
+						{
+							Name:        "create",
+							Annotations: []parser.Annotation{{Name: "POST"}},
+							Parameters: []parser.Parameter{
+								{Name: "body", Type: "User", Annotations: []parser.Annotation{}},
+							},
+							ReturnType: "Response",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	p := NewParser()
+	resources := p.ExtractResources(results)
+
+	if len(resources) != 1 || len(resources[0].Endpoints) != 1 {
+		t.Fatal("Failed to extract endpoint")
+	}
+	ep := resources[0].Endpoints[0]
+	if len(ep.Parameters) != 1 {
+		t.Fatalf("Expected 1 parameter, got %d", len(ep.Parameters))
+	}
+	if ep.Parameters[0].ParamType != "body" {
+		t.Errorf("Expected body parameter, got '%s'", ep.Parameters[0].ParamType)
+	}
+	if !ep.Parameters[0].Required {
+		t.Error("Implicit body parameter should be required")
+	}
+}
+
+func TestParser_BeanParamAsBody(t *testing.T) {
+	results := []parser.ParseResult{
+		{
+			Classes: []parser.Class{
+				{
+					Name: "TestResource",
+					Annotations: []parser.Annotation{
+						{Name: "Path", Params: map[string]string{"value": "/test"}},
+					},
+					Methods: []parser.Method{
+						{
+							Name:        "search",
+							Annotations: []parser.Annotation{{Name: "GET"}},
+							Parameters: []parser.Parameter{
+								{Name: "filter", Type: "SearchFilter", Annotations: []parser.Annotation{{Name: "BeanParam"}}},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	p := NewParser()
+	resources := p.ExtractResources(results)
+
+	if len(resources) != 1 || len(resources[0].Endpoints) != 1 {
+		t.Fatal("Failed to extract endpoint")
+	}
+	ep := resources[0].Endpoints[0]
+	if len(ep.Parameters) != 1 {
+		t.Fatalf("Expected 1 parameter, got %d", len(ep.Parameters))
+	}
+	if ep.Parameters[0].ParamType != "body" {
+		t.Errorf("Expected body parameter for @BeanParam, got '%s'", ep.Parameters[0].ParamType)
+	}
+}
+
+func TestParser_ResponseTypeUnwrapping(t *testing.T) {
+	results := []parser.ParseResult{
+		{
+			Classes: []parser.Class{
+				{
+					Name: "TestResource",
+					Annotations: []parser.Annotation{
+						{Name: "Path", Params: map[string]string{"value": "/test"}},
+					},
+					Methods: []parser.Method{
+						{
+							Name:        "getPlainResponse",
+							Annotations: []parser.Annotation{{Name: "GET"}},
+							ReturnType:  "Response",
+						},
+						{
+							Name:        "getDirectType",
+							Annotations: []parser.Annotation{{Name: "GET"}, {Name: "Path", Params: map[string]string{"value": "/direct"}}},
+							ReturnType:  "String",
+						},
+						{
+							Name:        "getVoid",
+							Annotations: []parser.Annotation{{Name: "DELETE"}, {Name: "Path", Params: map[string]string{"value": "/void"}}},
+							ReturnType:  "void",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	p := NewParser()
+	resources := p.ExtractResources(results)
+
+	if len(resources) != 1 || len(resources[0].Endpoints) != 3 {
+		t.Fatalf("Expected 3 endpoints, got %d", len(resources[0].Endpoints))
+	}
+
+	if resources[0].Endpoints[0].ResponseSchema != nil {
+		t.Error("Plain Response should not produce a schema")
+	}
+
+	if resources[0].Endpoints[1].ResponseSchema == nil {
+		t.Error("Direct String return should produce a schema")
+	} else if resources[0].Endpoints[1].ResponseSchema.TypeName != "string" {
+		t.Errorf("Expected string schema, got %s", resources[0].Endpoints[1].ResponseSchema.TypeName)
+	}
+
+	if resources[0].Endpoints[2].ResponseSchema != nil {
+		t.Error("void return should not produce a schema")
+	}
+}
+
+func TestParser_TypeResolution(t *testing.T) {
+	results := []parser.ParseResult{
+		{
+			Classes: []parser.Class{
+				{
+					Name: "User",
+					Fields: []parser.Field{
+						{Name: "name", Type: "String"},
+						{Name: "email", Type: "String"},
+						{Name: "active", Type: "boolean"},
+					},
+				},
+				{
+					Name: "TestResource",
+					Annotations: []parser.Annotation{
+						{Name: "Path", Params: map[string]string{"value": "/test"}},
+					},
+					Methods: []parser.Method{
+						{
+							Name:        "create",
+							Annotations: []parser.Annotation{{Name: "POST"}},
+							Parameters: []parser.Parameter{
+								{Name: "user", Type: "User", Annotations: []parser.Annotation{}},
+							},
+							ReturnType: "User",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	p := NewParser()
+	resources := p.ExtractResources(results)
+
+	if len(resources) != 1 || len(resources[0].Endpoints) != 1 {
+		t.Fatal("Failed to extract endpoint")
+	}
+	ep := resources[0].Endpoints[0]
+
+	if ep.RequestBodySchema == nil {
+		t.Fatal("Expected RequestBodySchema")
+	}
+	if !ep.RequestBodySchema.IsObject() {
+		t.Fatalf("Expected object model, got kind=%s", ep.RequestBodySchema.Kind)
+	}
+	for _, field := range []string{"name", "email", "active"} {
+		if _, ok := ep.RequestBodySchema.Fields[field]; !ok {
+			t.Errorf("Expected field '%s' in request body schema", field)
+		}
+	}
+
+	if ep.ResponseSchema == nil {
+		t.Fatal("Expected ResponseSchema")
+	}
+	if !ep.ResponseSchema.IsObject() {
+		t.Fatalf("Expected object model, got kind=%s", ep.ResponseSchema.Kind)
+	}
+}
+
+func TestParser_InheritedEndpoints(t *testing.T) {
+	results := []parser.ParseResult{
+		{
+			Classes: []parser.Class{
+				{
+					Name: "BaseResource",
+					Annotations: []parser.Annotation{
+						{Name: "Produces", Params: map[string]string{"value": "application/json"}},
+					},
+					TypeParameters: []string{"T"},
+					Methods: []parser.Method{
+						{
+							Name:        "getById",
+							Annotations: []parser.Annotation{{Name: "GET"}, {Name: "Path", Params: map[string]string{"value": "/{id}"}}},
+							Parameters: []parser.Parameter{
+								{Name: "id", Type: "Long", Annotations: []parser.Annotation{{Name: "PathParam"}}},
+							},
+							ReturnType: "T",
+						},
+					},
+				},
+				{
+					Name: "Item",
+					Fields: []parser.Field{
+						{Name: "id", Type: "Long"},
+						{Name: "title", Type: "String"},
+					},
+				},
+				{
+					Name: "ItemResource",
+					Annotations: []parser.Annotation{
+						{Name: "Path", Params: map[string]string{"value": "/items"}},
+					},
+					SuperClass:         "BaseResource",
+					SuperClassTypeArgs: []string{"Item"},
+					Methods:            []parser.Method{},
+				},
+			},
+		},
+	}
+
+	p := NewParser()
+	resources := p.ExtractResources(results)
+
+	var itemResource *Resource
+	for i := range resources {
+		if resources[i].Name == "ItemResource" {
+			itemResource = &resources[i]
+			break
+		}
+	}
+	if itemResource == nil {
+		t.Fatal("Expected ItemResource")
+	}
+
+	if len(itemResource.Endpoints) != 1 {
+		t.Fatalf("Expected 1 inherited endpoint, got %d", len(itemResource.Endpoints))
+	}
+
+	ep := itemResource.Endpoints[0]
+	if ep.MethodName != "getById" {
+		t.Errorf("Expected inherited method 'getById', got '%s'", ep.MethodName)
+	}
+	if ep.Path != "/items/{id}" {
+		t.Errorf("Expected path '/items/{id}', got '%s'", ep.Path)
+	}
+
+	if ep.ResponseSchema == nil {
+		t.Fatal("Expected ResponseSchema for inherited endpoint")
+	}
+	if !ep.ResponseSchema.IsObject() {
+		t.Fatalf("Expected object model for Item, got kind=%s", ep.ResponseSchema.Kind)
+	}
+	if _, ok := ep.ResponseSchema.Fields["title"]; !ok {
+		t.Error("Expected 'title' field in resolved Item schema")
+	}
+}
+
+func TestParser_ContextParamIgnored(t *testing.T) {
+	results := []parser.ParseResult{
+		{
+			Classes: []parser.Class{
+				{
+					Name: "TestResource",
+					Annotations: []parser.Annotation{
+						{Name: "Path", Params: map[string]string{"value": "/test"}},
+					},
+					Methods: []parser.Method{
+						{
+							Name:        "get",
+							Annotations: []parser.Annotation{{Name: "GET"}},
+							Parameters: []parser.Parameter{
+								{Name: "uriInfo", Type: "UriInfo", Annotations: []parser.Annotation{{Name: "Context"}}},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	p := NewParser()
+	resources := p.ExtractResources(results)
+
+	if len(resources) != 1 || len(resources[0].Endpoints) != 1 {
+		t.Fatal("Failed to extract endpoint")
+	}
+	if len(resources[0].Endpoints[0].Parameters) != 0 {
+		t.Errorf("Expected 0 parameters (@Context should be ignored), got %d", len(resources[0].Endpoints[0].Parameters))
+	}
+}

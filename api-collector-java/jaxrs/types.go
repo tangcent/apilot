@@ -1,6 +1,8 @@
 // Package jaxrs provides JAX-RS specific API extraction.
 package jaxrs
 
+import model "github.com/tangcent/apilot/api-model"
+
 // HTTPMethod represents HTTP methods.
 type HTTPMethod string
 
@@ -18,21 +20,23 @@ const (
 type EndpointParameter struct {
 	Name      string
 	Type      string
-	ParamType string // path, query, form, header, cookie
+	ParamType string // path, query, form, header, cookie, body
 	Required  bool
 }
 
 // Endpoint represents a JAX-RS REST endpoint.
 type Endpoint struct {
-	Path       string
-	Method     HTTPMethod
-	MethodName string
-	Parameters []EndpointParameter
-	ReturnType string
-	Produces   []string
-	Consumes   []string
-	ClassName  string
-	Package    string
+	Path              string
+	Method            HTTPMethod
+	MethodName        string
+	Parameters        []EndpointParameter
+	ReturnType        string
+	Produces          []string
+	Consumes          []string
+	ClassName         string
+	Package           string
+	RequestBodySchema *model.ObjectModel
+	ResponseSchema    *model.ObjectModel
 }
 
 // Resource represents a JAX-RS resource class with its endpoints.

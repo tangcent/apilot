@@ -164,6 +164,19 @@ func jaxrsEndpointToAPI(ep jaxrs.Endpoint, folder string) collector.ApiEndpoint 
 			})
 		}
 	}
+	if ep.RequestBodySchema != nil && out.RequestBody != nil {
+		out.RequestBody.Body = ep.RequestBodySchema
+	}
+	if ep.ResponseSchema != nil {
+		respMediaType := "application/json"
+		if len(ep.Produces) > 0 {
+			respMediaType = ep.Produces[0]
+		}
+		out.Response = &collector.ApiBody{
+			MediaType: respMediaType,
+			Body:      ep.ResponseSchema,
+		}
+	}
 	return out
 }
 
