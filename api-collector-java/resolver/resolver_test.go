@@ -440,3 +440,272 @@ func TestResolve_PageResult(t *testing.T) {
 		t.Errorf("Expected total typeName 'long', got '%s'", totalField.Model.TypeName)
 	}
 }
+
+func TestResolve_InheritedFields(t *testing.T) {
+	classes := []parser.Class{
+		{
+			Name: "BaseEntity",
+			Fields: []parser.Field{
+				{Name: "id", Type: "Long"},
+				{Name: "createdAt", Type: "String"},
+			},
+		},
+		{
+			Name:       "User",
+			SuperClass: "BaseEntity",
+			Fields: []parser.Field{
+				{Name: "name", Type: "String"},
+				{Name: "email", Type: "String"},
+			},
+		},
+	}
+
+	r := NewTypeResolver(classes)
+	result := r.Resolve("User", nil)
+
+	if result.Kind != model.KindObject {
+		t.Fatalf("Expected KindObject, got %s", result.Kind)
+	}
+	if result.TypeName != "User" {
+		t.Errorf("Expected typeName 'User', got '%s'", result.TypeName)
+	}
+
+	expectedFields := []struct {
+		name     string
+		typeName string
+	}{
+		{"name", model.JsonTypeString},
+		{"email", model.JsonTypeString},
+		{"id", model.JsonTypeLong},
+		{"createdAt", model.JsonTypeString},
+	}
+
+	if len(result.Fields) != len(expectedFields) {
+		t.Fatalf("Expected %d fields, got %d", len(expectedFields), len(result.Fields))
+	}
+
+	for _, ef := range expectedFields {
+		field, ok := result.Fields[ef.name]
+		if !ok {
+			t.Errorf("Expected field '%s'", ef.name)
+			continue
+		}
+		if field.Model == nil {
+			t.Errorf("Field '%s' has nil model", ef.name)
+			continue
+		}
+		if field.Model.TypeName != ef.typeName {
+			t.Errorf("Field '%s': expected typeName %s, got %s", ef.name, ef.typeName, field.Model.TypeName)
+		}
+	}
+}
+
+func TestResolve_InheritedFieldsWithGenerics(t *testing.T) {
+	classes := []parser.Class{
+		{
+			Name: "BaseEntity",
+			Fields: []parser.Field{
+				{Name: "id", Type: "Long"},
+			},
+		},
+		{
+			Name:           "TypedEntity",
+			SuperClass:     "BaseEntity",
+			TypeParameters: []string{"T"},
+			Fields: []parser.Field{
+				{Name: "typeInfo", Type: "T"},
+			},
+		},
+		{
+			Name:              "Product",
+			SuperClass:        "TypedEntity",
+			SuperClassTypeArgs: []string{"String"},
+			Fields: []parser.Field{
+				{Name: "productName", Type: "String"},
+			},
+		},
+	}
+
+	r := NewTypeResolver(classes)
+	result := r.Resolve("Product", nil)
+
+	if result.Kind != model.KindObject {
+		t.Fatalf("Expected KindObject, got %s", result.Kind)
+	}
+
+	if len(result.Fields) != 3 {
+		t.Fatalf("Expected 3 fields (productName + typeInfo + id), got %d", len(result.Fields))
+	}
+
+	productNameField := result.Fields["productName"]
+	if productNameField == nil || productNameField.Model.TypeName != model.JsonTypeString {
+		t.Errorf("Expected productName typeName 'string', got '%v'", productNameField)
+	}
+
+	typeInfoField := result.Fields["typeInfo"]
+	if typeInfoField == nil {
+		t.Fatal("Expected inherited 'typeInfo' field from TypedEntity")
+	}
+	if typeInfoField.Model.TypeName != model.JsonTypeString {
+		t.Errorf("Expected typeInfo typeName 'string' (T resolved to String), got '%s'", typeInfoField.Model.TypeName)
+	}
+
+	idField := result.Fields["id"]
+	if idField == nil {
+		t.Fatal("Expected inherited 'id' field from BaseEntity")
+	}
+	if idField.Model.TypeName != model.JsonTypeLong {
+		t.Errorf("Expected id typeName 'long', got '%s'", idField.Model.TypeName)
+	}
+}
+
+func TestResolve_GenericFieldMarking(t *testing.T) {
+	classes := []parser.Class{
+		{
+			Name:           "Result",
+			TypeParameters: []string{"T"},
+			Fields: []parser.Field{
+				{Name: "code", Type: "int"},
+				{Name: "message", Type: "String"},
+				{Name: "data", Type: "T"},
+			},
+		},
+	}
+
+	r := NewTypeResolver(classes)
+
+	t.Run("unbound type param marked as generic", func(t *testing.T) {
+		result := r.Resolve("Result", nil)
+		dataField := result.Fields["data"]
+		if dataField == nil {
+			t.Fatal("Expected 'data' field")
+		}
+		if !dataField.Generic {
+			t.Error("Expected 'data' field to be marked as Generic since T is unbound")
+		}
+	})
+
+	t.Run("bound type param not marked as generic", func(t *testing.T) {
+		classesWithUser := append(classes, parser.Class{
+			Name: "User",
+			Fields: []parser.Field{
+				{Name: "name", Type: "String"},
+			},
+		})
+		r2 := NewTypeResolver(classesWithUser)
+		result := r2.Resolve("Result<User>", nil)
+		dataField := result.Fields["data"]
+		if dataField == nil {
+			t.Fatal("Expected 'data' field")
+		}
+		if dataField.Generic {
+			t.Error("Expected 'data' field NOT to be marked as Generic since T is bound to User")
+		}
+		if !dataField.Model.IsObject() {
+			t.Errorf("Expected data model KindObject, got %s", dataField.Model.Kind)
+		}
+	})
+
+	t.Run("non-type-param fields not marked as generic", func(t *testing.T) {
+		result := r.Resolve("Result", nil)
+		codeField := result.Fields["code"]
+		if codeField == nil {
+			t.Fatal("Expected 'code' field")
+		}
+		if codeField.Generic {
+			t.Error("Expected 'code' field NOT to be marked as Generic")
+		}
+	})
+}
+
+func TestResolve_InheritedFieldsWithGenericSuperclass(t *testing.T) {
+	classes := []parser.Class{
+		{
+			Name:           "BaseCrudController",
+			TypeParameters: []string{"Req", "Res"},
+			Fields: []parser.Field{
+				{Name: "request", Type: "Req"},
+				{Name: "response", Type: "Res"},
+			},
+		},
+		{
+			Name:              "OrderController",
+			SuperClass:        "BaseCrudController",
+			SuperClassTypeArgs: []string{"CreateOrderReq", "OrderVO"},
+			Fields:            []parser.Field{},
+		},
+		{
+			Name: "CreateOrderReq",
+			Fields: []parser.Field{
+				{Name: "orderId", Type: "String"},
+			},
+		},
+		{
+			Name: "OrderVO",
+			Fields: []parser.Field{
+				{Name: "id", Type: "Long"},
+			},
+		},
+	}
+
+	r := NewTypeResolver(classes)
+	result := r.Resolve("OrderController", nil)
+
+	if result.Kind != model.KindObject {
+		t.Fatalf("Expected KindObject, got %s", result.Kind)
+	}
+
+	reqField := result.Fields["request"]
+	if reqField == nil {
+		t.Fatal("Expected inherited 'request' field from BaseCrudController")
+	}
+	if reqField.Model.Kind != model.KindObject {
+		t.Errorf("Expected request KindObject, got %s", reqField.Model.Kind)
+	}
+	if reqField.Model.TypeName != "CreateOrderReq" {
+		t.Errorf("Expected request typeName 'CreateOrderReq', got '%s'", reqField.Model.TypeName)
+	}
+
+	resField := result.Fields["response"]
+	if resField == nil {
+		t.Fatal("Expected inherited 'response' field from BaseCrudController")
+	}
+	if resField.Model.TypeName != "OrderVO" {
+		t.Errorf("Expected response typeName 'OrderVO', got '%s'", resField.Model.TypeName)
+	}
+}
+
+func TestResolve_FieldOverrideInSubclass(t *testing.T) {
+	classes := []parser.Class{
+		{
+			Name: "BaseEntity",
+			Fields: []parser.Field{
+				{Name: "id", Type: "Long"},
+				{Name: "name", Type: "String"},
+			},
+		},
+		{
+			Name:       "User",
+			SuperClass: "BaseEntity",
+			Fields: []parser.Field{
+				{Name: "name", Type: "String"},
+				{Name: "email", Type: "String"},
+			},
+		},
+	}
+
+	r := NewTypeResolver(classes)
+	result := r.Resolve("User", nil)
+
+	if len(result.Fields) != 3 {
+		t.Fatalf("Expected 3 fields, got %d", len(result.Fields))
+	}
+
+	nameField := result.Fields["name"]
+	if nameField == nil {
+		t.Fatal("Expected 'name' field")
+	}
+	if nameField.Model.TypeName != model.JsonTypeString {
+		t.Errorf("Expected name typeName 'string', got '%s'", nameField.Model.TypeName)
+	}
+}

@@ -41,16 +41,22 @@ var mapTypes = map[string]bool{
 
 type TypeResolver struct {
 	classRegistry map[string]parser.Class
+	allTypeParams map[string]bool
 	resolving     map[string]bool
 }
 
 func NewTypeResolver(classes []parser.Class) *TypeResolver {
 	registry := make(map[string]parser.Class, len(classes))
+	allTypeParams := make(map[string]bool)
 	for _, c := range classes {
 		registry[c.Name] = c
+		for _, tp := range c.TypeParameters {
+			allTypeParams[tp] = true
+		}
 	}
 	return &TypeResolver{
 		classRegistry: registry,
+		allTypeParams: allTypeParams,
 		resolving:     make(map[string]bool),
 	}
 }
@@ -129,20 +135,18 @@ func (r *TypeResolver) Resolve(rawType string, typeBindings map[string]string) *
 			}
 		}
 
+		typeParamSet := make(map[string]bool, len(class.TypeParameters))
+		for _, tp := range class.TypeParameters {
+			typeParamSet[tp] = true
+		}
+
 		fields := make(map[string]*model.FieldModel, len(class.Fields))
 		for _, f := range class.Fields {
-			fieldModel := r.Resolve(f.Type, localBindings)
-			fm := &model.FieldModel{
-				Model:    fieldModel,
-				Required: true,
-			}
-			for _, ann := range f.Annotations {
-				if ann.Name == "Nullable" || ann.Name == "Null" {
-					fm.Required = false
-				}
-			}
+			fm := r.resolveField(f, localBindings, typeParamSet)
 			fields[f.Name] = fm
 		}
+
+		r.resolveInheritedFields(class, localBindings, fields)
 
 		return &model.ObjectModel{
 			Kind:     model.KindObject,
@@ -152,6 +156,79 @@ func (r *TypeResolver) Resolve(rawType string, typeBindings map[string]string) *
 	}
 
 	return model.SingleModel(rawType)
+}
+
+func (r *TypeResolver) resolveField(f parser.Field, localBindings map[string]string, typeParamSet map[string]bool) *model.FieldModel {
+	fieldModel := r.Resolve(f.Type, localBindings)
+	fm := &model.FieldModel{
+		Model:    fieldModel,
+		Required: true,
+	}
+	for _, ann := range f.Annotations {
+		if ann.Name == "Nullable" || ann.Name == "Null" {
+			fm.Required = false
+		}
+	}
+	if r.isUnboundTypeParam(f.Type, localBindings, typeParamSet) {
+		fm.Generic = true
+	} else if fieldModel != nil && fieldModel.Kind == model.KindSingle && r.allTypeParams[fieldModel.TypeName] {
+		fm.Generic = true
+	}
+	return fm
+}
+
+func (r *TypeResolver) isUnboundTypeParam(typeName string, localBindings map[string]string, typeParamSet map[string]bool) bool {
+	if typeParamSet == nil {
+		return false
+	}
+	if !typeParamSet[typeName] {
+		return false
+	}
+	if bound, exists := localBindings[typeName]; exists {
+		return r.allTypeParams[bound] && r.classRegistry[bound].Name == ""
+	}
+	return true
+}
+
+func (r *TypeResolver) resolveInheritedFields(class parser.Class, localBindings map[string]string, fields map[string]*model.FieldModel) {
+	if class.SuperClass == "" {
+		return
+	}
+
+	superClass, found := r.classRegistry[class.SuperClass]
+	if !found {
+		return
+	}
+
+	superBindings := make(map[string]string)
+	for i, tp := range superClass.TypeParameters {
+		if i < len(class.SuperClassTypeArgs) {
+			resolvedArg := class.SuperClassTypeArgs[i]
+			if bound, ok := localBindings[resolvedArg]; ok {
+				resolvedArg = bound
+			}
+			superBindings[tp] = resolvedArg
+		}
+	}
+	for k, v := range localBindings {
+		if _, exists := superBindings[k]; !exists {
+			superBindings[k] = v
+		}
+	}
+
+	superTypeParamSet := make(map[string]bool, len(superClass.TypeParameters))
+	for _, tp := range superClass.TypeParameters {
+		superTypeParamSet[tp] = true
+	}
+
+	for _, f := range superClass.Fields {
+		if _, exists := fields[f.Name]; !exists {
+			fm := r.resolveField(f, superBindings, superTypeParamSet)
+			fields[f.Name] = fm
+		}
+	}
+
+	r.resolveInheritedFields(superClass, superBindings, fields)
 }
 
 func parseGenericType(rawType string) (string, []string) {
