@@ -257,6 +257,131 @@ func assertEndpoint(t *testing.T, got collector.ApiEndpoint, want collector.ApiE
 	assertParams(t, got.Parameters, want.Parameters)
 }
 
+func TestParse_TypedRoutes(t *testing.T) {
+	endpoints, err := Parse(filepath.Join("testdata", "typed"))
+	if err != nil {
+		t.Fatalf("typed routes should not error: %v", err)
+	}
+	if len(endpoints) == 0 {
+		t.Fatalf("expected endpoints for typed routes, got 0")
+	}
+
+	sort.Slice(endpoints, func(i, j int) bool {
+		if endpoints[i].Method != endpoints[j].Method {
+			return endpoints[i].Method < endpoints[j].Method
+		}
+		return endpoints[i].Path < endpoints[j].Path
+	})
+
+	var postUsers, getUsers, getUserById, putUserById []collector.ApiEndpoint
+	for _, ep := range endpoints {
+		switch {
+		case ep.Method == "POST" && ep.Path == "/users":
+			postUsers = append(postUsers, ep)
+		case ep.Method == "GET" && ep.Path == "/users":
+			getUsers = append(getUsers, ep)
+		case ep.Method == "GET" && ep.Path == "/users/{id}":
+			getUserById = append(getUserById, ep)
+		case ep.Method == "PUT" && ep.Path == "/users/{id}":
+			putUserById = append(putUserById, ep)
+		}
+	}
+
+	if len(postUsers) > 0 {
+		ep := postUsers[0]
+		if ep.RequestBody == nil || ep.RequestBody.Body == nil {
+			t.Errorf("POST /users should have request body with type info")
+		} else {
+			body := ep.RequestBody.Body
+			if !body.IsObject() {
+				t.Errorf("POST /users request body should be object, got %s", body.Kind)
+			}
+			if _, ok := body.Fields["name"]; !ok {
+				t.Errorf("POST /users request body should have 'name' field")
+			}
+			if _, ok := body.Fields["email"]; !ok {
+				t.Errorf("POST /users request body should have 'email' field")
+			}
+		}
+
+		if ep.Response == nil || ep.Response.Body == nil {
+			t.Errorf("POST /users should have response with type info")
+		} else {
+			body := ep.Response.Body
+			if !body.IsObject() {
+				t.Errorf("POST /users response should be object, got %s", body.Kind)
+			}
+		}
+	}
+
+	if len(getUserById) > 0 {
+		ep := getUserById[0]
+		if ep.Response == nil || ep.Response.Body == nil {
+			t.Errorf("GET /users/{id} should have response with type info")
+		} else {
+			body := ep.Response.Body
+			if !body.IsObject() {
+				t.Errorf("GET /users/{id} response should be object, got %s", body.Kind)
+			}
+			if _, ok := body.Fields["id"]; !ok {
+				t.Errorf("GET /users/{id} response should have 'id' field")
+			}
+			if _, ok := body.Fields["name"]; !ok {
+				t.Errorf("GET /users/{id} response should have 'name' field")
+			}
+		}
+	}
+}
+
+func TestParse_TypedRoutesWithOrders(t *testing.T) {
+	endpoints, err := Parse(filepath.Join("testdata", "typed"))
+	if err != nil {
+		t.Fatalf("typed routes should not error: %v", err)
+	}
+
+	var postOrders, getOrders, getOrderById []collector.ApiEndpoint
+	for _, ep := range endpoints {
+		switch {
+		case ep.Method == "POST" && ep.Path == "/orders":
+			postOrders = append(postOrders, ep)
+		case ep.Method == "GET" && ep.Path == "/orders":
+			getOrders = append(getOrders, ep)
+		case ep.Method == "GET" && ep.Path == "/orders/{id}":
+			getOrderById = append(getOrderById, ep)
+		}
+	}
+
+	if len(postOrders) > 0 {
+		ep := postOrders[0]
+		if ep.RequestBody == nil || ep.RequestBody.Body == nil {
+			t.Errorf("POST /orders should have request body with type info")
+		} else {
+			body := ep.RequestBody.Body
+			if !body.IsObject() {
+				t.Errorf("POST /orders request body should be object, got %s", body.Kind)
+			}
+			if _, ok := body.Fields["productId"]; !ok {
+				t.Errorf("POST /orders request body should have 'productId' field")
+			}
+			if _, ok := body.Fields["quantity"]; !ok {
+				t.Errorf("POST /orders request body should have 'quantity' field")
+			}
+		}
+	}
+
+	if len(getOrderById) > 0 {
+		ep := getOrderById[0]
+		if ep.Response == nil || ep.Response.Body == nil {
+			t.Errorf("GET /orders/{id} should have response with type info")
+		} else {
+			body := ep.Response.Body
+			if !body.IsObject() {
+				t.Errorf("GET /orders/{id} response should be object, got %s", body.Kind)
+			}
+		}
+	}
+}
+
 func assertParams(t *testing.T, got, want []collector.ApiParameter) {
 	t.Helper()
 

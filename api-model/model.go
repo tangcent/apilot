@@ -120,6 +120,7 @@ func (m *ObjectModel) IsObject() bool { return m != nil && m.Kind == KindObject 
 func (m *ObjectModel) IsArray() bool  { return m != nil && m.Kind == KindArray }
 func (m *ObjectModel) IsMap() bool    { return m != nil && m.Kind == KindMap }
 func (m *ObjectModel) IsRef() bool    { return m != nil && m.Kind == KindRef }
+func (m *ObjectModel) IsNull() bool   { return m == nil || (m.Kind == KindSingle && m.TypeName == JsonTypeNull) }
 
 type FieldOpt func(*FieldModel)
 
