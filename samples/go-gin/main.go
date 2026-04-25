@@ -2,14 +2,27 @@ package main
 
 import "github.com/gin-gonic/gin"
 
+type BaseModel struct {
+	ID        int64  `json:"id"`
+	CreatedAt string `json:"created_at"`
+}
+
 type CreateUserReq struct {
-	Name  string `json:"name"`
-	Email string `json:"email"`
+	Name  string `json:"name" binding:"required"`
+	Email string `json:"email" binding:"required"`
 }
 
 type UpdateUserReq struct {
-	Name  string `json:"name"`
-	Email string `json:"email"`
+	Name  *string `json:"name"`
+	Email *string `json:"email"`
+}
+
+type UserVO struct {
+	BaseModel
+	Name   string   `json:"name"`
+	Email  string   `json:"email"`
+	Active bool     `json:"active"`
+	Tags   []string `json:"tags"`
 }
 
 func main() {
@@ -41,19 +54,19 @@ func listUsers(c *gin.Context) {
 func createUser(c *gin.Context) {
 	var req CreateUserReq
 	_ = c.ShouldBindJSON(&req)
-	c.JSON(201, req)
+	c.JSON(201, UserVO{})
 }
 
 // getUser returns a single user by ID.
 func getUser(c *gin.Context) {
-	c.JSON(200, gin.H{"id": c.Param("id")})
+	c.JSON(200, UserVO{})
 }
 
 // updateUser updates an existing user.
 func updateUser(c *gin.Context) {
 	var req UpdateUserReq
 	_ = c.BindJSON(&req)
-	c.JSON(200, req)
+	c.JSON(200, UserVO{})
 }
 
 // deleteUser removes a user by ID.
