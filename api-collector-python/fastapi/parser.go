@@ -1,7 +1,8 @@
 // Package fastapi parses FastAPI decorated route functions using tree-sitter-python.
 // It walks Python source files for @app.get, @app.post, @router.get, etc. decorators
 // and extracts endpoint metadata including path, HTTP method, function parameters,
-// and docstrings.
+// docstrings, and structured request/response type schemas resolved from Pydantic
+// BaseModel definitions and Python type annotations.
 package fastapi
 
 import (
@@ -15,6 +16,7 @@ import (
 	python "github.com/tree-sitter/tree-sitter-python/bindings/go"
 
 	collector "github.com/tangcent/apilot/api-collector"
+	model "github.com/tangcent/apilot/api-model"
 )
 
 var httpMethods = map[string]bool{
@@ -50,12 +52,31 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 		close(ch)
 	}()
 
-	var allEndpoints []collector.ApiEndpoint
+	allModels := make(map[string]PydanticModel)
+	var allRawEndpoints []rawEndpointInfo
+
 	for res := range ch {
 		if res.err != nil {
 			continue
 		}
-		allEndpoints = append(allEndpoints, res.endpoints...)
+		for k, v := range res.models {
+			allModels[k] = v
+		}
+		allRawEndpoints = append(allRawEndpoints, res.rawEndpoints...)
+	}
+
+	if len(allRawEndpoints) == 0 {
+		return nil, nil
+	}
+
+	typeResolver := NewPythonTypeResolver(allModels)
+
+	var allEndpoints []collector.ApiEndpoint
+	for _, raw := range allRawEndpoints {
+		ep := buildEndpoint(raw, typeResolver)
+		if ep != nil {
+			allEndpoints = append(allEndpoints, *ep)
+		}
 	}
 
 	if len(allEndpoints) == 0 {
@@ -65,9 +86,20 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 	return allEndpoints, nil
 }
 
+type rawEndpointInfo struct {
+	method        string
+	path          string
+	funcName      string
+	description   string
+	params        []funcParam
+	responseModel string
+	returnType    string
+}
+
 type fileResult struct {
-	endpoints []collector.ApiEndpoint
-	err       error
+	rawEndpoints []rawEndpointInfo
+	models       map[string]PydanticModel
+	err          error
 }
 
 func discoverPythonFiles(sourceDir string) ([]string, error) {
@@ -108,13 +140,17 @@ func processFile(filePath string) fileResult {
 	defer tree.Close()
 
 	rootNode := tree.RootNode()
-	endpoints := extractEndpoints(rootNode, source)
+	models := extractPydanticModels(rootNode, source)
+	rawEndpoints := extractRawEndpoints(rootNode, source)
 
-	return fileResult{endpoints: endpoints}
+	return fileResult{
+		models:       models,
+		rawEndpoints: rawEndpoints,
+	}
 }
 
-func extractEndpoints(rootNode *tree_sitter.Node, source []byte) []collector.ApiEndpoint {
-	var endpoints []collector.ApiEndpoint
+func extractRawEndpoints(rootNode *tree_sitter.Node, source []byte) []rawEndpointInfo {
+	var endpoints []rawEndpointInfo
 
 	for i := uint(0); i < rootNode.ChildCount(); i++ {
 		child := rootNode.Child(i)
@@ -122,16 +158,16 @@ func extractEndpoints(rootNode *tree_sitter.Node, source []byte) []collector.Api
 			continue
 		}
 
-		ep := extractDecoratedDefinition(child, source)
-		if ep != nil {
-			endpoints = append(endpoints, *ep)
+		raw := extractRawDecoratedDefinition(child, source)
+		if raw != nil {
+			endpoints = append(endpoints, *raw)
 		}
 	}
 
 	return endpoints
 }
 
-func extractDecoratedDefinition(node *tree_sitter.Node, source []byte) *collector.ApiEndpoint {
+func extractRawDecoratedDefinition(node *tree_sitter.Node, source []byte) *rawEndpointInfo {
 	var decorator *tree_sitter.Node
 	var funcDef *tree_sitter.Node
 
@@ -157,16 +193,30 @@ func extractDecoratedDefinition(node *tree_sitter.Node, source []byte) *collecto
 	funcName := extractFunctionName(funcDef, source)
 	description := extractDocstring(funcDef, source)
 	params := extractFunctionParameters(funcDef, source, path)
+	responseModel := extractResponseModelFromDecorator(decorator, source)
+	returnType := extractReturnType(funcDef, source)
 
+	return &rawEndpointInfo{
+		method:        method,
+		path:          path,
+		funcName:      funcName,
+		description:   description,
+		params:        params,
+		responseModel: responseModel,
+		returnType:    returnType,
+	}
+}
+
+func buildEndpoint(raw rawEndpointInfo, typeResolver *PythonTypeResolver) *collector.ApiEndpoint {
 	ep := &collector.ApiEndpoint{
-		Name:        funcName,
-		Path:        path,
-		Method:      strings.ToUpper(method),
+		Name:        raw.funcName,
+		Path:        raw.path,
+		Method:      strings.ToUpper(raw.method),
 		Protocol:    "http",
-		Description: description,
+		Description: raw.description,
 	}
 
-	pathParams := extractPathParams(path)
+	pathParams := extractPathParams(raw.path)
 	pathParamNames := make(map[string]bool)
 	for _, p := range pathParams {
 		pathParamNames[p.name] = true
@@ -174,6 +224,7 @@ func extractDecoratedDefinition(node *tree_sitter.Node, source []byte) *collecto
 
 	paramSet := make(map[string]bool)
 	var allParams []collector.ApiParameter
+	var bodyParams []funcParam
 
 	for _, p := range pathParams {
 		allParams = append(allParams, collector.ApiParameter{
@@ -185,11 +236,17 @@ func extractDecoratedDefinition(node *tree_sitter.Node, source []byte) *collecto
 		paramSet[p.name+"|path"] = true
 	}
 
-	for _, p := range params {
+	for _, p := range raw.params {
 		if pathParamNames[p.name] && p.in == "query" {
 			p.in = "path"
 			p.required = true
 		}
+
+		if p.in == "body" && p.typeAnnotation != "" {
+			bodyParams = append(bodyParams, p)
+			continue
+		}
+
 		key := p.name + "|" + p.in
 		if !paramSet[key] {
 			allParams = append(allParams, collector.ApiParameter{
@@ -204,6 +261,51 @@ func extractDecoratedDefinition(node *tree_sitter.Node, source []byte) *collecto
 
 	if len(allParams) > 0 {
 		ep.Parameters = allParams
+	}
+
+	if len(bodyParams) == 1 && bodyParams[0].typeAnnotation != "" {
+		resolvedBody := typeResolver.Resolve(bodyParams[0].typeAnnotation)
+		ep.RequestBody = &collector.ApiBody{
+			MediaType: "application/json",
+			Body:      resolvedBody,
+		}
+	} else if len(bodyParams) > 1 {
+		fields := make(map[string]*model.FieldModel)
+		for _, bp := range bodyParams {
+			var fieldModel *model.ObjectModel
+			if bp.typeAnnotation != "" {
+				fieldModel = typeResolver.Resolve(bp.typeAnnotation)
+			} else {
+				fieldModel = model.SingleModel(model.JsonTypeString)
+			}
+			fields[bp.name] = &model.FieldModel{
+				Model:    fieldModel,
+				Required: bp.required,
+			}
+		}
+		ep.RequestBody = &collector.ApiBody{
+			MediaType: "application/json",
+			Body: &model.ObjectModel{
+				Kind:     model.KindObject,
+				TypeName: "object",
+				Fields:   fields,
+			},
+		}
+	}
+
+	responseType := raw.responseModel
+	if responseType == "" && raw.returnType != "" {
+		responseType = raw.returnType
+	}
+
+	if responseType != "" {
+		resolvedResponse := typeResolver.Resolve(responseType)
+		if resolvedResponse != nil && !resolvedResponse.IsNull() {
+			ep.Response = &collector.ApiBody{
+				MediaType: "application/json",
+				Body:      resolvedResponse,
+			}
+		}
 	}
 
 	return ep
@@ -349,10 +451,11 @@ func extractDocstringFromBlock(blockNode *tree_sitter.Node, source []byte) strin
 }
 
 type funcParam struct {
-	name     string
-	in       string
-	required bool
-	typ      string
+	name           string
+	in             string
+	required       bool
+	typ            string
+	typeAnnotation string
 }
 
 func extractFunctionParameters(funcDef *tree_sitter.Node, source []byte, path string) []funcParam {
@@ -454,6 +557,9 @@ func extractSingleParameter(paramNode *tree_sitter.Node, source []byte, path str
 		case "type":
 			typeText := child.Utf8Text(source)
 			p = applyTypeAnnotation(p, typeText)
+			if p.typeAnnotation == "" {
+				p.typeAnnotation = typeText
+			}
 		case "call":
 			defaultCall, defaultHasEllipsis = extractCallInfo(child, source)
 		case "=":
@@ -471,7 +577,37 @@ func extractSingleParameter(paramNode *tree_sitter.Node, source []byte, path str
 		p.required = true
 	}
 
+	if p.typeAnnotation != "" && p.in != "body" && p.in != "path" && p.in != "header" && p.in != "cookie" && p.in != "form" {
+		if isPydanticModelType(p.typeAnnotation) {
+			p.in = "body"
+		}
+	}
+
 	return p
+}
+
+func isPydanticModelType(typeText string) bool {
+	baseName, _ := parsePythonGenericType(typeText)
+	if pythonPrimitives[baseName] != "" {
+		return false
+	}
+	if pythonCollectionTypes[baseName] || pythonMapTypes[baseName] {
+		return false
+	}
+	if baseName == "list" || baseName == "dict" || baseName == "set" || baseName == "tuple" {
+		return false
+	}
+	if baseName == "Optional" || baseName == "Union" {
+		return false
+	}
+	lower := strings.ToLower(baseName)
+	if lower == "str" || lower == "int" || lower == "float" || lower == "bool" {
+		return false
+	}
+	if lower == "string" || lower == "bytes" {
+		return false
+	}
+	return true
 }
 
 func extractCallInfo(callNode *tree_sitter.Node, source []byte) (identifier string, hasEllipsis bool) {
