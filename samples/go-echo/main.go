@@ -6,9 +6,25 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
+type BaseModel struct {
+	ID        int64  `json:"id"`
+	CreatedAt string `json:"created_at"`
+}
+
 type CreateUserReq struct {
+	Name  string `json:"name" validate:"required"`
+	Email string `json:"email" validate:"required"`
+}
+
+type UserVO struct {
+	BaseModel
 	Name  string `json:"name"`
 	Email string `json:"email"`
+}
+
+type UpdateUserReq struct {
+	Name  *string `json:"name"`
+	Email *string `json:"email"`
 }
 
 func main() {
@@ -36,21 +52,21 @@ func listUsers(c echo.Context) error {
 func createUser(c echo.Context) error {
 	var req CreateUserReq
 	_ = c.Bind(&req)
-	return c.JSON(http.StatusCreated, req)
+	return c.JSON(http.StatusCreated, UserVO{})
 }
 
 // getUser returns a single user by ID.
 func getUser(c echo.Context) error {
 	id := c.Param("id")
 	_ = id
-	return c.JSON(http.StatusOK, map[string]interface{}{"id": id})
+	return c.JSON(http.StatusOK, UserVO{})
 }
 
 // updateUser updates an existing user.
 func updateUser(c echo.Context) error {
-	var req CreateUserReq
+	var req UpdateUserReq
 	_ = c.Bind(&req)
-	return c.JSON(http.StatusOK, req)
+	return c.JSON(http.StatusOK, UserVO{})
 }
 
 // deleteUser removes a user by ID.
