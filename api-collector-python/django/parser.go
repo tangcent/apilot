@@ -57,12 +57,31 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 		close(ch)
 	}()
 
-	var allEndpoints []collector.ApiEndpoint
+	allSerializers := make(map[string]SerializerModel)
+	var allRawEndpoints []rawEndpointInfo
+
 	for res := range ch {
 		if res.err != nil {
 			continue
 		}
-		allEndpoints = append(allEndpoints, res.endpoints...)
+		for k, v := range res.serializers {
+			allSerializers[k] = v
+		}
+		allRawEndpoints = append(allRawEndpoints, res.rawEndpoints...)
+	}
+
+	if len(allRawEndpoints) == 0 {
+		return nil, nil
+	}
+
+	typeResolver := NewDRFTypeResolver(allSerializers)
+
+	var allEndpoints []collector.ApiEndpoint
+	for _, raw := range allRawEndpoints {
+		ep := buildDjangoEndpoint(raw, typeResolver)
+		if ep != nil {
+			allEndpoints = append(allEndpoints, *ep)
+		}
 	}
 
 	if len(allEndpoints) == 0 {
@@ -72,9 +91,22 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 	return allEndpoints, nil
 }
 
+type rawEndpointInfo struct {
+	name               string
+	path               string
+	method             string
+	protocol           string
+	description        string
+	parameters         []collector.ApiParameter
+	serializerClass    string
+	action             string
+	isViewSet          bool
+}
+
 type fileResult struct {
-	endpoints []collector.ApiEndpoint
-	err       error
+	rawEndpoints []rawEndpointInfo
+	serializers  map[string]SerializerModel
+	err          error
 }
 
 func discoverPythonFiles(sourceDir string) ([]string, error) {
@@ -115,13 +147,17 @@ func processFile(filePath string) fileResult {
 	defer tree.Close()
 
 	rootNode := tree.RootNode()
-	endpoints := extractEndpoints(rootNode, source)
+	serializers := extractSerializers(rootNode, source)
+	rawEndpoints := extractEndpoints(rootNode, source)
 
-	return fileResult{endpoints: endpoints}
+	return fileResult{
+		serializers:  serializers,
+		rawEndpoints: rawEndpoints,
+	}
 }
 
-func extractEndpoints(rootNode *tree_sitter.Node, source []byte) []collector.ApiEndpoint {
-	var endpoints []collector.ApiEndpoint
+func extractEndpoints(rootNode *tree_sitter.Node, source []byte) []rawEndpointInfo {
+	var endpoints []rawEndpointInfo
 
 	urlPatterns := extractUrlPatterns(rootNode, source)
 	classEndpoints := extractClassBasedViews(rootNode, source)
@@ -134,8 +170,8 @@ func extractEndpoints(rootNode *tree_sitter.Node, source []byte) []collector.Api
 	return endpoints
 }
 
-func extractUrlPatterns(rootNode *tree_sitter.Node, source []byte) []collector.ApiEndpoint {
-	var endpoints []collector.ApiEndpoint
+func extractUrlPatterns(rootNode *tree_sitter.Node, source []byte) []rawEndpointInfo {
+	var endpoints []rawEndpointInfo
 
 	for i := uint(0); i < rootNode.ChildCount(); i++ {
 		child := rootNode.Child(i)
@@ -178,8 +214,8 @@ func extractUrlPatterns(rootNode *tree_sitter.Node, source []byte) []collector.A
 	return endpoints
 }
 
-func parseUrlPatternList(listNode *tree_sitter.Node, source []byte) []collector.ApiEndpoint {
-	var endpoints []collector.ApiEndpoint
+func parseUrlPatternList(listNode *tree_sitter.Node, source []byte) []rawEndpointInfo {
+	var endpoints []rawEndpointInfo
 
 	for i := uint(0); i < listNode.ChildCount(); i++ {
 		child := listNode.Child(i)
@@ -194,7 +230,7 @@ func parseUrlPatternList(listNode *tree_sitter.Node, source []byte) []collector.
 	return endpoints
 }
 
-func parsePathCall(callNode *tree_sitter.Node, source []byte) *collector.ApiEndpoint {
+func parsePathCall(callNode *tree_sitter.Node, source []byte) *rawEndpointInfo {
 	var funcName string
 	var args []string
 
@@ -238,11 +274,11 @@ func parsePathCall(callNode *tree_sitter.Node, source []byte) *collector.ApiEndp
 		method = "PATCH"
 	}
 
-	ep := &collector.ApiEndpoint{
-		Name:     viewName,
-		Path:     pathPattern,
-		Method:   method,
-		Protocol: "http",
+	ep := &rawEndpointInfo{
+		name:     viewName,
+		path:     pathPattern,
+		method:   method,
+		protocol: "http",
 	}
 
 	pathParams := extractPathParams(pathPattern)
@@ -256,7 +292,7 @@ func parsePathCall(callNode *tree_sitter.Node, source []byte) *collector.ApiEndp
 				Type:     "text",
 			})
 		}
-		ep.Parameters = params
+		ep.parameters = params
 	}
 
 	return ep
@@ -285,8 +321,8 @@ func extractCallArguments(argListNode *tree_sitter.Node, source []byte) []string
 	return args
 }
 
-func extractClassBasedViews(rootNode *tree_sitter.Node, source []byte) []collector.ApiEndpoint {
-	var endpoints []collector.ApiEndpoint
+func extractClassBasedViews(rootNode *tree_sitter.Node, source []byte) []rawEndpointInfo {
+	var endpoints []rawEndpointInfo
 
 	for i := uint(0); i < rootNode.ChildCount(); i++ {
 		child := rootNode.Child(i)
@@ -304,12 +340,17 @@ func extractClassBasedViews(rootNode *tree_sitter.Node, source []byte) []collect
 			continue
 		}
 
+		serializerClass := extractSerializerClassFromView(child, source)
+		isVS := isViewSet(baseClasses)
+
 		methods := extractClassMethods(child, source)
 		for _, method := range methods {
 			httpMethod := method.name
-			if isViewSet(baseClasses) {
+			action := ""
+			if isVS {
 				if mapped, ok := viewSetMethods[strings.ToLower(method.name)]; ok {
 					httpMethod = mapped
+					action = strings.ToLower(method.name)
 				} else {
 					continue
 				}
@@ -320,14 +361,17 @@ func extractClassBasedViews(rootNode *tree_sitter.Node, source []byte) []collect
 				httpMethod = strings.ToUpper(method.name)
 			}
 
-			ep := &collector.ApiEndpoint{
-				Name:        className + "." + method.name,
-				Path:        "/" + className,
-				Method:      httpMethod,
-				Protocol:    "http",
-				Description: method.docstring,
+			ep := rawEndpointInfo{
+				name:            className + "." + method.name,
+				path:            "/" + className,
+				method:          httpMethod,
+				protocol:        "http",
+				description:     method.docstring,
+				serializerClass: serializerClass,
+				action:          action,
+				isViewSet:       isVS,
 			}
-			endpoints = append(endpoints, *ep)
+			endpoints = append(endpoints, ep)
 		}
 	}
 
@@ -421,8 +465,8 @@ func extractClassMethods(classNode *tree_sitter.Node, source []byte) []classMeth
 	return methods
 }
 
-func extractFunctionBasedViews(rootNode *tree_sitter.Node, source []byte) []collector.ApiEndpoint {
-	var endpoints []collector.ApiEndpoint
+func extractFunctionBasedViews(rootNode *tree_sitter.Node, source []byte) []rawEndpointInfo {
+	var endpoints []rawEndpointInfo
 
 	for i := uint(0); i < rootNode.ChildCount(); i++ {
 		child := rootNode.Child(i)
@@ -439,7 +483,7 @@ func extractFunctionBasedViews(rootNode *tree_sitter.Node, source []byte) []coll
 	return endpoints
 }
 
-func extractApiViewDecorator(node *tree_sitter.Node, source []byte) []collector.ApiEndpoint {
+func extractApiViewDecorator(node *tree_sitter.Node, source []byte) []rawEndpointInfo {
 	var decorator *tree_sitter.Node
 	var funcDef *tree_sitter.Node
 
@@ -465,14 +509,14 @@ func extractApiViewDecorator(node *tree_sitter.Node, source []byte) []collector.
 	funcName := extractFunctionName(funcDef, source)
 	description := extractDocstring(funcDef, source)
 
-	var endpoints []collector.ApiEndpoint
+	var endpoints []rawEndpointInfo
 	for _, method := range methods {
-		ep := collector.ApiEndpoint{
-			Name:        funcName,
-			Path:        "/" + funcName,
-			Method:      strings.ToUpper(method),
-			Protocol:    "http",
-			Description: description,
+		ep := rawEndpointInfo{
+			name:        funcName,
+			path:        "/" + funcName,
+			method:      strings.ToUpper(method),
+			protocol:    "http",
+			description: description,
 		}
 		endpoints = append(endpoints, ep)
 	}
@@ -587,6 +631,55 @@ func extractDocstringFromBlock(blockNode *tree_sitter.Node, source []byte) strin
 		break
 	}
 	return ""
+}
+
+func buildDjangoEndpoint(raw rawEndpointInfo, typeResolver *DRFTypeResolver) *collector.ApiEndpoint {
+	ep := &collector.ApiEndpoint{
+		Name:        raw.name,
+		Path:        raw.path,
+		Method:      raw.method,
+		Protocol:    raw.protocol,
+		Description: raw.description,
+	}
+
+	if len(raw.parameters) > 0 {
+		ep.Parameters = raw.parameters
+	}
+
+	if raw.serializerClass == "" {
+		return ep
+	}
+
+	var requestSerializer string
+	var responseSerializer string
+
+	if raw.isViewSet && raw.action != "" {
+		requestSerializer, responseSerializer = typeResolver.ResolveActionSerializer(raw.name, raw.action, raw.serializerClass)
+	} else {
+		requestSerializer, responseSerializer = typeResolver.ResolveHTTPMethodSerializer(raw.name, raw.method, raw.serializerClass)
+	}
+
+	if requestSerializer != "" {
+		reqBody := typeResolver.BuildRequestBody(requestSerializer)
+		if reqBody != nil {
+			ep.RequestBody = &collector.ApiBody{
+				MediaType: "application/json",
+				Body:      reqBody,
+			}
+		}
+	}
+
+	if responseSerializer != "" {
+		respBody := typeResolver.BuildResponseBody(responseSerializer)
+		if respBody != nil {
+			ep.Response = &collector.ApiBody{
+				MediaType: "application/json",
+				Body:      respBody,
+			}
+		}
+	}
+
+	return ep
 }
 
 type pathParamInfo struct {

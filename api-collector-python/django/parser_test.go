@@ -3,6 +3,8 @@ package django
 import (
 	"strings"
 	"testing"
+
+	collector "github.com/tangcent/apilot/api-collector"
 )
 
 func TestParseBasic(t *testing.T) {
@@ -198,4 +200,226 @@ func TestNormalizePath(t *testing.T) {
 			t.Errorf("Input %s: expected %s, got %s", test.input, test.expected, result)
 		}
 	}
+}
+
+func TestParse_WithSerializers(t *testing.T) {
+	endpoints, err := Parse("testdata/serializers")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	if len(endpoints) == 0 {
+		t.Fatal("Expected endpoints to be extracted, got none")
+	}
+
+	epMap := make(map[string]collector.ApiEndpoint)
+	for _, ep := range endpoints {
+		key := ep.Method + " " + ep.Path
+		epMap[key] = ep
+	}
+
+	t.Run("ViewSet list has response body with UserSerializer schema", func(t *testing.T) {
+		ep, ok := epMap["GET /UserViewSet"]
+		if !ok {
+			t.Fatal("missing GET /UserViewSet endpoint")
+		}
+		if ep.Response == nil {
+			t.Fatal("expected response body for GET /UserViewSet")
+		}
+		if ep.Response.Body == nil {
+			t.Fatal("expected Body for response")
+		}
+		if ep.Response.Body.Kind != "object" {
+			t.Errorf("response body Kind = %q, want %q", ep.Response.Body.Kind, "object")
+		}
+		if ep.Response.Body.TypeName != "UserSerializer" {
+			t.Errorf("response body TypeName = %q, want %q", ep.Response.Body.TypeName, "UserSerializer")
+		}
+		nameField, ok := ep.Response.Body.Fields["name"]
+		if !ok {
+			t.Fatal("expected 'name' field in UserSerializer")
+		}
+		if nameField.Model.TypeName != "string" {
+			t.Errorf("UserSerializer.name type = %q, want %q", nameField.Model.TypeName, "string")
+		}
+	})
+
+	t.Run("ViewSet create has request and response body", func(t *testing.T) {
+		ep, ok := epMap["POST /UserViewSet"]
+		if !ok {
+			t.Fatal("missing POST /UserViewSet endpoint")
+		}
+		if ep.RequestBody == nil {
+			t.Fatal("expected request body for POST /UserViewSet")
+		}
+		if ep.RequestBody.Body == nil {
+			t.Fatal("expected Body for request")
+		}
+		if ep.RequestBody.Body.TypeName != "UserSerializer" {
+			t.Errorf("request body TypeName = %q, want %q", ep.RequestBody.Body.TypeName, "UserSerializer")
+		}
+		if ep.Response == nil {
+			t.Fatal("expected response body for POST /UserViewSet")
+		}
+	})
+
+	t.Run("APIView GET has response body", func(t *testing.T) {
+		ep, ok := epMap["GET /AddressAPIView"]
+		if !ok {
+			t.Fatal("missing GET /AddressAPIView endpoint")
+		}
+		if ep.Response == nil {
+			t.Fatal("expected response body for GET /AddressAPIView")
+		}
+		if ep.Response.Body == nil {
+			t.Fatal("expected Body for response")
+		}
+		if ep.Response.Body.TypeName != "AddressSerializer" {
+			t.Errorf("response body TypeName = %q, want %q", ep.Response.Body.TypeName, "AddressSerializer")
+		}
+	})
+
+	t.Run("APIView POST has request and response body", func(t *testing.T) {
+		ep, ok := epMap["POST /AddressAPIView"]
+		if !ok {
+			t.Fatal("missing POST /AddressAPIView endpoint")
+		}
+		if ep.RequestBody == nil {
+			t.Fatal("expected request body for POST /AddressAPIView")
+		}
+		if ep.Response == nil {
+			t.Fatal("expected response body for POST /AddressAPIView")
+		}
+	})
+
+	t.Run("Nested serializer resolves correctly", func(t *testing.T) {
+		ep, ok := epMap["GET /UserWithAddressAPIView"]
+		if !ok {
+			t.Fatal("missing GET /UserWithAddressAPIView endpoint")
+		}
+		if ep.Response == nil {
+			t.Fatal("expected response body")
+		}
+		if ep.Response.Body == nil {
+			t.Fatal("expected Body for response")
+		}
+		addrField, ok := ep.Response.Body.Fields["address"]
+		if !ok {
+			t.Fatal("expected 'address' field in UserWithAddressSerializer")
+		}
+		if addrField.Model.Kind != "object" {
+			t.Errorf("address kind = %q, want %q", addrField.Model.Kind, "object")
+		}
+		if addrField.Model.TypeName != "AddressSerializer" {
+			t.Errorf("address typeName = %q, want %q", addrField.Model.TypeName, "AddressSerializer")
+		}
+	})
+
+	t.Run("ViewSet destroy has no request/response body", func(t *testing.T) {
+		ep, ok := epMap["DELETE /UserViewSet"]
+		if !ok {
+			t.Fatal("missing DELETE /UserViewSet endpoint")
+		}
+		if ep.RequestBody != nil {
+			t.Error("expected no request body for DELETE")
+		}
+		if ep.Response != nil {
+			t.Error("expected no response body for DELETE")
+		}
+	})
+}
+
+func TestParse_SerializerInheritance(t *testing.T) {
+	endpoints, err := Parse("testdata/serializer_inheritance")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	if len(endpoints) == 0 {
+		t.Fatal("Expected endpoints to be extracted, got none")
+	}
+
+	epMap := make(map[string]collector.ApiEndpoint)
+	for _, ep := range endpoints {
+		key := ep.Method + " " + ep.Path
+		epMap[key] = ep
+	}
+
+	t.Run("ItemSerializer has inherited fields", func(t *testing.T) {
+		ep, ok := epMap["GET /ItemViewSet"]
+		if !ok {
+			t.Fatal("missing GET /ItemViewSet endpoint")
+		}
+		if ep.Response == nil {
+			t.Fatal("expected response body")
+		}
+		if ep.Response.Body == nil {
+			t.Fatal("expected Body for response")
+		}
+		if ep.Response.Body.TypeName != "ItemSerializer" {
+			t.Errorf("response body TypeName = %q, want %q", ep.Response.Body.TypeName, "ItemSerializer")
+		}
+		if len(ep.Response.Body.Fields) < 4 {
+			t.Fatalf("ItemSerializer should have at least 4 fields (2 own + 2 inherited), got %d", len(ep.Response.Body.Fields))
+		}
+		if _, ok := ep.Response.Body.Fields["id"]; !ok {
+			t.Error("expected inherited 'id' field")
+		}
+		if _, ok := ep.Response.Body.Fields["created_at"]; !ok {
+			t.Error("expected inherited 'created_at' field")
+		}
+		if _, ok := ep.Response.Body.Fields["name"]; !ok {
+			t.Error("expected own 'name' field")
+		}
+		if _, ok := ep.Response.Body.Fields["price"]; !ok {
+			t.Error("expected own 'price' field")
+		}
+	})
+}
+
+func TestParse_ModelSerializer(t *testing.T) {
+	endpoints, err := Parse("testdata/model_serializer")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	if len(endpoints) == 0 {
+		t.Fatal("Expected endpoints to be extracted, got none")
+	}
+
+	epMap := make(map[string]collector.ApiEndpoint)
+	for _, ep := range endpoints {
+		key := ep.Method + " " + ep.Path
+		epMap[key] = ep
+	}
+
+	t.Run("ModelSerializer resolves fields", func(t *testing.T) {
+		ep, ok := epMap["GET /ProductViewSet"]
+		if !ok {
+			t.Fatal("missing GET /ProductViewSet endpoint")
+		}
+		if ep.Response == nil {
+			t.Fatal("expected response body")
+		}
+		if ep.Response.Body == nil {
+			t.Fatal("expected Body for response")
+		}
+		if ep.Response.Body.TypeName != "ProductSerializer" {
+			t.Errorf("response body TypeName = %q, want %q", ep.Response.Body.TypeName, "ProductSerializer")
+		}
+		nameField, ok := ep.Response.Body.Fields["name"]
+		if !ok {
+			t.Fatal("expected 'name' field in ProductSerializer")
+		}
+		if nameField.Model.TypeName != "string" {
+			t.Errorf("ProductSerializer.name type = %q, want %q", nameField.Model.TypeName, "string")
+		}
+		priceField, ok := ep.Response.Body.Fields["price"]
+		if !ok {
+			t.Fatal("expected 'price' field in ProductSerializer")
+		}
+		if priceField.Model.TypeName != "float" {
+			t.Errorf("ProductSerializer.price type = %q, want %q", priceField.Model.TypeName, "float")
+		}
+	})
 }
