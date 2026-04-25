@@ -117,6 +117,11 @@ func extractTopLevelType(node *tree_sitter.Node, registry *TSTypeRegistry, sourc
 		if enum != nil {
 			registry.Enums[enum.Name] = enum
 		}
+	case "class_declaration":
+		iface := extractClassAsInterface(node, source)
+		if iface != nil {
+			registry.Interfaces[iface.Name] = iface
+		}
 	case "export_statement":
 		for i := uint(0); i < node.ChildCount(); i++ {
 			child := node.Child(i)
@@ -167,6 +172,318 @@ func extractInterface(node *tree_sitter.Node, source []byte) *TSInterface {
 	}
 
 	return iface
+}
+
+func extractClassAsInterface(node *tree_sitter.Node, source []byte) *TSInterface {
+	name := ""
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "type_identifier" {
+			name = child.Utf8Text(source)
+			break
+		}
+	}
+	if name == "" {
+		return nil
+	}
+
+	iface := &TSInterface{
+		Name:    name,
+		Comment: extractPrevComment(node, source),
+	}
+
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		switch child.Kind() {
+		case "type_parameters":
+			iface.TypeParameters = extractTypeParameterNames(child, source)
+		case "class_body":
+			iface.Fields = extractClassFields(child, source)
+		case "extends_clause":
+		case "implements_clause":
+		case "decorator":
+		}
+	}
+
+	return iface
+}
+
+func extractClassFields(classBody *tree_sitter.Node, source []byte) []TSField {
+	var fields []TSField
+
+	for i := uint(0); i < classBody.ChildCount(); i++ {
+		child := classBody.Child(i)
+		if child.Kind() == "public_field_definition" || nodeKindMatchesClassProperty(child) {
+			field := extractClassPropertyDefinition(child, source)
+			if field != nil {
+				fields = append(fields, *field)
+			}
+		}
+	}
+
+	return fields
+}
+
+func nodeKindMatchesClassProperty(node *tree_sitter.Node) bool {
+	kind := node.Kind()
+	return kind == "property_definition" || kind == "field_definition" || kind == "public_field_definition"
+}
+
+func extractClassPropertyDefinition(node *tree_sitter.Node, source []byte) *TSField {
+	name := ""
+	typeStr := ""
+	required := true
+	comment := ""
+	var annotations []string
+
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		switch child.Kind() {
+		case "property_identifier", "identifier":
+			name = child.Utf8Text(source)
+		case "type_annotation":
+			typeStr = extractTypeAnnotation(child, source)
+		case "?":
+			required = false
+		case "decorator":
+			di := parseClassDecorator(child, source)
+			if di != nil {
+				if di.isOptional {
+					required = false
+				}
+				if di.typeOverride != "" {
+					typeStr = di.typeOverride
+				}
+				if di.description != "" {
+					comment = di.description
+				}
+				if di.name != "" {
+					annotations = append(annotations, di.name)
+				}
+			}
+		case "comment":
+			if comment == "" {
+				comment = cleanComment(child.Utf8Text(source))
+			}
+		}
+	}
+
+	if name == "" {
+		return nil
+	}
+
+	if typeStr == "" {
+		typeStr = "any"
+	}
+
+	return &TSField{
+		Name:        name,
+		Type:        typeStr,
+		Required:    required,
+		Comment:     comment,
+		Annotations: annotations,
+	}
+}
+
+type classDecoratorInfo struct {
+	name         string
+	isOptional   bool
+	typeOverride string
+	description  string
+}
+
+var classValidatorOptionalDecorators = map[string]bool{
+	"IsOptional": true,
+}
+
+var classValidatorTypeDecorators = map[string]string{
+	"IsString":  "string",
+	"IsNumber":  "number",
+	"IsInt":     "number",
+	"IsBoolean": "boolean",
+	"IsDate":    "string",
+	"IsEmail":   "string",
+	"IsArray":   "any[]",
+	"IsObject":  "object",
+	"IsEnum":    "string",
+}
+
+func parseClassDecorator(decoratorNode *tree_sitter.Node, source []byte) *classDecoratorInfo {
+	info := &classDecoratorInfo{}
+
+	callNode := findChildByKindTSParser(decoratorNode, "call_expression")
+	if callNode != nil {
+		name := extractDecoratorNameFromCall(callNode, source)
+		info.name = name
+
+		if classValidatorOptionalDecorators[name] {
+			info.isOptional = true
+		}
+
+		if typeName, ok := classValidatorTypeDecorators[name]; ok && typeName != "" {
+			info.typeOverride = typeName
+		}
+
+		if name == "ApiProperty" {
+			info = parseApiPropertyArgs(callNode, source, info)
+		}
+
+		return info
+	}
+
+	for i := uint(0); i < decoratorNode.ChildCount(); i++ {
+		child := decoratorNode.Child(i)
+		if child.Kind() == "identifier" {
+			decoratorName := child.Utf8Text(source)
+			info.name = decoratorName
+
+			if classValidatorOptionalDecorators[decoratorName] {
+				info.isOptional = true
+			}
+			if typeName, ok := classValidatorTypeDecorators[decoratorName]; ok {
+				info.typeOverride = typeName
+			}
+			return info
+		}
+	}
+
+	return info
+}
+
+func extractDecoratorNameFromCall(callNode *tree_sitter.Node, source []byte) string {
+	for i := uint(0); i < callNode.ChildCount(); i++ {
+		child := callNode.Child(i)
+		if child.Kind() == "identifier" {
+			return child.Utf8Text(source)
+		}
+		if child.Kind() == "member_expression" {
+			for j := uint(0); j < child.ChildCount(); j++ {
+				memberChild := child.Child(j)
+				if memberChild.Kind() == "property_identifier" {
+					return memberChild.Utf8Text(source)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func parseApiPropertyArgs(callNode *tree_sitter.Node, source []byte, info *classDecoratorInfo) *classDecoratorInfo {
+	argsNode := findChildByKindTSParser(callNode, "arguments")
+	if argsNode == nil {
+		return info
+	}
+
+	for i := uint(0); i < argsNode.ChildCount(); i++ {
+		child := argsNode.Child(i)
+		if child.Kind() == "object" {
+			info = extractApiPropertyObject(child, source, info)
+			break
+		}
+	}
+
+	return info
+}
+
+func extractApiPropertyObject(objNode *tree_sitter.Node, source []byte, info *classDecoratorInfo) *classDecoratorInfo {
+	for i := uint(0); i < objNode.ChildCount(); i++ {
+		child := objNode.Child(i)
+		if child.Kind() != "pair" {
+			continue
+		}
+
+		key := extractPairKeyTSParser(child, source)
+		switch key {
+		case "description":
+			val := extractPairStringValueTSParser(child, source)
+			if val != "" {
+				info.description = val
+			}
+		case "type":
+			val := extractPairStringValueTSParser(child, source)
+			if val != "" {
+				info.typeOverride = mapSwaggerTypeToTS(val)
+			}
+		case "required":
+			for j := uint(0); j < child.ChildCount(); j++ {
+				pairChild := child.Child(j)
+				if pairChild.Kind() == "true" {
+					info.isOptional = false
+				} else if pairChild.Kind() == "false" {
+					info.isOptional = true
+				}
+			}
+		case "example":
+		case "enum":
+		}
+	}
+
+	return info
+}
+
+func mapSwaggerTypeToTS(swaggerType string) string {
+	switch swaggerType {
+	case "string":
+		return "string"
+	case "number", "integer":
+		return "number"
+	case "boolean":
+		return "boolean"
+	case "array":
+		return "any[]"
+	case "object":
+		return "object"
+	default:
+		return swaggerType
+	}
+}
+
+func extractPairKeyTSParser(pairNode *tree_sitter.Node, source []byte) string {
+	for i := uint(0); i < pairNode.ChildCount(); i++ {
+		child := pairNode.Child(i)
+		if child.Kind() == "property_identifier" {
+			return child.Utf8Text(source)
+		}
+		if child.Kind() == "string" {
+			return unquoteJSStringTSParser(child.Utf8Text(source))
+		}
+	}
+	return ""
+}
+
+func extractPairStringValueTSParser(pairNode *tree_sitter.Node, source []byte) string {
+	for i := uint(0); i < pairNode.ChildCount(); i++ {
+		child := pairNode.Child(i)
+		if child.Kind() == "string" {
+			return unquoteJSStringTSParser(child.Utf8Text(source))
+		}
+		if child.Kind() == "identifier" {
+			return child.Utf8Text(source)
+		}
+	}
+	return ""
+}
+
+func unquoteJSStringTSParser(s string) string {
+	if len(s) >= 2 {
+		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
+			return s[1 : len(s)-1]
+		}
+	}
+	if len(s) >= 2 && s[0] == '`' && s[len(s)-1] == '`' {
+		return s[1 : len(s)-1]
+	}
+	return s
+}
+
+func findChildByKindTSParser(node *tree_sitter.Node, kind string) *tree_sitter.Node {
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == kind {
+			return child
+		}
+	}
+	return nil
 }
 
 func extractTypeParameterNames(node *tree_sitter.Node, source []byte) []string {
