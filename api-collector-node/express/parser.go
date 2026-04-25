@@ -1,7 +1,3 @@
-// Package express parses Express route registrations using tree-sitter-javascript.
-// It walks JavaScript source files for app.get, app.post, router.get, etc. calls
-// and extracts endpoint metadata including path, HTTP method, handler function name,
-// and JSDoc comments.
 package express
 
 import (
@@ -13,6 +9,7 @@ import (
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 	javascript "github.com/tree-sitter/tree-sitter-javascript/bindings/go"
+	typescript "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
 
 	collector "github.com/tangcent/apilot/api-collector"
 )
@@ -28,19 +25,46 @@ var httpMethods = map[string]bool{
 }
 
 func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
-	jsFiles, err := discoverJSFiles(sourceDir)
-	if err != nil || len(jsFiles) == 0 {
+	allFiles, err := discoverSourceFiles(sourceDir)
+	if err != nil || len(allFiles) == 0 {
 		return nil, nil
 	}
 
-	ch := make(chan fileResult, len(jsFiles))
+	var tsFiles []string
+	var jsFiles []string
+	for _, f := range allFiles {
+		if strings.HasSuffix(f, ".ts") || strings.HasSuffix(f, ".tsx") {
+			tsFiles = append(tsFiles, f)
+		} else {
+			jsFiles = append(jsFiles, f)
+		}
+	}
+
+	typeRegistry := NewTSTypeRegistry()
+	if len(tsFiles) > 0 {
+		reg, err := ParseTSTypes(sourceDir)
+		if err == nil && reg != nil {
+			typeRegistry = reg
+		}
+	}
+
+	ch := make(chan fileResult, len(allFiles))
 	var wg sync.WaitGroup
 
 	for _, path := range jsFiles {
 		wg.Add(1)
 		go func(filePath string) {
 			defer wg.Done()
-			res := processFile(filePath)
+			res := processJSFile(filePath, typeRegistry)
+			ch <- res
+		}(path)
+	}
+
+	for _, path := range tsFiles {
+		wg.Add(1)
+		go func(filePath string) {
+			defer wg.Done()
+			res := processTSFile(filePath, typeRegistry)
 			ch <- res
 		}(path)
 	}
@@ -70,6 +94,28 @@ type fileResult struct {
 	err       error
 }
 
+func discoverSourceFiles(sourceDir string) ([]string, error) {
+	var files []string
+	err := filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(path))
+		switch ext {
+		case ".js", ".mjs", ".ts", ".tsx":
+			files = append(files, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
 func discoverJSFiles(sourceDir string) ([]string, error) {
 	var jsFiles []string
 	err := filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
@@ -85,6 +131,58 @@ func discoverJSFiles(sourceDir string) ([]string, error) {
 		return nil, err
 	}
 	return jsFiles, nil
+}
+
+func processJSFile(filePath string, typeRegistry *TSTypeRegistry) fileResult {
+	source, err := os.ReadFile(filePath)
+	if err != nil {
+		return fileResult{err: fmt.Errorf("failed to read file: %w", err)}
+	}
+
+	p := tree_sitter.NewParser()
+	defer p.Close()
+
+	lang := tree_sitter.NewLanguage(javascript.Language())
+	if err := p.SetLanguage(lang); err != nil {
+		return fileResult{err: fmt.Errorf("failed to set language: %w", err)}
+	}
+
+	tree := p.Parse(source, nil)
+	if tree == nil {
+		return fileResult{}
+	}
+	defer tree.Close()
+
+	rootNode := tree.RootNode()
+	endpoints := extractEndpoints(rootNode, source, typeRegistry)
+
+	return fileResult{endpoints: endpoints}
+}
+
+func processTSFile(filePath string, typeRegistry *TSTypeRegistry) fileResult {
+	source, err := os.ReadFile(filePath)
+	if err != nil {
+		return fileResult{err: fmt.Errorf("failed to read file: %w", err)}
+	}
+
+	p := tree_sitter.NewParser()
+	defer p.Close()
+
+	lang := tree_sitter.NewLanguage(typescript.LanguageTypescript())
+	if err := p.SetLanguage(lang); err != nil {
+		return fileResult{err: fmt.Errorf("failed to set language: %w", err)}
+	}
+
+	tree := p.Parse(source, nil)
+	if tree == nil {
+		return fileResult{}
+	}
+	defer tree.Close()
+
+	rootNode := tree.RootNode()
+	endpoints := extractEndpoints(rootNode, source, typeRegistry)
+
+	return fileResult{endpoints: endpoints}
 }
 
 func processFile(filePath string) fileResult {
@@ -108,12 +206,12 @@ func processFile(filePath string) fileResult {
 	defer tree.Close()
 
 	rootNode := tree.RootNode()
-	endpoints := extractEndpoints(rootNode, source)
+	endpoints := extractEndpoints(rootNode, source, nil)
 
 	return fileResult{endpoints: endpoints}
 }
 
-func extractEndpoints(rootNode *tree_sitter.Node, source []byte) []collector.ApiEndpoint {
+func extractEndpoints(rootNode *tree_sitter.Node, source []byte, typeRegistry *TSTypeRegistry) []collector.ApiEndpoint {
 	var endpoints []collector.ApiEndpoint
 	var lastComment string
 
@@ -131,7 +229,7 @@ func extractEndpoints(rootNode *tree_sitter.Node, source []byte) []collector.Api
 		}
 
 		if child.Kind() == "expression_statement" {
-			ep := extractFromExpressionStatement(child, source, lastComment)
+			ep := extractFromExpressionStatement(child, source, lastComment, typeRegistry)
 			if ep != nil {
 				endpoints = append(endpoints, *ep)
 			}
@@ -144,17 +242,17 @@ func extractEndpoints(rootNode *tree_sitter.Node, source []byte) []collector.Api
 	return endpoints
 }
 
-func extractFromExpressionStatement(node *tree_sitter.Node, source []byte, description string) *collector.ApiEndpoint {
+func extractFromExpressionStatement(node *tree_sitter.Node, source []byte, description string, typeRegistry *TSTypeRegistry) *collector.ApiEndpoint {
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "call_expression" {
-			return extractFromCallExpression(child, source, description)
+			return extractFromCallExpression(child, source, description, typeRegistry)
 		}
 	}
 	return nil
 }
 
-func extractFromCallExpression(callNode *tree_sitter.Node, source []byte, description string) *collector.ApiEndpoint {
+func extractFromCallExpression(callNode *tree_sitter.Node, source []byte, description string, typeRegistry *TSTypeRegistry) *collector.ApiEndpoint {
 	method, isRoute := extractMethodInfo(callNode, source)
 	if !isRoute {
 		return nil
@@ -187,6 +285,25 @@ func extractFromCallExpression(callNode *tree_sitter.Node, source []byte, descri
 			})
 		}
 		ep.Parameters = params
+	}
+
+	if typeRegistry != nil {
+		handlerInfo := AnalyzeExpressHandler(callNode, source)
+		if handlerInfo != nil {
+			reqBody, resBody := ResolveHandlerTypes(handlerInfo, typeRegistry)
+			if reqBody != nil && !reqBody.IsNull() {
+				ep.RequestBody = &collector.ApiBody{
+					MediaType: "application/json",
+					Body:      reqBody,
+				}
+			}
+			if resBody != nil && !resBody.IsNull() {
+				ep.Response = &collector.ApiBody{
+					MediaType: "application/json",
+					Body:      resBody,
+				}
+			}
+		}
 	}
 
 	return ep
