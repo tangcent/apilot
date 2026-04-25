@@ -45,6 +45,14 @@ func TestParse_BasicRoutes(t *testing.T) {
 		return endpoints[i].Path < endpoints[j].Path
 	})
 
+	createUserReqBody := &model.ObjectModel{
+		Kind: model.KindObject, TypeName: "CreateUserReq",
+		Fields: map[string]*model.FieldModel{
+			"name":  {Model: model.SingleModel(model.JsonTypeString)},
+			"email": {Model: model.SingleModel(model.JsonTypeString)},
+		},
+	}
+
 	assertEndpoint(t, endpoints[0], collector.ApiEndpoint{
 		Name: "deleteUser", Path: "/users/:id", Method: "DELETE", Protocol: "http",
 		Description: "deleteUser removes a user by ID.",
@@ -95,8 +103,8 @@ func TestParse_BasicRoutes(t *testing.T) {
 	assertEndpoint(t, endpoints[5], collector.ApiEndpoint{
 		Name: "createUser", Path: "/users", Method: "POST", Protocol: "http",
 		Description: "createUser creates a new user.",
-		RequestBody: &collector.ApiBody{MediaType: "application/json", Body: model.SingleModel("req")},
-		Response:   &collector.ApiBody{MediaType: "application/json", Body: model.SingleModel("req")},
+		RequestBody: &collector.ApiBody{MediaType: "application/json", Body: createUserReqBody},
+		Response:   &collector.ApiBody{MediaType: "application/json", Body: createUserReqBody},
 	})
 
 	assertEndpoint(t, endpoints[6], collector.ApiEndpoint{
@@ -105,8 +113,8 @@ func TestParse_BasicRoutes(t *testing.T) {
 		Parameters: []collector.ApiParameter{
 			{Name: "id", In: "path", Required: true, Type: "text"},
 		},
-		RequestBody: &collector.ApiBody{MediaType: "application/json", Body: model.SingleModel("req")},
-		Response:   &collector.ApiBody{MediaType: "application/json", Body: model.SingleModel("req")},
+		RequestBody: &collector.ApiBody{MediaType: "application/json", Body: createUserReqBody},
+		Response:   &collector.ApiBody{MediaType: "application/json", Body: createUserReqBody},
 	})
 }
 
@@ -159,9 +167,108 @@ func TestParse_GroupRoutes(t *testing.T) {
 	assertEndpoint(t, endpoints[4], collector.ApiEndpoint{
 		Name: "createUser", Path: "/v1/users", Method: "POST", Protocol: "http",
 		Description: "createUser creates a new user.",
-		RequestBody: &collector.ApiBody{MediaType: "application/json", Body: model.SingleModel("req")},
-		Response:   &collector.ApiBody{MediaType: "application/json", Body: model.SingleModel("map")},
+		RequestBody: &collector.ApiBody{MediaType: "application/json", Body: model.EmptyObject()},
+		Response:    &collector.ApiBody{MediaType: "application/json", Body: model.SingleModel("map")},
 	})
+}
+
+func TestParse_TypedEndpoints(t *testing.T) {
+	endpoints, err := Parse(filepath.Join("testdata", "typed"))
+	if err != nil {
+		t.Fatalf("typed endpoints should not error: %v", err)
+	}
+	if len(endpoints) != 5 {
+		t.Fatalf("expected 5 endpoints, got %d", len(endpoints))
+	}
+
+	sort.Slice(endpoints, func(i, j int) bool {
+		if endpoints[i].Method != endpoints[j].Method {
+			return endpoints[i].Method < endpoints[j].Method
+		}
+		return endpoints[i].Path < endpoints[j].Path
+	})
+
+	ep0 := endpoints[0]
+	if ep0.Name != "searchUsers" || ep0.Method != "GET" {
+		t.Errorf("Expected GET searchUsers, got %s %s", ep0.Method, ep0.Name)
+	}
+	if ep0.RequestBody == nil || !ep0.RequestBody.Body.IsObject() {
+		t.Fatal("Expected object request body for searchUsers (QueryParser)")
+	}
+	if !ep0.RequestBody.Body.Fields["keyword"].Required {
+		t.Error("Expected 'keyword' field to be required")
+	}
+	if ep0.RequestBody.Body.Fields["page"] == nil {
+		t.Error("Expected 'page' field in SearchQuery")
+	}
+	if ep0.RequestBody.Body.Fields["size"] == nil {
+		t.Error("Expected 'size' field in SearchQuery")
+	}
+
+	ep1 := endpoints[1]
+	if ep1.Name != "listUsers" || ep1.Method != "GET" {
+		t.Errorf("Expected GET listUsers, got %s %s", ep1.Method, ep1.Name)
+	}
+	if ep1.Response == nil || !ep1.Response.Body.IsMap() {
+		t.Error("Expected fiber.Map map response for listUsers")
+	}
+
+	ep2 := endpoints[2]
+	if ep2.Name != "getUser" || ep2.Method != "GET" {
+		t.Errorf("Expected GET getUser, got %s %s", ep2.Method, ep2.Name)
+	}
+	if ep2.Response == nil || !ep2.Response.Body.IsObject() {
+		t.Fatal("Expected object response for getUser")
+	}
+	if ep2.Response.Body.Fields["id"] == nil {
+		t.Error("Expected embedded 'id' field from BaseModel")
+	}
+	if ep2.Response.Body.Fields["created_at"] == nil {
+		t.Error("Expected embedded 'created_at' field from BaseModel")
+	}
+	if ep2.Response.Body.Fields["name"] == nil {
+		t.Error("Expected 'name' field in UserVO")
+	}
+	if ep2.Response.Body.Fields["tags"] == nil {
+		t.Error("Expected 'tags' field in UserVO")
+	}
+
+	ep3 := endpoints[3]
+	if ep3.Name != "createUser" || ep3.Method != "POST" {
+		t.Errorf("Expected POST createUser, got %s %s", ep3.Method, ep3.Name)
+	}
+	if ep3.RequestBody == nil || !ep3.RequestBody.Body.IsObject() {
+		t.Fatal("Expected object request body for createUser")
+	}
+	if !ep3.RequestBody.Body.Fields["name"].Required {
+		t.Error("Expected 'name' field to be required")
+	}
+	if !ep3.RequestBody.Body.Fields["email"].Required {
+		t.Error("Expected 'email' field to be required")
+	}
+	if ep3.RequestBody.Body.Fields["age"] == nil {
+		t.Error("Expected 'age' field (pointer type)")
+	}
+	if ep3.Response == nil || !ep3.Response.Body.IsObject() {
+		t.Fatal("Expected object response for createUser")
+	}
+	if ep3.Response.Body.Fields["id"] == nil {
+		t.Error("Expected embedded 'id' field from BaseModel in UserVO response")
+	}
+	if ep3.Response.Body.Fields["tags"] == nil {
+		t.Error("Expected 'tags' field in UserVO response")
+	}
+
+	ep4 := endpoints[4]
+	if ep4.Name != "updateUser" || ep4.Method != "PUT" {
+		t.Errorf("Expected PUT updateUser, got %s %s", ep4.Method, ep4.Name)
+	}
+	if ep4.RequestBody == nil || !ep4.RequestBody.Body.IsObject() {
+		t.Fatal("Expected object request body for updateUser")
+	}
+	if ep4.RequestBody.Body.Fields["name"] == nil {
+		t.Error("Expected 'name' field in UpdateUserReq")
+	}
 }
 
 func TestParse_NonexistentDir(t *testing.T) {
@@ -291,6 +398,17 @@ func assertBody(t *testing.T, field string, got, want *collector.ApiBody) {
 	if want.Body != nil {
 		if got.Body == nil {
 			t.Errorf("%s.Body = nil, want %+v", field, want.Body)
+			return
+		}
+		if got.Body.Kind != want.Body.Kind {
+			t.Errorf("%s.Body.Kind = %q, want %q", field, got.Body.Kind, want.Body.Kind)
+		}
+		if want.Body.IsObject() && got.Body.IsObject() {
+			for fieldName := range want.Body.Fields {
+				if _, ok := got.Body.Fields[fieldName]; !ok {
+					t.Errorf("%s.Body.Fields missing expected field %q", field, fieldName)
+				}
+			}
 		}
 	}
 }
