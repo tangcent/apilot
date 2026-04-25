@@ -15,7 +15,6 @@ import (
 	"sync"
 
 	collector "github.com/tangcent/apilot/api-collector"
-	model "github.com/tangcent/apilot/api-model"
 )
 
 // echoMethods maps Echo route-registration method names that we recognize.
@@ -84,6 +83,8 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 	funcDocs := make(map[string]string)
 	groupPrefixes := make(map[string]string)
 	handlerAnalyses := make(map[string]handlerAnalysis)
+	allStructs := make(map[string]StructDef)
+	varTypeMaps := make(map[string]map[string]string)
 	var allRaw []rawEndpoint
 
 	for res := range ch {
@@ -96,12 +97,20 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 		for k, v := range res.handlerAnalyses {
 			handlerAnalyses[k] = v
 		}
+		for k, v := range res.structDefs {
+			allStructs[k] = v
+		}
+		for k, v := range res.varTypeMaps {
+			varTypeMaps[k] = v
+		}
 		allRaw = append(allRaw, res.rawEndpoints...)
 	}
 
 	if len(allRaw) == 0 {
 		return nil, nil
 	}
+
+	typeResolver := NewTypeResolver(allStructs)
 
 	endpoints := make([]collector.ApiEndpoint, 0, len(allRaw))
 	for _, raw := range allRaw {
@@ -162,7 +171,8 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 				MediaType: analysis.requestBody.mediaType,
 			}
 			if analysis.requestBody.typeName != "" {
-				ep.RequestBody.Body = model.SingleModel(analysis.requestBody.typeName)
+				actualType := resolveVarType(analysis.requestBody.typeName, handlerKey, varTypeMaps)
+				ep.RequestBody.Body = typeResolver.Resolve(actualType)
 			}
 		}
 
@@ -171,7 +181,8 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 				MediaType: analysis.response.mediaType,
 			}
 			if analysis.response.typeName != "" {
-				ep.Response.Body = model.SingleModel(analysis.response.typeName)
+				actualType := resolveVarType(analysis.response.typeName, handlerKey, varTypeMaps)
+				ep.Response.Body = typeResolver.Resolve(actualType)
 			}
 		}
 
@@ -218,6 +229,8 @@ type fileResult struct {
 	groupPrefixes   map[string]string
 	rawEndpoints    []rawEndpoint
 	handlerAnalyses map[string]handlerAnalysis
+	structDefs      map[string]StructDef
+	varTypeMaps     map[string]map[string]string
 }
 
 // discoverGoFiles walks sourceDir and returns paths to all non-test .go files.
@@ -251,9 +264,13 @@ func processFile(filePath string) fileResult {
 		return fileResult{}
 	}
 
+	structDefs := extractStructs(f)
+
 	if !importsPackage(f, "github.com/labstack/echo/v4") {
-		return fileResult{}
+		return fileResult{structDefs: structDefs}
 	}
+
+	varTypeMaps := make(map[string]map[string]string)
 
 	echoHandlers := make(map[string]bool)
 	funcDocs := make(map[string]string)
@@ -270,6 +287,7 @@ func processFile(filePath string) fileResult {
 		if findContextParamName(fn) != "" {
 			echoHandlers[name] = true
 		}
+		varTypeMaps[name] = buildVarTypeMap(fn)
 		params, reqBody, respBody := analyzeHandlerBody(fn)
 		if len(params) > 0 || reqBody != nil || respBody != nil {
 			handlerAnalyses[name] = handlerAnalysis{
@@ -345,6 +363,8 @@ func processFile(filePath string) fileResult {
 		groupPrefixes:   groupPrefixes,
 		rawEndpoints:    rawEndpoints,
 		handlerAnalyses: handlerAnalyses,
+		structDefs:      structDefs,
+		varTypeMaps:     varTypeMaps,
 	}
 }
 
