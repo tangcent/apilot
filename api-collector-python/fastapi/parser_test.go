@@ -221,6 +221,195 @@ func TestUnquotePythonString(t *testing.T) {
 	}
 }
 
+func TestParse_TypedRoutes(t *testing.T) {
+	endpoints, err := Parse(filepath.Join("testdata", "typed"))
+	if err != nil {
+		t.Fatalf("typed routes should not error: %v", err)
+	}
+	if len(endpoints) == 0 {
+		t.Fatal("expected endpoints for typed routes")
+	}
+
+	sort.Slice(endpoints, func(i, j int) bool {
+		if endpoints[i].Path != endpoints[j].Path {
+			return endpoints[i].Path < endpoints[j].Path
+		}
+		return endpoints[i].Method < endpoints[j].Method
+	})
+
+	epMap := make(map[string]collector.ApiEndpoint)
+	for _, ep := range endpoints {
+		key := ep.Method + " " + ep.Path
+		epMap[key] = ep
+	}
+
+	t.Run("POST /users has request body with CreateUserReq schema", func(t *testing.T) {
+		ep, ok := epMap["POST /users"]
+		if !ok {
+			t.Fatal("missing POST /users endpoint")
+		}
+		if ep.RequestBody == nil {
+			t.Fatal("expected request body for POST /users")
+		}
+		body := ep.RequestBody
+		if body.Body == nil {
+			t.Fatal("expected Body for request body")
+		}
+		if body.Body.Kind != "object" {
+			t.Errorf("request body Body.Kind = %q, want %q", body.Body.Kind, "object")
+		}
+		if body.Body.TypeName != "CreateUserReq" {
+			t.Errorf("request body Body.TypeName = %q, want %q", body.Body.TypeName, "CreateUserReq")
+		}
+		if len(body.Body.Fields) != 3 {
+			t.Fatalf("request body Body.Fields count = %d, want 3", len(body.Body.Fields))
+		}
+		nameField, ok := body.Body.Fields["name"]
+		if !ok {
+			t.Fatal("expected 'name' field in CreateUserReq")
+		}
+		if nameField.Model.TypeName != "string" {
+			t.Errorf("CreateUserReq.name type = %q, want %q", nameField.Model.TypeName, "string")
+		}
+	})
+
+	t.Run("POST /users has response body with UserResult schema", func(t *testing.T) {
+		ep, ok := epMap["POST /users"]
+		if !ok {
+			t.Fatal("missing POST /users endpoint")
+		}
+		if ep.Response == nil {
+			t.Fatal("expected response body for POST /users")
+		}
+		body := ep.Response
+		if body.Body == nil {
+			t.Fatal("expected Body for response body")
+		}
+		if body.Body.Kind != "object" {
+			t.Errorf("response body Body.Kind = %q, want %q", body.Body.Kind, "object")
+		}
+		if body.Body.TypeName != "UserResult" {
+			t.Errorf("response body Body.TypeName = %q, want %q", body.Body.TypeName, "UserResult")
+		}
+		dataField, ok := body.Body.Fields["data"]
+		if !ok {
+			t.Fatal("expected 'data' field in UserResult")
+		}
+		if dataField.Model.Kind != "object" {
+			t.Errorf("UserResult.data kind = %q, want %q", dataField.Model.Kind, "object")
+		}
+		if dataField.Model.TypeName != "User" {
+			t.Errorf("UserResult.data typeName = %q, want %q", dataField.Model.TypeName, "User")
+		}
+	})
+
+	t.Run("GET /users has response body with PaginatedUsers schema", func(t *testing.T) {
+		ep, ok := epMap["GET /users"]
+		if !ok {
+			t.Fatal("missing GET /users endpoint")
+		}
+		if ep.Response == nil {
+			t.Fatal("expected response body for GET /users")
+		}
+		body := ep.Response
+		if body.Body == nil {
+			t.Fatal("expected Body for response body")
+		}
+		if body.Body.TypeName != "PaginatedUsers" {
+			t.Errorf("response body Body.TypeName = %q, want %q", body.Body.TypeName, "PaginatedUsers")
+		}
+		itemsField, ok := body.Body.Fields["items"]
+		if !ok {
+			t.Fatal("expected 'items' field in PaginatedUsers")
+		}
+		if itemsField.Model.Kind != "array" {
+			t.Errorf("PaginatedUsers.items kind = %q, want %q", itemsField.Model.Kind, "array")
+		}
+	})
+
+	t.Run("GET /items has return type List[Item]", func(t *testing.T) {
+		ep, ok := epMap["GET /items"]
+		if !ok {
+			t.Fatal("missing GET /items endpoint")
+		}
+		if ep.Response == nil {
+			t.Fatal("expected response body for GET /items")
+		}
+		body := ep.Response
+		if body.Body == nil {
+			t.Fatal("expected Body for response body")
+		}
+		if body.Body.Kind != "array" {
+			t.Errorf("response body Body.Kind = %q, want %q", body.Body.Kind, "array")
+		}
+	})
+
+	t.Run("GET /config has return type Dict[str, str]", func(t *testing.T) {
+		ep, ok := epMap["GET /config"]
+		if !ok {
+			t.Fatal("missing GET /config endpoint")
+		}
+		if ep.Response == nil {
+			t.Fatal("expected response body for GET /config")
+		}
+		body := ep.Response
+		if body.Body == nil {
+			t.Fatal("expected Body for response body")
+		}
+		if body.Body.Kind != "map" {
+			t.Errorf("response body Body.Kind = %q, want %q", body.Body.Kind, "map")
+		}
+	})
+}
+
+func TestParse_Inheritance(t *testing.T) {
+	endpoints, err := Parse(filepath.Join("testdata", "inheritance"))
+	if err != nil {
+		t.Fatalf("inheritance routes should not error: %v", err)
+	}
+	if len(endpoints) == 0 {
+		t.Fatal("expected endpoints for inheritance routes")
+	}
+
+	epMap := make(map[string]collector.ApiEndpoint)
+	for _, ep := range endpoints {
+		key := ep.Method + " " + ep.Path
+		epMap[key] = ep
+	}
+
+	t.Run("POST /users has User with inherited fields", func(t *testing.T) {
+		ep, ok := epMap["POST /users"]
+		if !ok {
+			t.Fatal("missing POST /users endpoint")
+		}
+		if ep.Response == nil {
+			t.Fatal("expected response body for POST /users")
+		}
+		body := ep.Response
+		if body.Body == nil {
+			t.Fatal("expected Body for response body")
+		}
+		if body.Body.TypeName != "User" {
+			t.Errorf("response body Body.TypeName = %q, want %q", body.Body.TypeName, "User")
+		}
+		if len(body.Body.Fields) < 4 {
+			t.Fatalf("User should have at least 4 fields (2 own + 2 inherited), got %d", len(body.Body.Fields))
+		}
+		if _, ok := body.Body.Fields["id"]; !ok {
+			t.Error("expected inherited 'id' field in User")
+		}
+		if _, ok := body.Body.Fields["created_at"]; !ok {
+			t.Error("expected inherited 'created_at' field in User")
+		}
+		if _, ok := body.Body.Fields["name"]; !ok {
+			t.Error("expected own 'name' field in User")
+		}
+		if _, ok := body.Body.Fields["email"]; !ok {
+			t.Error("expected own 'email' field in User")
+		}
+	})
+}
+
 func assertEndpoint(t *testing.T, got collector.ApiEndpoint, want collector.ApiEndpoint) {
 	t.Helper()
 
