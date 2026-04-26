@@ -1,40 +1,114 @@
-{{- range . }}
-## {{ .Name }}
+# {{ .ModuleName }}
+{{- range .Groups }}
+{{ if .Folder }}
 
-**{{ .Method }}** `{{ .Path }}`
-
-{{ if .Description }}{{ .Description }}{{ end }}
-
-{{ if .Tags }}**Tags:** {{ range .Tags }}{{ . }} {{ end }}{{ end }}
-
-{{ if .Parameters }}
-### Parameters
-
-| Name | In | Type | Required | Default | Description |
-|------|----|------|----------|---------|-------------|
-{{ range .Parameters }}| {{ .Name }} | {{ .In }} | {{ .Type }} | {{ .Required }} | {{ .Default }} | {{ .Description }} |
-{{ end }}
-{{ end }}
-
-{{ if .RequestBody }}
-### Request Body
-
-**Media Type:** `{{ .RequestBody.MediaType }}`
-
-```json
-{{ .RequestBody.Example | json }}
-```
-{{ end }}
-
-{{ if .Response }}
-### Response
-
-**Media Type:** `{{ .Response.MediaType }}`
-
-```json
-{{ .Response.Example | json }}
-```
-{{ end }}
+## {{ .Folder }}
+{{- end }}
+{{- range .Endpoints }}
 
 ---
+
+### {{ if .Name }}{{ .Name }}{{ else }}{{ .Method }} {{ .Path }}{{ end }}
+
+> BASIC
+
+{{ if eq .Protocol "grpc" }}**Protocol:** gRPC
+
+**Service:** {{ .Service }}
+
+**Method:** {{ .FullPath | baseName }}
+
+**Streaming:** {{ .Streaming }}
+
+**Full Path:** {{ .FullPath }}
+{{- else }}
+**Path:** {{ .Path }}
+
+**Method:** {{ .Method }}
+{{- end }}
+{{- if .Description }}
+
+**Desc:**
+
+{{ .Description }}
+{{- end }}
+{{- if .HasRequest }}
+
+> REQUEST
+{{- if .PathParams }}
+
+**Path Params:**
+
+| name | value | required | desc |
+| ------------ | ------------ | ------------ | ------------ |
+{{ range .PathParams }}| {{ .Name }} | {{ .Value }} | {{ .Required }} | {{ .Description }} |
 {{ end }}
+{{- end }}
+{{- if .QueryParams }}
+
+**Query:**
+
+| name | value | required | desc |
+| ------------ | ------------ | ------------ | ------------ |
+{{ range .QueryParams }}| {{ .Name }} | {{ .Value }} | {{ .Required }} | {{ .Description }} |
+{{ end }}
+{{- end }}
+{{- if .Headers }}
+
+**Headers:**
+
+| name | value | required | desc |
+| ------------ | ------------ | ------------ | ------------ |
+{{ range .Headers }}| {{ .Name }} | {{ .Value }} | {{ .Required }} | {{ .Description }} |
+{{ end }}
+{{- end }}
+{{- if .FormParams }}
+
+**Form:**
+
+| name | value | required | type | desc |
+| ------------ | ------------ | ------------ | ------------ | ------------ |
+{{ range .FormParams }}| {{ .Name }} | {{ .Value }} | {{ .Required }} | {{ .Type }} | {{ .Description }} |
+{{ end }}
+{{- end }}
+{{- if .BodyRows }}
+
+**Request Body:**
+
+| name | type | desc |
+| ------------ | ------------ | ------------ |
+{{ range .BodyRows }}| {{ .Name }} | {{ .Type }} | {{ .Desc }} |
+{{ end }}
+{{- end }}
+{{- if .BodyDemo }}
+
+**Request Demo:**
+
+```json
+{{ .BodyDemo }}
+```
+{{- end }}
+{{- end }}
+{{- if .HasResponse }}
+
+> RESPONSE
+{{- if .ResponseBodyRows }}
+
+**Body:**
+
+| name | type | desc |
+| ------------ | ------------ | ------------ |
+{{ range .ResponseBodyRows }}| {{ .Name }} | {{ .Type }} | {{ .Desc }} |
+{{ end }}
+{{- end }}
+{{- if .ResponseDemo }}
+
+**Response Demo:**
+
+```json
+{{ .ResponseDemo }}
+```
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

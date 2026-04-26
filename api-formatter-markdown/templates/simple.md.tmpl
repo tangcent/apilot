@@ -1,13 +1,32 @@
-{{- range . }}
+# {{ .ModuleName }}
+{{- range .Groups }}
+{{ if .Folder }}
+
+## {{ .Folder }}
+{{- end }}
+{{- range .Endpoints }}
+
+---
+
 ## {{ .Method }} {{ .Path }}
 
 {{ if .Description }}{{ .Description }}{{ end }}
 
-{{ if .Parameters }}
-| Name | In | Type | Required | Description |
-|------|----|------|----------|-------------|
-{{ range .Parameters }}| {{ .Name }} | {{ .In }} | {{ .Type }} | {{ .Required }} | {{ .Description }} |
+{{ if .PathParams }}**Path Params:**
+
+| name | value | required | desc |
+| ------------ | ------------ | ------------ | ------------ |
+{{ range .PathParams }}| {{ .Name }} | {{ .Value }} | {{ .Required }} | {{ .Description }} |
 {{ end }}
 {{ end }}
----
+{{- if .QueryParams }}
+
+**Query:**
+
+| name | value | required | desc |
+| ------------ | ------------ | ------------ | ------------ |
+{{ range .QueryParams }}| {{ .Name }} | {{ .Value }} | {{ .Required }} | {{ .Description }} |
 {{ end }}
+{{ end }}
+{{- end }}
+{{- end }}
