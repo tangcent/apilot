@@ -1,11 +1,9 @@
-// Package markdown implements the Formatter interface producing Markdown output.
-// Supports two variants via Params: "simple" (default, compact) and "detailed" (full schema expansion).
 package markdown
 
 import (
 	_ "embed"
 	"bytes"
-	"encoding/json"
+	"path"
 	"text/template"
 
 	"github.com/tangcent/apilot/api-formatter"
@@ -18,26 +16,38 @@ var simpleTmpl string
 //go:embed templates/detailed.md.tmpl
 var detailedTmpl string
 
-// Params holds markdown-specific formatting options.
 type Params struct {
-	// Variant selects the output template: "simple" (default) or "detailed".
-	Variant string `json:"variant"`
+	Variant    string `json:"variant"`
+	OutputDemo *bool  `json:"outputDemo,omitempty"`
+	MaxVisits  int    `json:"maxVisits,omitempty"`
+	ModuleName string `json:"moduleName,omitempty"`
 }
 
-// MarkdownFormatter formats endpoints as Markdown documents.
 type MarkdownFormatter struct{}
 
-// New returns a new MarkdownFormatter.
 func New() formatter.Formatter { return &MarkdownFormatter{} }
 
 func (f *MarkdownFormatter) Name() string { return "markdown" }
 
-// Format renders endpoints using the selected template variant.
-// An empty endpoints slice returns an empty Markdown document.
 func (f *MarkdownFormatter) Format(endpoints []model.ApiEndpoint, opts formatter.FormatOptions) ([]byte, error) {
 	var p Params
 	if err := opts.DecodeParams(&p); err != nil {
 		return nil, err
+	}
+
+	outputDemo := true
+	if p.OutputDemo != nil {
+		outputDemo = *p.OutputDemo
+	}
+
+	maxVisits := p.MaxVisits
+	if maxVisits <= 0 {
+		maxVisits = 2
+	}
+
+	moduleName := p.ModuleName
+	if moduleName == "" {
+		moduleName = "API"
 	}
 
 	var tmplSrc string
@@ -49,12 +59,8 @@ func (f *MarkdownFormatter) Format(endpoints []model.ApiEndpoint, opts formatter
 	}
 
 	funcMap := template.FuncMap{
-		"json": func(v interface{}) (string, error) {
-			b, err := json.MarshalIndent(v, "", "  ")
-			if err != nil {
-				return "", err
-			}
-			return string(b), nil
+		"baseName": func(s string) string {
+			return path.Base(s)
 		},
 	}
 
@@ -63,8 +69,10 @@ func (f *MarkdownFormatter) Format(endpoints []model.ApiEndpoint, opts formatter
 		return nil, err
 	}
 
+	doc := buildMarkdownDoc(endpoints, moduleName, outputDemo, maxVisits)
+
 	var buf bytes.Buffer
-	if err := t.Execute(&buf, endpoints); err != nil {
+	if err := t.Execute(&buf, doc); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
