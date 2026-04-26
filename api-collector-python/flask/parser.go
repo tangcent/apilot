@@ -11,6 +11,9 @@ import (
 	python "github.com/tree-sitter/tree-sitter-python/bindings/go"
 
 	collector "github.com/tangcent/apilot/api-collector"
+	model "github.com/tangcent/apilot/api-model"
+
+	"github.com/tangcent/apilot/api-collector-python/fastapi"
 )
 
 func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
@@ -36,12 +39,35 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 		close(ch)
 	}()
 
-	var allEndpoints []collector.ApiEndpoint
+	allPydanticModels := make(map[string]fastapi.PydanticModel)
+	allMarshmallowSchemas := make(map[string]MarshmallowModel)
+	var allRawEndpoints []rawEndpointInfo
+
 	for res := range ch {
 		if res.err != nil {
 			continue
 		}
-		allEndpoints = append(allEndpoints, res.endpoints...)
+		for k, v := range res.pydanticModels {
+			allPydanticModels[k] = v
+		}
+		for k, v := range res.marshmallowSchemas {
+			allMarshmallowSchemas[k] = v
+		}
+		allRawEndpoints = append(allRawEndpoints, res.rawEndpoints...)
+	}
+
+	if len(allRawEndpoints) == 0 {
+		return nil, nil
+	}
+
+	typeResolver := NewFlaskTypeResolver(allPydanticModels, allMarshmallowSchemas)
+
+	var allEndpoints []collector.ApiEndpoint
+	for _, raw := range allRawEndpoints {
+		ep := buildEndpoint(raw, typeResolver)
+		if ep != nil {
+			allEndpoints = append(allEndpoints, *ep)
+		}
 	}
 
 	if len(allEndpoints) == 0 {
@@ -51,9 +77,24 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 	return allEndpoints, nil
 }
 
+type rawEndpointInfo struct {
+	method          string
+	path            string
+	funcName        string
+	description     string
+	params          []funcParam
+	requestBodyType string
+	responseType    string
+	expectModel     string
+	marshalModel    string
+	requestPattern  string
+}
+
 type fileResult struct {
-	endpoints []collector.ApiEndpoint
-	err       error
+	rawEndpoints       []rawEndpointInfo
+	pydanticModels     map[string]fastapi.PydanticModel
+	marshmallowSchemas map[string]MarshmallowModel
+	err                error
 }
 
 func discoverPythonFiles(sourceDir string) ([]string, error) {
@@ -94,28 +135,36 @@ func processFile(filePath string) fileResult {
 	defer tree.Close()
 
 	rootNode := tree.RootNode()
-	endpoints := extractEndpoints(rootNode, source)
+	pydanticModels := fastapi.ExtractPydanticModels(rootNode, source)
+	marshmallowSchemas := extractMarshmallowSchemas(rootNode, source)
+	rawEndpoints := extractRawEndpoints(rootNode, source)
 
-	return fileResult{endpoints: endpoints}
+	return fileResult{
+		pydanticModels:     pydanticModels,
+		marshmallowSchemas: marshmallowSchemas,
+		rawEndpoints:       rawEndpoints,
+	}
 }
 
-func extractEndpoints(rootNode *tree_sitter.Node, source []byte) []collector.ApiEndpoint {
-	var endpoints []collector.ApiEndpoint
+func extractRawEndpoints(rootNode *tree_sitter.Node, source []byte) []rawEndpointInfo {
+	var endpoints []rawEndpointInfo
 
 	for i := uint(0); i < rootNode.ChildCount(); i++ {
 		child := rootNode.Child(i)
-		if child.Kind() != "decorated_definition" {
-			continue
+		switch child.Kind() {
+		case "decorated_definition":
+			eps := extractDecoratedDefinition(child, source)
+			endpoints = append(endpoints, eps...)
+		case "class_definition":
+			eps := extractClassDefinition(child, source)
+			endpoints = append(endpoints, eps...)
 		}
-
-		eps := extractDecoratedDefinition(child, source)
-		endpoints = append(endpoints, eps...)
 	}
 
 	return endpoints
 }
 
-func extractDecoratedDefinition(node *tree_sitter.Node, source []byte) []collector.ApiEndpoint {
+func extractDecoratedDefinition(node *tree_sitter.Node, source []byte) []rawEndpointInfo {
 	var decorator *tree_sitter.Node
 	var funcDef *tree_sitter.Node
 
@@ -133,72 +182,298 @@ func extractDecoratedDefinition(node *tree_sitter.Node, source []byte) []collect
 		return nil
 	}
 
-	routeInfo := extractDecoratorInfo(decorator, source)
+	routeInfo := extractDecoratorRouteInfo(decorator, source)
 	if routeInfo.path == "" {
 		return nil
 	}
 
 	funcName := extractFunctionName(funcDef, source)
 	description := extractDocstring(funcDef, source)
+	params := extractFunctionParameters(funcDef, source, routeInfo.path)
+	returnType := extractReturnType(funcDef, source)
+	requestPattern := detectRequestPattern(funcDef, source)
+	expectModel, marshalModel := extractRESTXDecoratorInfo(decorator, source)
 
-	var endpoints []collector.ApiEndpoint
+	var requestBodyType string
+	requestBodyType = detectRequestBodyType(funcDef, source, params)
+
+	var endpoints []rawEndpointInfo
 
 	for _, method := range routeInfo.methods {
 		path := convertFlaskPathToStandard(routeInfo.path)
-		ep := &collector.ApiEndpoint{
-			Name:        funcName,
-			Path:        path,
-			Method:      strings.ToUpper(method),
-			Protocol:    "http",
-			Description: description,
+		raw := rawEndpointInfo{
+			method:          strings.ToUpper(method),
+			path:            path,
+			funcName:        funcName,
+			description:     description,
+			params:          params,
+			requestBodyType: requestBodyType,
+			responseType:    returnType,
+			expectModel:     expectModel,
+			marshalModel:    marshalModel,
+			requestPattern:  requestPattern,
 		}
-
-		pathParams := extractPathParams(path)
-		pathParamNames := make(map[string]bool)
-		for _, p := range pathParams {
-			pathParamNames[p.name] = true
-		}
-
-		params := extractFunctionParameters(funcDef, source, path)
-
-		paramSet := make(map[string]bool)
-		var allParams []collector.ApiParameter
-
-		for _, p := range pathParams {
-			allParams = append(allParams, collector.ApiParameter{
-				Name:     p.name,
-				In:       "path",
-				Required: true,
-				Type:     "text",
-			})
-			paramSet[p.name+"|path"] = true
-		}
-
-		for _, p := range params {
-			if pathParamNames[p.name] && p.in == "query" {
-				p.in = "path"
-				p.required = true
-			}
-			key := p.name + "|" + p.in
-			if !paramSet[key] {
-				allParams = append(allParams, collector.ApiParameter{
-					Name:     p.name,
-					In:       p.in,
-					Required: p.required,
-					Type:     p.typ,
-				})
-				paramSet[key] = true
-			}
-		}
-
-		if len(allParams) > 0 {
-			ep.Parameters = allParams
-		}
-
-		endpoints = append(endpoints, *ep)
+		endpoints = append(endpoints, raw)
 	}
 
 	return endpoints
+}
+
+func extractClassDefinition(node *tree_sitter.Node, source []byte) []rawEndpointInfo {
+	var className string
+	var body *tree_sitter.Node
+	var argList *tree_sitter.Node
+
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		switch child.Kind() {
+		case "identifier":
+			className = child.Utf8Text(source)
+		case "argument_list":
+			argList = child
+		case "block":
+			body = child
+		}
+	}
+
+	if className == "" || body == nil {
+		return nil
+	}
+
+	if !isRESTXResourceClass(argList, source) {
+		return nil
+	}
+
+	return extractRESTXResourceEndpoints(className, body, source)
+}
+
+func isRESTXResourceClass(argList *tree_sitter.Node, source []byte) bool {
+	if argList == nil {
+		return false
+	}
+
+	for i := uint(0); i < argList.ChildCount(); i++ {
+		child := argList.Child(i)
+		if child.Kind() == "(" || child.Kind() == ")" || child.Kind() == "," {
+			continue
+		}
+		text := strings.TrimSpace(child.Utf8Text(source))
+		if text == "Resource" || strings.HasSuffix(text, ".Resource") {
+			return true
+		}
+	}
+	return false
+}
+
+func extractRESTXResourceEndpoints(className string, body *tree_sitter.Node, source []byte) []rawEndpointInfo {
+	var endpoints []rawEndpointInfo
+
+	for i := uint(0); i < body.ChildCount(); i++ {
+		child := body.Child(i)
+		if child.Kind() != "decorated_definition" {
+			continue
+		}
+
+		var decorator *tree_sitter.Node
+		var funcDef *tree_sitter.Node
+
+		for j := uint(0); j < child.ChildCount(); j++ {
+			subChild := child.Child(j)
+			switch subChild.Kind() {
+			case "decorator":
+				decorator = subChild
+			case "function_definition":
+				funcDef = subChild
+			}
+		}
+
+		if funcDef == nil {
+			continue
+		}
+
+		methodName := extractFunctionName(funcDef, source)
+		method := restxMethodToHTTP(methodName)
+		if method == "" {
+			continue
+		}
+
+		description := extractDocstring(funcDef, source)
+		params := extractFunctionParameters(funcDef, source, "")
+		returnType := extractReturnType(funcDef, source)
+		requestPattern := detectRequestPattern(funcDef, source)
+		requestBodyType := detectRequestBodyType(funcDef, source, params)
+
+		var expectModel, marshalModel string
+		if decorator != nil {
+			expectModel, marshalModel = extractRESTXDecoratorInfo(decorator, source)
+		}
+
+		raw := rawEndpointInfo{
+			method:          method,
+			path:            "/" + toSnakeCase(className),
+			funcName:        methodName,
+			description:     description,
+			params:          params,
+			requestBodyType: requestBodyType,
+			responseType:    returnType,
+			expectModel:     expectModel,
+			marshalModel:    marshalModel,
+			requestPattern:  requestPattern,
+		}
+		endpoints = append(endpoints, raw)
+	}
+
+	return endpoints
+}
+
+func restxMethodToHTTP(methodName string) string {
+	switch strings.ToLower(methodName) {
+	case "get":
+		return "GET"
+	case "post":
+		return "POST"
+	case "put":
+		return "PUT"
+	case "delete":
+		return "DELETE"
+	case "patch":
+		return "PATCH"
+	default:
+		return ""
+	}
+}
+
+func toSnakeCase(s string) string {
+	var result []byte
+	for i, c := range s {
+		if c >= 'A' && c <= 'Z' {
+			if i > 0 {
+				result = append(result, '_')
+			}
+			result = append(result, byte(c+'a'-'A'))
+		} else {
+			result = append(result, byte(c))
+		}
+	}
+	return string(result)
+}
+
+func buildEndpoint(raw rawEndpointInfo, typeResolver *FlaskTypeResolver) *collector.ApiEndpoint {
+	ep := &collector.ApiEndpoint{
+		Name:        raw.funcName,
+		Path:        raw.path,
+		Method:      raw.method,
+		Protocol:    "http",
+		Description: raw.description,
+	}
+
+	pathParams := extractPathParams(raw.path)
+	pathParamNames := make(map[string]bool)
+	for _, p := range pathParams {
+		pathParamNames[p.name] = true
+	}
+
+	paramSet := make(map[string]bool)
+	var allParams []collector.ApiParameter
+	var bodyParams []funcParam
+
+	for _, p := range pathParams {
+		allParams = append(allParams, collector.ApiParameter{
+			Name:     p.name,
+			In:       "path",
+			Required: true,
+			Type:     "text",
+		})
+		paramSet[p.name+"|path"] = true
+	}
+
+	for _, p := range raw.params {
+		if pathParamNames[p.name] && p.in == "query" {
+			p.in = "path"
+			p.required = true
+		}
+
+		if p.in == "body" && p.typeAnnotation != "" {
+			bodyParams = append(bodyParams, p)
+			continue
+		}
+
+		key := p.name + "|" + p.in
+		if !paramSet[key] {
+			allParams = append(allParams, collector.ApiParameter{
+				Name:     p.name,
+				In:       p.in,
+				Required: p.required,
+				Type:     p.typ,
+			})
+			paramSet[key] = true
+		}
+	}
+
+	if len(allParams) > 0 {
+		ep.Parameters = allParams
+	}
+
+	requestBodyType := raw.expectModel
+	if requestBodyType == "" {
+		requestBodyType = raw.requestBodyType
+	}
+	if requestBodyType == "" && len(bodyParams) == 1 && bodyParams[0].typeAnnotation != "" {
+		requestBodyType = bodyParams[0].typeAnnotation
+	}
+
+	if requestBodyType != "" {
+		resolvedBody := typeResolver.Resolve(requestBodyType)
+		if resolvedBody != nil && !resolvedBody.IsNull() {
+			mediaType := "application/json"
+			if raw.requestPattern == "form" {
+				mediaType = "application/x-www-form-urlencoded"
+			}
+			ep.RequestBody = &collector.ApiBody{
+				MediaType: mediaType,
+				Body:      resolvedBody,
+			}
+		}
+	} else if len(bodyParams) > 1 {
+		fields := make(map[string]*model.FieldModel)
+		for _, bp := range bodyParams {
+			var fieldModel *model.ObjectModel
+			if bp.typeAnnotation != "" {
+				fieldModel = typeResolver.Resolve(bp.typeAnnotation)
+			} else {
+				fieldModel = model.SingleModel(model.JsonTypeString)
+			}
+			fields[bp.name] = &model.FieldModel{
+				Model:    fieldModel,
+				Required: bp.required,
+			}
+		}
+		ep.RequestBody = &collector.ApiBody{
+			MediaType: "application/json",
+			Body: &model.ObjectModel{
+				Kind:     model.KindObject,
+				TypeName: "object",
+				Fields:   fields,
+			},
+		}
+	}
+
+	responseType := raw.marshalModel
+	if responseType == "" {
+		responseType = raw.responseType
+	}
+
+	if responseType != "" {
+		resolvedResponse := typeResolver.Resolve(responseType)
+		if resolvedResponse != nil && !resolvedResponse.IsNull() {
+			ep.Response = &collector.ApiBody{
+				MediaType: "application/json",
+				Body:      resolvedResponse,
+			}
+		}
+	}
+
+	return ep
 }
 
 type routeInfo struct {
@@ -206,7 +481,7 @@ type routeInfo struct {
 	methods []string
 }
 
-func extractDecoratorInfo(decorator *tree_sitter.Node, source []byte) routeInfo {
+func extractDecoratorRouteInfo(decorator *tree_sitter.Node, source []byte) routeInfo {
 	for i := uint(0); i < decorator.ChildCount(); i++ {
 		child := decorator.Child(i)
 		if child.Kind() == "@" {
@@ -252,7 +527,13 @@ func resolveCallExpression(callNode *tree_sitter.Node, source []byte) routeInfo 
 			}
 		}
 		if child.Kind() == "argument_list" {
-			path, methods = extractArguments(child, source)
+			p, m := extractArguments(child, source)
+			if p != "" {
+				path = p
+			}
+			if len(m) > 0 {
+				methods = m
+			}
 		}
 	}
 
@@ -345,6 +626,82 @@ func extractMethodList(listNode *tree_sitter.Node, source []byte) []string {
 	return methods
 }
 
+func extractRESTXDecoratorInfo(decorator *tree_sitter.Node, source []byte) (expectModel string, marshalModel string) {
+	for i := uint(0); i < decorator.ChildCount(); i++ {
+		child := decorator.Child(i)
+		if child.Kind() == "@" {
+			continue
+		}
+		if child.Kind() == "call" {
+			e, m := extractRESTXCallInfo(child, source)
+			if e != "" {
+				expectModel = e
+			}
+			if m != "" {
+				marshalModel = m
+			}
+		}
+		for j := uint(0); j < child.ChildCount(); j++ {
+			subChild := child.Child(j)
+			if subChild.Kind() == "call" {
+				e, m := extractRESTXCallInfo(subChild, source)
+				if e != "" {
+					expectModel = e
+				}
+				if m != "" {
+					marshalModel = m
+				}
+			}
+		}
+	}
+	return expectModel, marshalModel
+}
+
+func extractRESTXCallInfo(callNode *tree_sitter.Node, source []byte) (expectModel string, marshalModel string) {
+	var funcName string
+
+	for i := uint(0); i < callNode.ChildCount(); i++ {
+		child := callNode.Child(i)
+		if child.Kind() == "identifier" {
+			funcName = child.Utf8Text(source)
+		}
+		if child.Kind() == "attribute" {
+			for j := uint(0); j < child.ChildCount(); j++ {
+				attrChild := child.Child(j)
+				if attrChild.Kind() == "identifier" {
+					funcName = attrChild.Utf8Text(source)
+				}
+			}
+		}
+		if child.Kind() == "argument_list" {
+			switch funcName {
+			case "expect":
+				expectModel = extractFirstIdentifierArg(child, source)
+			case "marshal_with":
+				marshalModel = extractFirstIdentifierArg(child, source)
+			}
+		}
+	}
+
+	return expectModel, marshalModel
+}
+
+func extractFirstIdentifierArg(argList *tree_sitter.Node, source []byte) string {
+	for i := uint(0); i < argList.ChildCount(); i++ {
+		child := argList.Child(i)
+		if child.Kind() == "(" || child.Kind() == ")" || child.Kind() == "," {
+			continue
+		}
+		if child.Kind() == "identifier" {
+			return child.Utf8Text(source)
+		}
+		if child.Kind() == "attribute" {
+			return child.Utf8Text(source)
+		}
+	}
+	return ""
+}
+
 func extractFunctionName(funcDef *tree_sitter.Node, source []byte) string {
 	for i := uint(0); i < funcDef.ChildCount(); i++ {
 		child := funcDef.Child(i)
@@ -382,10 +739,11 @@ func extractDocstringFromBlock(blockNode *tree_sitter.Node, source []byte) strin
 }
 
 type funcParam struct {
-	name     string
-	in       string
-	required bool
-	typ      string
+	name           string
+	in             string
+	required       bool
+	typ            string
+	typeAnnotation string
 }
 
 func extractFunctionParameters(funcDef *tree_sitter.Node, source []byte, path string) []funcParam {
@@ -413,6 +771,9 @@ func extractParameters(paramsNode *tree_sitter.Node, source []byte, path string)
 
 		if child.Kind() == "identifier" {
 			name := child.Utf8Text(source)
+			if isSpecialFlaskParam(name) {
+				continue
+			}
 			in := "query"
 			if isNameInPath(name, path) {
 				in = "path"
@@ -425,7 +786,7 @@ func extractParameters(paramsNode *tree_sitter.Node, source []byte, path string)
 			})
 		} else if child.Kind() == "typed_parameter" || child.Kind() == "default_parameter" || child.Kind() == "typed_default_parameter" {
 			param := extractSingleParameter(child, source, path)
-			if param.name != "" {
+			if param.name != "" && !isSpecialFlaskParam(param.name) {
 				params = append(params, param)
 			}
 		}
@@ -449,6 +810,13 @@ func extractSingleParameter(paramNode *tree_sitter.Node, source []byte, path str
 			if p.name == "" {
 				p.name = child.Utf8Text(source)
 			}
+		case "type":
+			typeText := child.Utf8Text(source)
+			p.typeAnnotation = typeText
+			p.typ = simplifyType(typeText)
+			if isComplexType(typeText) {
+				p.in = "body"
+			}
 		case "=":
 			p.required = false
 		}
@@ -460,6 +828,162 @@ func extractSingleParameter(paramNode *tree_sitter.Node, source []byte, path str
 	}
 
 	return p
+}
+
+func isSpecialFlaskParam(name string) bool {
+	switch name {
+	case "self", "cls", "request", "response", "db", "session":
+		return true
+	}
+	return false
+}
+
+func isComplexType(typeText string) bool {
+	if fastapi.IsPydanticModelType(typeText) {
+		return true
+	}
+	if strings.HasSuffix(typeText, "Schema") {
+		return true
+	}
+	base, args := fastapi.ParsePythonGenericType(typeText)
+	if len(args) > 0 {
+		for _, arg := range args {
+			if fastapi.IsPydanticModelType(arg) || strings.HasSuffix(arg, "Schema") {
+				return true
+			}
+		}
+	}
+	if base == "list" || base == "List" || base == "dict" || base == "Dict" {
+		return true
+	}
+	return false
+}
+
+func simplifyType(typeText string) string {
+	switch strings.ToLower(typeText) {
+	case "str", "string":
+		return "text"
+	case "int", "integer":
+		return "int"
+	case "float":
+		return "float"
+	case "bool", "boolean":
+		return "boolean"
+	default:
+		return typeText
+	}
+}
+
+func extractReturnType(funcDef *tree_sitter.Node, source []byte) string {
+	for i := uint(0); i < funcDef.ChildCount(); i++ {
+		child := funcDef.Child(i)
+		if child.Kind() == "type" {
+			return child.Utf8Text(source)
+		}
+	}
+	return ""
+}
+
+func detectRequestPattern(funcDef *tree_sitter.Node, source []byte) string {
+	block := findBlock(funcDef)
+	if block == nil {
+		return ""
+	}
+
+	pattern := scanBlockForRequestPattern(block, source)
+	return pattern
+}
+
+func findBlock(funcDef *tree_sitter.Node) *tree_sitter.Node {
+	for i := uint(0); i < funcDef.ChildCount(); i++ {
+		child := funcDef.Child(i)
+		if child.Kind() == "block" {
+			return child
+		}
+	}
+	return nil
+}
+
+func scanBlockForRequestPattern(block *tree_sitter.Node, source []byte) string {
+	var found string
+
+	for i := uint(0); i < block.ChildCount(); i++ {
+		child := block.Child(i)
+		text := child.Utf8Text(source)
+
+		if strings.Contains(text, "request.json") || strings.Contains(text, "request.get_json()") {
+			if found == "" || found == "json" {
+				found = "json"
+			}
+		}
+		if strings.Contains(text, "request.form") {
+			if found == "" || found == "form" {
+				found = "form"
+			}
+		}
+		if strings.Contains(text, "request.args") {
+			if found == "" {
+				found = "query"
+			}
+		}
+		if strings.Contains(text, "request.files") {
+			if found == "" || found == "files" {
+				found = "files"
+			}
+		}
+	}
+
+	return found
+}
+
+func detectRequestBodyType(funcDef *tree_sitter.Node, source []byte, params []funcParam) string {
+	for _, p := range params {
+		if p.in == "body" && p.typeAnnotation != "" {
+			return p.typeAnnotation
+		}
+	}
+
+	block := findBlock(funcDef)
+	if block == nil {
+		return ""
+	}
+
+	return inferRequestBodyFromPattern(block, source)
+}
+
+func inferRequestBodyFromPattern(block *tree_sitter.Node, source []byte) string {
+	for i := uint(0); i < block.ChildCount(); i++ {
+		child := block.Child(i)
+		text := child.Utf8Text(source)
+
+		if strings.Contains(text, "request.json") || strings.Contains(text, "request.get_json()") {
+			return inferTypeFromAssignment(child, source)
+		}
+	}
+	return ""
+}
+
+func inferTypeFromAssignment(stmt *tree_sitter.Node, source []byte) string {
+	for i := uint(0); i < stmt.ChildCount(); i++ {
+		child := stmt.Child(i)
+		if child.Kind() == "assignment" {
+			for j := uint(0); j < child.ChildCount(); j++ {
+				assignChild := child.Child(j)
+				if assignChild.Kind() == "type" {
+					return assignChild.Utf8Text(source)
+				}
+			}
+		}
+		if child.Kind() == "annotated_assignment" {
+			for j := uint(0); j < child.ChildCount(); j++ {
+				assignChild := child.Child(j)
+				if assignChild.Kind() == "type" {
+					return assignChild.Utf8Text(source)
+				}
+			}
+		}
+	}
+	return ""
 }
 
 type pathParamInfo struct {

@@ -46,7 +46,7 @@ var pythonMapTypes = map[string]bool{
 	"DefaultDict": true,
 }
 
-func extractPydanticModels(rootNode *tree_sitter.Node, source []byte) map[string]PydanticModel {
+func ExtractPydanticModels(rootNode *tree_sitter.Node, source []byte) map[string]PydanticModel {
 	allClasses := make(map[string]*classInfo)
 
 	for i := uint(0); i < rootNode.ChildCount(); i++ {
@@ -343,7 +343,7 @@ func (r *PythonTypeResolver) Resolve(typeText string) *model.ObjectModel {
 		return model.NullModel()
 	}
 
-	baseName, typeArgs := parsePythonGenericType(typeText)
+	baseName, typeArgs := ParsePythonGenericType(typeText)
 
 	if baseName == "Optional" {
 		if len(typeArgs) > 0 {
@@ -465,7 +465,7 @@ func (r *PythonTypeResolver) resolveFieldModel(f PydanticField) *model.FieldMode
 	}
 }
 
-func parsePythonGenericType(typeText string) (string, []string) {
+func ParsePythonGenericType(typeText string) (string, []string) {
 	idx := strings.Index(typeText, "[")
 	if idx == -1 {
 		return typeText, nil
