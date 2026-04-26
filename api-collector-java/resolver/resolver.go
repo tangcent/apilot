@@ -120,6 +120,17 @@ func (r *TypeResolver) Resolve(rawType string, typeBindings map[string]string) *
 			return model.RefModel(baseName)
 		}
 
+		if class.IsInterface {
+			if impl := r.findImplementation(class.Name, typeArgs); impl != nil {
+				return impl
+			}
+			return model.RefModel(baseName)
+		}
+
+		if isMapSubclass(class) {
+			return r.resolveMapSubclass(class, typeArgs, typeBindings)
+		}
+
 		r.resolving[baseName] = true
 		defer func() { delete(r.resolving, baseName) }()
 
@@ -142,6 +153,9 @@ func (r *TypeResolver) Resolve(rawType string, typeBindings map[string]string) *
 
 		fields := make(map[string]*model.FieldModel, len(class.Fields))
 		for _, f := range class.Fields {
+			if f.IsStatic || f.IsFinal {
+				continue
+			}
 			fm := r.resolveField(f, localBindings, typeParamSet)
 			fields[f.Name] = fm
 		}
@@ -279,4 +293,63 @@ func splitTypeArgs(s string) []string {
 	}
 
 	return args
+}
+
+func isMapSubclass(class parser.Class) bool {
+	if class.SuperClass == "" {
+		return false
+	}
+	baseName, _ := parseGenericType(class.SuperClass)
+	return mapTypes[baseName]
+}
+
+func (r *TypeResolver) findImplementation(interfaceName string, typeArgs []string) *model.ObjectModel {
+	for _, class := range r.classRegistry {
+		if class.IsInterface {
+			continue
+		}
+		for _, iface := range class.Interfaces {
+			if iface == interfaceName {
+				return r.Resolve(class.Name, nil)
+			}
+		}
+	}
+	return nil
+}
+
+func (r *TypeResolver) resolveMapSubclass(class parser.Class, typeArgs []string, typeBindings map[string]string) *model.ObjectModel {
+	keyModel := model.SingleModel(model.JsonTypeString)
+
+	localBindings := make(map[string]string)
+	for i, tp := range class.TypeParameters {
+		if i < len(typeArgs) {
+			localBindings[tp] = typeArgs[i]
+		}
+	}
+	for k, v := range typeBindings {
+		if _, exists := localBindings[k]; !exists {
+			localBindings[k] = v
+		}
+	}
+
+	var valueModel *model.ObjectModel
+	if len(class.TypeParameters) > 0 {
+		firstTypeParam := class.TypeParameters[0]
+		if resolved, ok := localBindings[firstTypeParam]; ok {
+			valueModel = r.Resolve(resolved, localBindings)
+		} else {
+			valueModel = r.Resolve(firstTypeParam, localBindings)
+		}
+	} else if len(class.SuperClassTypeArgs) >= 2 {
+		valueModel = r.Resolve(class.SuperClassTypeArgs[1], typeBindings)
+	} else {
+		valueModel = model.NullModel()
+	}
+
+	return &model.ObjectModel{
+		Kind:       model.KindMap,
+		TypeName:   class.Name,
+		KeyModel:   keyModel,
+		ValueModel: valueModel,
+	}
 }
