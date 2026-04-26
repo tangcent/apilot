@@ -1,6 +1,6 @@
 {
   "name": "@tangcent/apilot",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Navigate your APIs. Scans source code and exports to Markdown, cURL, Postman, and more.",
   "bin": {
     "apilot": "scripts/run.js"
