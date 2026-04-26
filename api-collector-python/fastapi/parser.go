@@ -140,7 +140,7 @@ func processFile(filePath string) fileResult {
 	defer tree.Close()
 
 	rootNode := tree.RootNode()
-	models := extractPydanticModels(rootNode, source)
+	models := ExtractPydanticModels(rootNode, source)
 	rawEndpoints := extractRawEndpoints(rootNode, source)
 
 	return fileResult{
@@ -578,7 +578,7 @@ func extractSingleParameter(paramNode *tree_sitter.Node, source []byte, path str
 	}
 
 	if p.typeAnnotation != "" && p.in != "body" && p.in != "path" && p.in != "header" && p.in != "cookie" && p.in != "form" {
-		if isPydanticModelType(p.typeAnnotation) {
+		if IsPydanticModelType(p.typeAnnotation) {
 			p.in = "body"
 		}
 	}
@@ -586,8 +586,8 @@ func extractSingleParameter(paramNode *tree_sitter.Node, source []byte, path str
 	return p
 }
 
-func isPydanticModelType(typeText string) bool {
-	baseName, _ := parsePythonGenericType(typeText)
+func IsPydanticModelType(typeText string) bool {
+	baseName, _ := ParsePythonGenericType(typeText)
 	if pythonPrimitives[baseName] != "" {
 		return false
 	}

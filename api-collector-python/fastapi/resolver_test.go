@@ -277,17 +277,17 @@ func TestParsePythonGenericType(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		base, args := parsePythonGenericType(tt.input)
+		base, args := ParsePythonGenericType(tt.input)
 		if base != tt.base {
-			t.Errorf("parsePythonGenericType(%q) base = %q, want %q", tt.input, base, tt.base)
+			t.Errorf("ParsePythonGenericType(%q) base = %q, want %q", tt.input, base, tt.base)
 		}
 		if len(args) != len(tt.args) {
-			t.Errorf("parsePythonGenericType(%q) args count = %d, want %d", tt.input, len(args), len(tt.args))
+			t.Errorf("ParsePythonGenericType(%q) args count = %d, want %d", tt.input, len(args), len(tt.args))
 			continue
 		}
 		for i, arg := range args {
 			if arg != tt.args[i] {
-				t.Errorf("parsePythonGenericType(%q) args[%d] = %q, want %q", tt.input, i, arg, tt.args[i])
+				t.Errorf("ParsePythonGenericType(%q) args[%d] = %q, want %q", tt.input, i, arg, tt.args[i])
 			}
 		}
 	}
@@ -360,7 +360,7 @@ class NotAModel:
 	defer tree.Close()
 
 	rootNode := tree.RootNode()
-	models := extractPydanticModels(rootNode, source)
+	models := ExtractPydanticModels(rootNode, source)
 
 	if len(models) != 2 {
 		t.Fatalf("expected 2 Pydantic models, got %d", len(models))
@@ -405,7 +405,7 @@ class User(BaseEntity):
 	defer tree.Close()
 
 	rootNode := tree.RootNode()
-	models := extractPydanticModels(rootNode, source)
+	models := ExtractPydanticModels(rootNode, source)
 
 	if len(models) != 2 {
 		t.Fatalf("expected 2 models, got %d", len(models))
