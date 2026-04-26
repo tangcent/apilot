@@ -1,3 +1,34 @@
+## [0.1.2] - 2026-04-26
+
+### Added
+-  enhance markdown formatter with detailed API export (#113)
+-  enhance postman formatter to parse detailed API information (#112)
+- feat(flask): add detailed request/response type resolution (#111)
+-  add DRF serializer type resolution for Django parser (#110)
+- feat(fastapi): add detailed request/response type resolution for Python FastAPI (#109)
+-  add detailed request/response type resolution to NestJS parser (#108)
+-  add detailed request/response type resolution for Fastify parser (#107)
+-  add detailed request/response type resolution for Express TypeScript (#106)
+-  add detailed request/response type resolution for Go Fiber (#105)
+-  add detailed request/response type resolution for Go Echo (#104)
+-  add Go struct type resolution to Gin parser (#103)
+-  resolve jaxrs request and response schemas (#101)
+- feat(ci): enhance release workflows and scripts
+
+### Fixed
+-  improve Java type resolution and CLI flag handling for markdown export (#114)
+-  resolve feign request and response schemas (#102)
+-  resolve inherited Java model fields (#100)
+
+### Changed
+-  make TypeResolver framework-agnostic (#99)
+
+### Improved
+- docs: update readme and add skill documentation
+- release: cli v0.1.1
+
+---
+
 ## [0.1.1] - 2026-04-19
 
 ### Added
