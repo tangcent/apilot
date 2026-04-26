@@ -98,6 +98,9 @@ func TestFormat_PathParams(t *testing.T) {
 			Path:     "/users/{id}",
 			Method:   "GET",
 			Protocol: "http",
+			Parameters: []model.ApiParameter{
+				{Name: "id", In: "path", Type: "text", Required: true, Example: "123", Description: "User ID"},
+			},
 		},
 	}
 	opts := formatter.FormatOptions{}
@@ -129,6 +132,71 @@ func TestFormat_PathParams(t *testing.T) {
 		if seg != expectedPath[i] {
 			t.Errorf("URL.Path[%d] = %q, want %q", i, seg, expectedPath[i])
 		}
+	}
+
+	if len(item.Request.URL.Variable) != 1 {
+		t.Fatalf("Expected 1 path variable, got %d", len(item.Request.URL.Variable))
+	}
+	pv := item.Request.URL.Variable[0]
+	if pv.Key != "id" {
+		t.Errorf("PathVariable.Key = %q, want %q", pv.Key, "id")
+	}
+	if pv.Value != "123" {
+		t.Errorf("PathVariable.Value = %q, want %q", pv.Value, "123")
+	}
+	if pv.Description != "User ID" {
+		t.Errorf("PathVariable.Description = %q, want %q", pv.Description, "User ID")
+	}
+}
+
+func TestFormat_QueryParams(t *testing.T) {
+	f := New()
+	endpoints := []model.ApiEndpoint{
+		{
+			Name:     "List Users",
+			Path:     "/users",
+			Method:   "GET",
+			Protocol: "http",
+			Parameters: []model.ApiParameter{
+				{Name: "page", In: "query", Type: "text", Example: "1", Description: "Page number"},
+				{Name: "size", In: "query", Type: "text", Default: "20"},
+			},
+		},
+	}
+	opts := formatter.FormatOptions{}
+
+	output, err := f.Format(endpoints, opts)
+	if err != nil {
+		t.Fatalf("Format() error = %v", err)
+	}
+
+	var col postmanmodel.Collection
+	if err := json.Unmarshal(output, &col); err != nil {
+		t.Fatalf("Unmarshal error = %v", err)
+	}
+
+	item := col.Item[0].Item[0]
+	if len(item.Request.URL.Query) != 2 {
+		t.Fatalf("Expected 2 query params, got %d", len(item.Request.URL.Query))
+	}
+
+	q1 := item.Request.URL.Query[0]
+	if q1.Key != "page" {
+		t.Errorf("Query[0].Key = %q, want %q", q1.Key, "page")
+	}
+	if q1.Value != "1" {
+		t.Errorf("Query[0].Value = %q, want %q", q1.Value, "1")
+	}
+	if q1.Description != "Page number" {
+		t.Errorf("Query[0].Description = %q, want %q", q1.Description, "Page number")
+	}
+
+	q2 := item.Request.URL.Query[1]
+	if q2.Key != "size" {
+		t.Errorf("Query[1].Key = %q, want %q", q2.Key, "size")
+	}
+	if q2.Value != "20" {
+		t.Errorf("Query[1].Value = %q, want %q", q2.Value, "20")
 	}
 }
 
@@ -181,6 +249,12 @@ func TestFormat_ResponseExample(t *testing.T) {
 	if !strings.Contains(resp.Body, `"id"`) || !strings.Contains(resp.Body, `"name"`) {
 		t.Errorf("Response.Body = %q, want JSON containing id and name fields", resp.Body)
 	}
+	if resp.PostmanPreviewLanguage != "json" {
+		t.Errorf("Response._postman_previewlanguage = %q, want %q", resp.PostmanPreviewLanguage, "json")
+	}
+	if len(resp.Header) == 0 {
+		t.Error("Expected response headers to be populated")
+	}
 }
 
 func TestFormat_NoResponseWhenNil(t *testing.T) {
@@ -210,6 +284,317 @@ func TestFormat_NoResponseWhenNil(t *testing.T) {
 
 	if len(item.Response) != 0 {
 		t.Errorf("Expected no response examples, got %d", len(item.Response))
+	}
+}
+
+func TestFormat_RequestBodyFromObjectModel(t *testing.T) {
+	f := New()
+	userModel := model.NewObjectModelBuilder().
+		StringField("name", model.WithDemo("Alice")).
+		IntField("age", model.WithDemo("30")).
+		Build()
+
+	endpoints := []model.ApiEndpoint{
+		{
+			Name:     "Create User",
+			Path:     "/users",
+			Method:   "POST",
+			Protocol: "http",
+			RequestBody: &model.ApiBody{
+				MediaType: "application/json",
+				Body:      userModel,
+			},
+		},
+	}
+	opts := formatter.FormatOptions{}
+
+	output, err := f.Format(endpoints, opts)
+	if err != nil {
+		t.Fatalf("Format() error = %v", err)
+	}
+
+	var col postmanmodel.Collection
+	if err := json.Unmarshal(output, &col); err != nil {
+		t.Fatalf("Unmarshal error = %v", err)
+	}
+
+	item := col.Item[0].Item[0]
+	if item.Request.Body == nil {
+		t.Fatal("Expected request body to be populated")
+	}
+	if item.Request.Body.Mode != "raw" {
+		t.Errorf("Body.Mode = %q, want %q", item.Request.Body.Mode, "raw")
+	}
+	if !strings.Contains(item.Request.Body.Raw, `"name"`) || !strings.Contains(item.Request.Body.Raw, `"age"`) {
+		t.Errorf("Body.Raw = %q, want JSON containing name and age fields", item.Request.Body.Raw)
+	}
+	if !strings.Contains(item.Request.Body.Raw, `"Alice"`) {
+		t.Errorf("Body.Raw = %q, want JSON containing demo value Alice", item.Request.Body.Raw)
+	}
+}
+
+func TestFormat_ResponseBodyFromObjectModel(t *testing.T) {
+	f := New()
+	resultModel := model.NewObjectModelBuilder().
+		IntField("code").
+		StringField("message").
+		ObjectField("data", model.NewObjectModelBuilder().
+			LongField("id", model.WithDemo("1")).
+			StringField("name", model.WithDemo("Alice")).
+			Build()).
+		Build()
+
+	endpoints := []model.ApiEndpoint{
+		{
+			Name:     "Get User",
+			Path:     "/users/1",
+			Method:   "GET",
+			Protocol: "http",
+			Response: &model.ApiBody{
+				MediaType: "application/json",
+				Body:      resultModel,
+			},
+		},
+	}
+	opts := formatter.FormatOptions{}
+
+	output, err := f.Format(endpoints, opts)
+	if err != nil {
+		t.Fatalf("Format() error = %v", err)
+	}
+
+	var col postmanmodel.Collection
+	if err := json.Unmarshal(output, &col); err != nil {
+		t.Fatalf("Unmarshal error = %v", err)
+	}
+
+	item := col.Item[0].Item[0]
+	if len(item.Response) == 0 {
+		t.Fatal("Expected response to be populated")
+	}
+	resp := item.Response[0]
+	if !strings.Contains(resp.Body, `"code"`) {
+		t.Errorf("Response.Body = %q, want JSON containing code field", resp.Body)
+	}
+	if !strings.Contains(resp.Body, `"data"`) {
+		t.Errorf("Response.Body = %q, want JSON containing data field", resp.Body)
+	}
+	if !strings.Contains(resp.Body, `"Alice"`) {
+		t.Errorf("Response.Body = %q, want JSON containing demo value Alice", resp.Body)
+	}
+}
+
+func TestFormat_FormUrlencoded(t *testing.T) {
+	f := New()
+	endpoints := []model.ApiEndpoint{
+		{
+			Name:     "Login",
+			Path:     "/login",
+			Method:   "POST",
+			Protocol: "http",
+			RequestBody: &model.ApiBody{
+				MediaType: "application/x-www-form-urlencoded",
+			},
+			Parameters: []model.ApiParameter{
+				{Name: "username", In: "form", Type: "text", Example: "admin"},
+				{Name: "password", In: "form", Type: "text", Example: "secret"},
+			},
+		},
+	}
+	opts := formatter.FormatOptions{}
+
+	output, err := f.Format(endpoints, opts)
+	if err != nil {
+		t.Fatalf("Format() error = %v", err)
+	}
+
+	var col postmanmodel.Collection
+	if err := json.Unmarshal(output, &col); err != nil {
+		t.Fatalf("Unmarshal error = %v", err)
+	}
+
+	item := col.Item[0].Item[0]
+	if item.Request.Body == nil {
+		t.Fatal("Expected request body")
+	}
+	if item.Request.Body.Mode != "urlencoded" {
+		t.Errorf("Body.Mode = %q, want %q", item.Request.Body.Mode, "urlencoded")
+	}
+	if len(item.Request.Body.Urlencoded) != 2 {
+		t.Fatalf("Expected 2 urlencoded params, got %d", len(item.Request.Body.Urlencoded))
+	}
+	if item.Request.Body.Urlencoded[0].Key != "username" {
+		t.Errorf("Param[0].Key = %q, want %q", item.Request.Body.Urlencoded[0].Key, "username")
+	}
+	if item.Request.Body.Urlencoded[0].Value != "admin" {
+		t.Errorf("Param[0].Value = %q, want %q", item.Request.Body.Urlencoded[0].Value, "admin")
+	}
+}
+
+func TestFormat_MultipartFormData(t *testing.T) {
+	f := New()
+	endpoints := []model.ApiEndpoint{
+		{
+			Name:     "Upload File",
+			Path:     "/upload",
+			Method:   "POST",
+			Protocol: "http",
+			RequestBody: &model.ApiBody{
+				MediaType: "multipart/form-data",
+			},
+			Parameters: []model.ApiParameter{
+				{Name: "file", In: "form", Type: "file"},
+				{Name: "description", In: "form", Type: "text", Example: "A file"},
+			},
+		},
+	}
+	opts := formatter.FormatOptions{}
+
+	output, err := f.Format(endpoints, opts)
+	if err != nil {
+		t.Fatalf("Format() error = %v", err)
+	}
+
+	var col postmanmodel.Collection
+	if err := json.Unmarshal(output, &col); err != nil {
+		t.Fatalf("Unmarshal error = %v", err)
+	}
+
+	item := col.Item[0].Item[0]
+	if item.Request.Body == nil {
+		t.Fatal("Expected request body")
+	}
+	if item.Request.Body.Mode != "formdata" {
+		t.Errorf("Body.Mode = %q, want %q", item.Request.Body.Mode, "formdata")
+	}
+	if len(item.Request.Body.Formdata) != 2 {
+		t.Fatalf("Expected 2 formdata params, got %d", len(item.Request.Body.Formdata))
+	}
+	if item.Request.Body.Formdata[0].Type != "file" {
+		t.Errorf("Param[0].Type = %q, want %q", item.Request.Body.Formdata[0].Type, "file")
+	}
+	if item.Request.Body.Formdata[1].Type != "text" {
+		t.Errorf("Param[1].Type = %q, want %q", item.Request.Body.Formdata[1].Type, "text")
+	}
+}
+
+func TestFormat_Description(t *testing.T) {
+	f := New()
+	endpoints := []model.ApiEndpoint{
+		{
+			Name:        "Get User",
+			Path:        "/users/{id}",
+			Method:      "GET",
+			Protocol:    "http",
+			Description: "Retrieves a user by their unique identifier",
+		},
+	}
+	opts := formatter.FormatOptions{}
+
+	output, err := f.Format(endpoints, opts)
+	if err != nil {
+		t.Fatalf("Format() error = %v", err)
+	}
+
+	var col postmanmodel.Collection
+	if err := json.Unmarshal(output, &col); err != nil {
+		t.Fatalf("Unmarshal error = %v", err)
+	}
+
+	item := col.Item[0].Item[0]
+	if item.Request.Description != "Retrieves a user by their unique identifier" {
+		t.Errorf("Request.Description = %q, want description", item.Request.Description)
+	}
+	if item.Description != "Retrieves a user by their unique identifier" {
+		t.Errorf("Item.Description = %q, want description", item.Description)
+	}
+}
+
+func TestFormat_HeaderDescription(t *testing.T) {
+	f := New()
+	endpoints := []model.ApiEndpoint{
+		{
+			Name:     "Get User",
+			Path:     "/users",
+			Method:   "GET",
+			Protocol: "http",
+			Headers: []model.ApiHeader{
+				{Name: "Authorization", Value: "Bearer token", Description: "Auth header"},
+			},
+		},
+	}
+	opts := formatter.FormatOptions{}
+
+	output, err := f.Format(endpoints, opts)
+	if err != nil {
+		t.Fatalf("Format() error = %v", err)
+	}
+
+	var col postmanmodel.Collection
+	if err := json.Unmarshal(output, &col); err != nil {
+		t.Fatalf("Unmarshal error = %v", err)
+	}
+
+	item := col.Item[0].Item[0]
+	if len(item.Request.Header) != 1 {
+		t.Fatalf("Expected 1 header, got %d", len(item.Request.Header))
+	}
+	h := item.Request.Header[0]
+	if h.Type != "text" {
+		t.Errorf("Header.Type = %q, want %q", h.Type, "text")
+	}
+	if h.Description != "Auth header" {
+		t.Errorf("Header.Description = %q, want %q", h.Description, "Auth header")
+	}
+}
+
+func TestFormat_ResponseHeaders(t *testing.T) {
+	f := New()
+	endpoints := []model.ApiEndpoint{
+		{
+			Name:     "Get User",
+			Path:     "/users/1",
+			Method:   "GET",
+			Protocol: "http",
+			Response: &model.ApiBody{
+				MediaType: "application/json",
+				Example:   map[string]interface{}{"id": 1},
+			},
+		},
+	}
+	opts := formatter.FormatOptions{}
+
+	output, err := f.Format(endpoints, opts)
+	if err != nil {
+		t.Fatalf("Format() error = %v", err)
+	}
+
+	var col postmanmodel.Collection
+	if err := json.Unmarshal(output, &col); err != nil {
+		t.Fatalf("Unmarshal error = %v", err)
+	}
+
+	item := col.Item[0].Item[0]
+	if len(item.Response) == 0 {
+		t.Fatal("Expected response")
+	}
+	resp := item.Response[0]
+
+	hasContentType := false
+	hasServer := false
+	for _, h := range resp.Header {
+		if h.Key == "content-type" {
+			hasContentType = true
+		}
+		if h.Key == "server" {
+			hasServer = true
+		}
+	}
+	if !hasContentType {
+		t.Error("Expected content-type header in response")
+	}
+	if !hasServer {
+		t.Error("Expected server header in response")
 	}
 }
 
@@ -321,6 +706,98 @@ func TestFormat_FileMode_Default(t *testing.T) {
 	var col postmanmodel.Collection
 	if err := json.Unmarshal(output, &col); err != nil {
 		t.Fatalf("Output should be valid collection JSON: %v", err)
+	}
+}
+
+func TestFormat_NestedObjectModelBody(t *testing.T) {
+	f := New()
+	addressModel := model.NewObjectModelBuilder().
+		StringField("street", model.WithDemo("123 Main St")).
+		StringField("city", model.WithDemo("Springfield")).
+		Build()
+	userModel := model.NewObjectModelBuilder().
+		StringField("name", model.WithDemo("Alice")).
+		ObjectField("address", addressModel).
+		ArrayField("tags", model.SingleModel(model.JsonTypeString)).
+		Build()
+
+	endpoints := []model.ApiEndpoint{
+		{
+			Name:     "Create User",
+			Path:     "/users",
+			Method:   "POST",
+			Protocol: "http",
+			RequestBody: &model.ApiBody{
+				MediaType: "application/json",
+				Body:      userModel,
+			},
+		},
+	}
+	opts := formatter.FormatOptions{}
+
+	output, err := f.Format(endpoints, opts)
+	if err != nil {
+		t.Fatalf("Format() error = %v", err)
+	}
+
+	var col postmanmodel.Collection
+	if err := json.Unmarshal(output, &col); err != nil {
+		t.Fatalf("Unmarshal error = %v", err)
+	}
+
+	item := col.Item[0].Item[0]
+	body := item.Request.Body.Raw
+
+	if !strings.Contains(body, `"address"`) {
+		t.Errorf("Body should contain nested address field: %s", body)
+	}
+	if !strings.Contains(body, `"street"`) {
+		t.Errorf("Body should contain nested street field: %s", body)
+	}
+	if !strings.Contains(body, `"tags"`) {
+		t.Errorf("Body should contain tags array field: %s", body)
+	}
+}
+
+func TestFormat_ArrayModelBody(t *testing.T) {
+	f := New()
+	userModel := model.NewObjectModelBuilder().
+		StringField("name", model.WithDemo("Alice")).
+		Build()
+	arrayModel := model.ArrayModel(userModel)
+
+	endpoints := []model.ApiEndpoint{
+		{
+			Name:     "Batch Create Users",
+			Path:     "/users/batch",
+			Method:   "POST",
+			Protocol: "http",
+			RequestBody: &model.ApiBody{
+				MediaType: "application/json",
+				Body:      arrayModel,
+			},
+		},
+	}
+	opts := formatter.FormatOptions{}
+
+	output, err := f.Format(endpoints, opts)
+	if err != nil {
+		t.Fatalf("Format() error = %v", err)
+	}
+
+	var col postmanmodel.Collection
+	if err := json.Unmarshal(output, &col); err != nil {
+		t.Fatalf("Unmarshal error = %v", err)
+	}
+
+	item := col.Item[0].Item[0]
+	body := item.Request.Body.Raw
+
+	if !strings.HasPrefix(body, "[") {
+		t.Errorf("Array body should start with [: %s", body)
+	}
+	if !strings.Contains(body, `"name"`) {
+		t.Errorf("Array body should contain name field: %s", body)
 	}
 }
 
