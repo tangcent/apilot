@@ -30,6 +30,7 @@ func extractClass(node *tree_sitter.Node, source []byte) Class {
 	class.Annotations = extractAnnotations(node, source)
 	class.SuperClass, class.SuperClassTypeArgs = extractSuperClass(node, source)
 	class.TypeParameters = extractTypeParameters(node, source)
+	class.Interfaces = extractInterfaces(node, source)
 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -245,6 +246,16 @@ func extractField(node *tree_sitter.Node, source []byte) *Field {
 		child := node.Child(i)
 
 		switch child.Kind() {
+		case "modifiers":
+			for j := uint(0); j < child.ChildCount(); j++ {
+				modChild := child.Child(j)
+				switch modChild.Kind() {
+				case "static":
+					field.IsStatic = true
+				case "final":
+					field.IsFinal = true
+				}
+			}
 		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type":
 			fieldType = child.Utf8Text(source)
 		case "variable_declarator":
@@ -285,6 +296,39 @@ func extractSuperClass(node *tree_sitter.Node, source []byte) (string, []string)
 		}
 	}
 	return "", nil
+}
+
+// extractInterfaces extracts interface names from a class declaration's implements clause.
+func extractInterfaces(node *tree_sitter.Node, source []byte) []string {
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "super_interfaces" {
+			var ifaces []string
+			for j := uint(0); j < child.ChildCount(); j++ {
+				ifaceChild := child.Child(j)
+				switch ifaceChild.Kind() {
+				case "type_identifier":
+					ifaces = append(ifaces, ifaceChild.Utf8Text(source))
+				case "generic_type":
+					baseName, _ := extractGenericBaseAndArgs(ifaceChild, source)
+					ifaces = append(ifaces, baseName)
+				case "type_list":
+					for k := uint(0); k < ifaceChild.ChildCount(); k++ {
+						listChild := ifaceChild.Child(k)
+						switch listChild.Kind() {
+						case "type_identifier":
+							ifaces = append(ifaces, listChild.Utf8Text(source))
+						case "generic_type":
+							baseName, _ := extractGenericBaseAndArgs(listChild, source)
+							ifaces = append(ifaces, baseName)
+						}
+					}
+				}
+			}
+			return ifaces
+		}
+	}
+	return nil
 }
 
 // extractGenericBaseAndArgs extracts the base name and type arguments from a generic_type node.

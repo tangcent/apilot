@@ -27,19 +27,22 @@ type Field struct {
 	Name        string
 	Type        string
 	Annotations []Annotation
+	IsStatic    bool
+	IsFinal     bool
 }
 
 // Class represents a Java class or interface with annotations and methods.
 type Class struct {
-	Name              string
-	Package           string
-	IsInterface       bool
-	Annotations       []Annotation
-	Methods           []Method
-	Fields            []Field
-	SuperClass        string
+	Name               string
+	Package            string
+	IsInterface        bool
+	Annotations        []Annotation
+	Methods            []Method
+	Fields             []Field
+	SuperClass         string
 	SuperClassTypeArgs []string
-	TypeParameters    []string
+	TypeParameters     []string
+	Interfaces         []string
 }
 
 // ParseResult contains the parsing result for a single file.

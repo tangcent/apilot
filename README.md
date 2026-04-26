@@ -114,6 +114,27 @@ cd apilot
 go build -o apilot ./apilot-cli
 ```
 
+### Install from source (local development)
+
+Use the install script to build and install `apilot` to your local PATH — handy for testing changes before release:
+
+```bash
+# Clone and enter the repo
+git clone https://github.com/tangcent/apilot.git
+cd apilot
+
+# Build and install to /usr/local/bin (or ~/.local/bin if no write access)
+./scripts/install-local.sh
+
+# Or specify a custom install directory
+./scripts/install-local.sh /usr/local/bin
+
+# Verify
+apilot --version
+```
+
+After making code changes, just re-run `./scripts/install-local.sh` to rebuild and reinstall.
+
 ---
 
 ## Usage

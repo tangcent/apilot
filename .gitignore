@@ -21,3 +21,5 @@ bin/
 /vscode-plugin/node_modules/
 /vscode-plugin/out/
 /apilot
+/apilot-darwin-*
+/apilot-cli/apilot

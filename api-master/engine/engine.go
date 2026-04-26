@@ -218,6 +218,7 @@ func handleExport(args []string) {
 	var (
 		collectorName  string
 		formatterName  string
+		formatVariant  string
 		formatParams   string
 		outputPath     string
 		pluginRegistry string
@@ -229,6 +230,7 @@ func handleExport(args []string) {
 	fs := flag.NewFlagSet("export", flag.ContinueOnError)
 	fs.StringVar(&collectorName, "collector", "", "collector name (auto-detect if omitted)")
 	fs.StringVar(&formatterName, "formatter", "markdown", "formatter name (default: markdown)")
+	fs.StringVar(&formatVariant, "format", "", "format variant, e.g. simple, detailed (default: simple)")
 	fs.StringVar(&formatParams, "params", "", "formatter params as JSON (e.g. '{\"variant\":\"detailed\"}')")
 	fs.StringVar(&outputPath, "output", "", "output file path (default: stdout)")
 	fs.StringVar(&pluginRegistry, "plugin-registry", "", "path to plugins.json")
@@ -240,7 +242,8 @@ func handleExport(args []string) {
 		printExportHelp()
 	}
 
-	fs.Parse(args)
+	reordered := reorderArgs(args)
+	fs.Parse(reordered)
 
 	if pluginRegistry == "" {
 		pluginRegistry = config.DefaultPluginRegistryPath()
@@ -274,6 +277,10 @@ func handleExport(args []string) {
 	}
 
 	sourceDir := remaining[0]
+
+	if formatVariant != "" && formatParams == "" {
+		formatParams = fmt.Sprintf(`{"variant":"%s"}`, formatVariant)
+	}
 
 	cfg := Config{
 		SourceDir:      sourceDir,
@@ -326,6 +333,8 @@ func printExportHelp() {
 	fmt.Println("        collector name (auto-detect if omitted)")
 	fmt.Println("  --formatter string")
 	fmt.Println("        formatter name (default: markdown)")
+	fmt.Println("  --format string")
+	fmt.Println("        format variant, e.g. simple, detailed (default: simple)")
 	fmt.Println("  --params string")
 	fmt.Println("        formatter params as JSON (e.g. '{\"variant\":\"detailed\"}')")
 	fmt.Println("  --output string")
@@ -368,4 +377,23 @@ func printFormatters() {
 	for _, name := range formatters {
 		fmt.Printf("  %s\n", name)
 	}
+}
+
+func reorderArgs(args []string) []string {
+	var flags []string
+	var positional []string
+	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "-") {
+			flags = append(flags, args[i])
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				if !strings.Contains(args[i], "=") {
+					flags = append(flags, args[i+1])
+					i++
+				}
+			}
+		} else {
+			positional = append(positional, args[i])
+		}
+	}
+	return append(flags, positional...)
 }
