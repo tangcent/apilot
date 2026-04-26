@@ -86,7 +86,7 @@ CHANGELOG="CHANGELOG.md"
 
 if git rev-parse "${last_tag}" >/dev/null 2>&1; then
     line_num=$(grep -n "## \[${last_version}\]" "${CHANGELOG}" | head -1 | cut -d: -f1)
-    if [[ -n "${line_num}" && "${line_num}" -gt 0 ]]; then
+    if [[ -n "${line_num}" && "${line_num}" -gt 1 ]]; then
         head -n $((line_num - 1)) "${CHANGELOG}" > .changelog_head.md
         tail -n +$((line_num)) "${CHANGELOG}" > .changelog_tail.md
         cat .changelog_head.md .release_temp.md .changelog_tail.md > "${CHANGELOG}"
