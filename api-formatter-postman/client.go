@@ -23,8 +23,8 @@ type CreateCollectionRequest struct {
 }
 
 type CollectionWrapper struct {
-	Info CollectionInfo    `json:"info"`
-	Item []model.ItemGroup `json:"item"`
+	Info CollectionInfo `json:"info"`
+	Item []model.Item   `json:"item"`
 }
 
 type CollectionInfo struct {

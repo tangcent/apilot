@@ -37,7 +37,7 @@ func TestCreateCollection_Success(t *testing.T) {
 
 	col := model.Collection{
 		Info: model.Info{Name: "Test Collection", Schema: postmanSchema},
-		Item: []model.ItemGroup{},
+		Item: []model.Item{},
 	}
 
 	result, err := client.CreateCollection("", col)
@@ -72,7 +72,7 @@ func TestCreateCollection_WithWorkspace(t *testing.T) {
 
 	col := model.Collection{
 		Info: model.Info{Name: "Test", Schema: postmanSchema},
-		Item: []model.ItemGroup{},
+		Item: []model.Item{},
 	}
 
 	result, err := client.CreateCollection("ws-123", col)
@@ -102,7 +102,7 @@ func TestCreateCollection_APIError(t *testing.T) {
 
 	col := model.Collection{
 		Info: model.Info{Name: "Test", Schema: postmanSchema},
-		Item: []model.ItemGroup{},
+		Item: []model.Item{},
 	}
 
 	_, err := client.CreateCollection("", col)
@@ -143,7 +143,7 @@ func TestUpdateCollection_Success(t *testing.T) {
 
 	col := model.Collection{
 		Info: model.Info{Name: "Updated Collection", Schema: postmanSchema},
-		Item: []model.ItemGroup{},
+		Item: []model.Item{},
 	}
 
 	result, err := client.UpdateCollection("col-uid-123", col)

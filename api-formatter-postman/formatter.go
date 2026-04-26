@@ -83,18 +83,21 @@ func buildCollection(endpoints []apimodel.ApiEndpoint, p Params) model.Collectio
 		folderMap[folder] = append(folderMap[folder], ep)
 	}
 
-	var groups []model.ItemGroup
+	var items []model.Item
 	for _, folderName := range folderOrder {
-		var items []model.Item
+		var subItems []model.Item
 		for _, ep := range folderMap[folderName] {
-			items = append(items, buildItem(ep, p))
+			subItems = append(subItems, buildItem(ep, p))
 		}
-		groups = append(groups, model.ItemGroup{Name: folderName, Item: items})
+		items = append(items, model.Item{
+			Name: folderName,
+			Item: subItems,
+		})
 	}
 
 	return model.Collection{
 		Info: model.Info{Name: p.CollectionName, Schema: postmanSchema},
-		Item: groups,
+		Item: items,
 	}
 }
 
@@ -130,57 +133,198 @@ func buildItem(ep apimodel.ApiEndpoint, p Params) model.Item {
 
 	var headers []model.Header
 	for _, h := range ep.Headers {
-		headers = append(headers, model.Header{Key: h.Name, Value: h.Value})
+		headers = append(headers, model.Header{
+			Key:         h.Name,
+			Value:       h.Value,
+			Type:        "text",
+			Description: h.Description,
+		})
 	}
 
-	var queryParams []model.Query
-	for _, param := range ep.Parameters {
-		if param.In == "query" {
-			queryParams = append(queryParams, model.Query{Key: param.Name, Value: ""})
+	queryParams := buildQueryParams(ep.Parameters)
+	pathVars := buildPathVars(ep.Parameters)
+	pathSegments := splitPath(ep.Path)
+
+	host := []string{p.BaseURL}
+	rawURL := p.BaseURL + ep.Path
+	if len(queryParams) > 0 {
+		var qs []string
+		for _, q := range queryParams {
+			qs = append(qs, q.Key+"="+q.Value)
 		}
+		rawURL += "?" + strings.Join(qs, "&")
 	}
 
 	url := model.URL{
-		Raw:   p.BaseURL + ep.Path,
-		Path:  splitPath(ep.Path),
-		Query: queryParams,
+		Raw:      rawURL,
+		Host:     host,
+		Path:     pathSegments,
+		Query:    queryParams,
+		Variable: pathVars,
 	}
 
-	var body *model.Body
-	if ep.RequestBody != nil {
-		body = &model.Body{
-			Mode:    "raw",
-			Raw:     "{}",
-			Options: &model.BodyOptions{Raw: model.RawOptions{Language: "json"}},
-		}
+	body := buildBody(ep)
+	req := model.Request{
+		Method:      method,
+		Header:      headers,
+		URL:         url,
+		Body:        body,
+		Description: ep.Description,
 	}
 
 	return model.Item{
-		Name: ep.Name,
-		Request: model.Request{
-			Method: method,
-			Header: headers,
-			URL:    url,
-			Body:   body,
-		},
-		Response: buildResponses(ep),
+		Name:        ep.Name,
+		Request:     &req,
+		Response:    buildResponses(ep, &req),
+		Description: ep.Description,
 	}
 }
 
-func buildResponses(ep apimodel.ApiEndpoint) []model.Response {
-	if ep.Response == nil || ep.Response.Example == nil {
+func buildQueryParams(params []apimodel.ApiParameter) []model.Query {
+	var queryParams []model.Query
+	for _, param := range params {
+		if param.In == "query" {
+			value := param.Example
+			if value == "" {
+				value = param.Default
+			}
+			queryParams = append(queryParams, model.Query{
+				Key:         param.Name,
+				Value:       value,
+				Equals:      true,
+				Description: param.Description,
+			})
+		}
+	}
+	return queryParams
+}
+
+func buildPathVars(params []apimodel.ApiParameter) []model.PathVariable {
+	var pathVars []model.PathVariable
+	for _, param := range params {
+		if param.In == "path" {
+			value := param.Example
+			if value == "" {
+				value = param.Default
+			}
+			pathVars = append(pathVars, model.PathVariable{
+				Key:         param.Name,
+				Value:       value,
+				Description: param.Description,
+			})
+		}
+	}
+	return pathVars
+}
+
+func buildBody(ep apimodel.ApiEndpoint) *model.Body {
+	if ep.RequestBody == nil {
 		return nil
 	}
-	bodyBytes, err := json.Marshal(ep.Response.Example)
-	if err != nil {
+
+	contentType := strings.ToLower(ep.RequestBody.MediaType)
+
+	if strings.Contains(contentType, "x-www-form-urlencoded") {
+		return buildFormBody(ep, "urlencoded")
+	}
+
+	if strings.Contains(contentType, "multipart") || strings.Contains(contentType, "form-data") {
+		return buildFormBody(ep, "formdata")
+	}
+
+	raw := buildRawBody(ep.RequestBody)
+	return &model.Body{
+		Mode:    "raw",
+		Raw:     raw,
+		Options: &model.BodyOptions{Raw: model.RawOptions{Language: "json"}},
+	}
+}
+
+func buildFormBody(ep apimodel.ApiEndpoint, mode string) *model.Body {
+	var params []model.FormParam
+	for _, param := range ep.Parameters {
+		if param.In == "form" {
+			value := param.Example
+			if value == "" {
+				value = param.Default
+			}
+			paramType := "text"
+			if param.Type == "file" {
+				paramType = "file"
+			}
+			params = append(params, model.FormParam{
+				Key:         param.Name,
+				Value:       value,
+				Type:        paramType,
+				Description: param.Description,
+			})
+		}
+	}
+	body := &model.Body{Mode: mode}
+	if mode == "urlencoded" {
+		body.Urlencoded = params
+	} else {
+		body.Formdata = params
+	}
+	return body
+}
+
+func buildRawBody(apiBody *apimodel.ApiBody) string {
+	if apiBody.Body != nil {
+		return objectModelToJSON(apiBody.Body)
+	}
+	if apiBody.Example != nil {
+		b, err := json.MarshalIndent(apiBody.Example, "", "    ")
+		if err != nil {
+			return "{}"
+		}
+		return string(b)
+	}
+	return "{}"
+}
+
+func buildResponses(ep apimodel.ApiEndpoint, req *model.Request) []model.Response {
+	if ep.Response == nil {
 		return nil
 	}
+
+	var bodyStr string
+	if ep.Response.Body != nil {
+		bodyStr = objectModelToJSON(ep.Response.Body)
+	} else if ep.Response.Example != nil {
+		b, err := json.MarshalIndent(ep.Response.Example, "", "    ")
+		if err != nil {
+			bodyStr = ""
+		} else {
+			bodyStr = string(b)
+		}
+	}
+
+	var respHeaders []model.Header
+	respHeaders = append(respHeaders, model.Header{
+		Name:        "content-type",
+		Key:         "content-type",
+		Value:       "application/json;charset=UTF-8",
+		Type:        "text",
+		Description: "The mime type of this content",
+	})
+	respHeaders = append(respHeaders, model.Header{
+		Name:        "server",
+		Key:         "server",
+		Value:       "Apache-Coyote/1.1",
+		Type:        "text",
+		Description: "A name for the server",
+	})
+
 	return []model.Response{
 		{
-			Name:   "Example response",
-			Status: "OK",
-			Code:   200,
-			Body:   string(bodyBytes),
+			Name:                   "Example response",
+			OriginalRequest:        req,
+			Status:                 "OK",
+			Code:                   200,
+			Header:                 respHeaders,
+			Body:                   bodyStr,
+			PostmanPreviewLanguage: "json",
 		},
 	}
 }
