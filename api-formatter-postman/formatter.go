@@ -13,19 +13,25 @@ import (
 
 const postmanSchema = "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 
-// Params holds postman-specific formatting options.
+const (
+	ExportModeCreateNew      = "CREATE_NEW"
+	ExportModeUpdateExisting = "UPDATE_EXISTING"
+)
+
 type Params struct {
 	CollectionName string `json:"collectionName"`
 	BaseURL        string `json:"baseURL"`
 	Mode           string `json:"mode"`
 	PostmanAPIKey  string `json:"postmanAPIKey"`
 	WorkspaceID    string `json:"workspaceId"`
+	CollectionUID  string `json:"collectionUid"`
+	ProjectName    string `json:"projectName"`
+	ExportMode     string `json:"exportMode"`
+	OutputPath     string `json:"outputPath"`
 }
 
-// PostmanFormatter formats endpoints as a Postman Collection v2.1 JSON document.
 type PostmanFormatter struct{}
 
-// New returns a new PostmanFormatter.
 func New() formatter.Formatter { return &PostmanFormatter{} }
 
 func (f *PostmanFormatter) Name() string { return "postman" }
@@ -37,12 +43,14 @@ func (f *PostmanFormatter) RequiredSettings() []formatter.SettingDef {
 			Description: "Postman API key for pushing collections to the Postman API",
 			Required:    false,
 		},
+		{
+			Key:         "postman.export.mode",
+			Description: "Postman export mode: CREATE_NEW (always create new collection) or UPDATE_EXISTING (update previously exported collection per project)",
+			Required:    false,
+		},
 	}
 }
 
-// Format converts endpoints into a Postman Collection v2.1 JSON document.
-// Endpoints are grouped by their Folder field into Postman folders.
-// An empty endpoints slice returns a valid empty collection.
 func (f *PostmanFormatter) Format(endpoints []apimodel.ApiEndpoint, opts formatter.FormatOptions) ([]byte, error) {
 	var p Params
 	if err := opts.DecodeParams(&p); err != nil {
@@ -56,14 +64,14 @@ func (f *PostmanFormatter) Format(endpoints []apimodel.ApiEndpoint, opts formatt
 	}
 
 	apiKey := resolveAPIKey(p, opts)
+	exportMode := resolveExportMode(p, opts)
 
 	col := buildCollection(endpoints, p)
 
-	if p.Mode == "api" {
-		if apiKey == "" {
-			return nil, fmt.Errorf("postman api key is required for api mode. Set it with: apilot set postman.api.key <value>")
-		}
-		return pushToPostmanAPI(apiKey, p.WorkspaceID, col)
+	mode := resolveMode(p, apiKey)
+
+	if mode == "api" {
+		return pushToPostmanAPI(apiKey, exportMode, p.ProjectName, p.CollectionUID, p.WorkspaceID, opts.Collections, col)
 	}
 
 	return json.MarshalIndent(col, "", "  ")
@@ -110,17 +118,87 @@ func resolveAPIKey(p Params, opts formatter.FormatOptions) string {
 	return p.PostmanAPIKey
 }
 
-func pushToPostmanAPI(apiKey string, workspaceID string, col model.Collection) ([]byte, error) {
+func resolveMode(p Params, apiKey string) string {
+	if p.Mode != "" {
+		return strings.ToLower(p.Mode)
+	}
+	if p.OutputPath != "" {
+		return "file"
+	}
+	if apiKey != "" {
+		return "api"
+	}
+	return "file"
+}
+
+func resolveExportMode(p Params, opts formatter.FormatOptions) string {
+	if p.ExportMode != "" {
+		return strings.ToUpper(p.ExportMode)
+	}
+	if opts.Settings != nil {
+		if mode := opts.Settings.Get("postman.export.mode"); mode != "" {
+			return strings.ToUpper(mode)
+		}
+	}
+	return ExportModeCreateNew
+}
+
+func pushToPostmanAPI(apiKey string, exportMode string, projectName string, paramCollectionUID string, paramWorkspaceID string, store formatter.CollectionStore, col model.Collection) ([]byte, error) {
+	if apiKey == "" {
+		return nil, fmt.Errorf("postman api key is required for api mode. Set it with: apilot set postman.api.key <value>")
+	}
 	client := newPostmanClient(apiKey)
+
+	workspaceID := paramWorkspaceID
+	collectionUID := paramCollectionUID
+
+	if collectionUID == "" && exportMode == ExportModeUpdateExisting && projectName != "" && store != nil {
+		binding, err := store.GetBinding(projectName)
+		if err == nil && binding != nil {
+			collectionUID = binding.CollectionUID
+			if binding.WorkspaceID != "" && workspaceID == "" {
+				workspaceID = binding.WorkspaceID
+			}
+		}
+	}
+
+	if collectionUID != "" {
+		result, err := client.UpdateCollection(collectionUID, col)
+		if err != nil {
+			return nil, fmt.Errorf("updating collection in postman api: %w", err)
+		}
+		if projectName != "" && store != nil {
+			_ = store.SetBinding(projectName, formatter.CollectionBinding{
+				WorkspaceID:   workspaceID,
+				CollectionUID: result.Collection.UID,
+			})
+		}
+		apiResult := APIResult{
+			CollectionID:  result.Collection.ID,
+			CollectionUID: result.Collection.UID,
+			CollectionURL: fmt.Sprintf("https://go.postman.co/collection/%s", result.Collection.UID),
+			Action:        "updated",
+		}
+		return json.MarshalIndent(apiResult, "", "  ")
+	}
+
 	result, err := client.CreateCollection(workspaceID, col)
 	if err != nil {
 		return nil, fmt.Errorf("pushing to postman api: %w", err)
+	}
+
+	if projectName != "" && store != nil {
+		_ = store.SetBinding(projectName, formatter.CollectionBinding{
+			WorkspaceID:   workspaceID,
+			CollectionUID: result.Collection.UID,
+		})
 	}
 
 	apiResult := APIResult{
 		CollectionID:  result.Collection.ID,
 		CollectionUID: result.Collection.UID,
 		CollectionURL: fmt.Sprintf("https://go.postman.co/collection/%s", result.Collection.UID),
+		Action:        "created",
 	}
 	return json.MarshalIndent(apiResult, "", "  ")
 }

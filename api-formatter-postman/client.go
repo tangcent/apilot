@@ -112,6 +112,9 @@ func (c PostmanClient) CreateCollection(workspaceID string, col model.Collection
 		if err := json.Unmarshal(respBody, &apiErr); err != nil {
 			apiErr.Message = string(respBody)
 		}
+		if apiErr.Name == "" && apiErr.Message == "" {
+			apiErr.Message = fmt.Sprintf("empty response body (%d bytes): %s", len(respBody), string(respBody))
+		}
 		return nil, &apiErr
 	}
 
@@ -178,4 +181,5 @@ type APIResult struct {
 	CollectionID  string `json:"collectionId,omitempty"`
 	CollectionUID string `json:"collectionUid,omitempty"`
 	CollectionURL string `json:"collectionUrl,omitempty"`
+	Action        string `json:"action,omitempty"`
 }

@@ -2,9 +2,11 @@
 package engine
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	collector "github.com/tangcent/apilot/api-collector"
@@ -49,11 +51,31 @@ func Run(cfg Config) error {
 		return checkErr
 	}
 
+	projectName := resolveProjectName(cfg.SourceDir)
+
 	opts := formatter.FormatOptions{
-		Settings: settings,
+		Settings:    settings,
+		Collections: config.NewCollectionStore(),
 	}
 	if cfg.FormatParams != "" {
 		opts.Params = []byte(cfg.FormatParams)
+	}
+	if projectName != "" || cfg.OutputPath != "" {
+		var existing map[string]any
+		if len(opts.Params) > 0 {
+			_ = json.Unmarshal(opts.Params, &existing)
+		}
+		if existing == nil {
+			existing = map[string]any{}
+		}
+		if projectName != "" {
+			existing["projectName"] = projectName
+		}
+		if cfg.OutputPath != "" {
+			existing["outputPath"] = cfg.OutputPath
+		}
+		merged, _ := json.Marshal(existing)
+		opts.Params = merged
 	}
 	output, err := f.Format(endpoints, opts)
 	if err != nil {
@@ -137,6 +159,8 @@ func RunCLI() {
 		handleSet(args[1:])
 	case "get":
 		handleGet(args[1:])
+	case "collections":
+		handleCollections(args[1:])
 	case "export":
 		handleExport(args[1:])
 	case "--help", "-h", "help":
@@ -211,7 +235,63 @@ func handleGet(args []string) {
 		fmt.Fprintf(os.Stderr, "Setting %q not found\n", key)
 		os.Exit(1)
 	}
-	fmt.Println(value)
+	if isSensitiveKey(key) {
+		fmt.Println(maskValue(value))
+	} else {
+		fmt.Println(value)
+	}
+}
+
+func isSensitiveKey(key string) bool {
+	lower := strings.ToLower(key)
+	return strings.Contains(lower, "key") ||
+		strings.Contains(lower, "token") ||
+		strings.Contains(lower, "secret") ||
+		strings.Contains(lower, "password") ||
+		strings.Contains(lower, "apikey")
+}
+
+func handleCollections(args []string) {
+	if len(args) == 0 {
+		listCollections()
+		return
+	}
+	subcmd := args[0]
+	switch subcmd {
+	case "list", "ls":
+		listCollections()
+	case "remove", "rm":
+		if len(args) < 2 {
+			fmt.Fprintf(os.Stderr, "Usage: apilot collections remove <project-name>\n")
+			os.Exit(1)
+		}
+		if err := config.RemoveCollectionBinding(args[1]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Removed collection binding for %q\n", args[1])
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown collections subcommand: %s\n", subcmd)
+		fmt.Fprintf(os.Stderr, "Usage: apilot collections [list|remove]\n")
+		os.Exit(1)
+	}
+}
+
+func listCollections() {
+	bindings, err := config.ListCollectionBindings()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	if len(bindings) == 0 {
+		fmt.Println("No collection bindings configured.")
+		fmt.Println("Bindings are automatically saved when you export with postman.export.mode=UPDATE_EXISTING")
+		return
+	}
+	fmt.Println("Project collection bindings:")
+	for project, binding := range bindings {
+		fmt.Printf("  %s: workspace=%s collection=%s\n", project, binding.WorkspaceID, binding.CollectionUID)
+	}
 }
 
 func handleExport(args []string) {
@@ -243,7 +323,11 @@ func handleExport(args []string) {
 	}
 
 	reordered := reorderArgs(args)
-	fs.Parse(reordered)
+	if err := fs.Parse(reordered); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		printExportHelp()
+		os.Exit(1)
+	}
 
 	if pluginRegistry == "" {
 		pluginRegistry = config.DefaultPluginRegistryPath()
@@ -319,6 +403,7 @@ func printHelp() {
 	fmt.Println("  settings                      List settings required by formatters")
 	fmt.Println("  set <key> <value>             Set a configuration value")
 	fmt.Println("  get <key>                     Get a configuration value")
+	fmt.Println("  collections [list|remove]     Manage project-to-collection bindings")
 	fmt.Println("")
 	fmt.Println("Run 'apilot export --help' for export flags.")
 	fmt.Println("")
@@ -396,4 +481,12 @@ func reorderArgs(args []string) []string {
 		}
 	}
 	return append(flags, positional...)
+}
+
+func resolveProjectName(sourceDir string) string {
+	abs, err := filepath.Abs(sourceDir)
+	if err != nil {
+		abs = sourceDir
+	}
+	return filepath.Base(abs)
 }

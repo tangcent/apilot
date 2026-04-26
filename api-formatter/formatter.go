@@ -37,14 +37,10 @@ func (noopSettings) Get(string) string { return "" }
 //
 //	FormatOptions{Params: json.RawMessage(`{"variant":"detailed","baseURL":"https://api.example.com"}`)}
 type FormatOptions struct {
-	// Params holds formatter-specific configuration as raw JSON.
-	// Formatters unmarshal this into their own typed struct using DecodeParams.
-	Params json.RawMessage `json:"params,omitempty"`
+	Params   json.RawMessage `json:"params,omitempty"`
+	Settings Settings        `json:"-"`
 
-	// Settings provides access to persistent user settings (e.g. API keys).
-	// Settings are injected by the engine at runtime; formatters call Settings.Get(key).
-	// Not serialized — omitted from JSON marshaling.
-	Settings Settings `json:"-"`
+	Collections CollectionStore `json:"-"`
 }
 
 // DecodeParams unmarshals Params into v.
@@ -64,4 +60,14 @@ type SettingDef struct {
 
 type SettingsProvider interface {
 	RequiredSettings() []SettingDef
+}
+
+type CollectionBinding struct {
+	WorkspaceID   string `json:"workspaceId,omitempty"`
+	CollectionUID string `json:"collectionUid,omitempty"`
+}
+
+type CollectionStore interface {
+	GetBinding(project string) (*CollectionBinding, error)
+	SetBinding(project string, binding CollectionBinding) error
 }
