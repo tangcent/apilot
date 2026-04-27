@@ -606,14 +606,21 @@ func TestRequiredSettings(t *testing.T) {
 	}
 
 	settings := sp.RequiredSettings()
-	if len(settings) != 1 {
-		t.Fatalf("Expected 1 setting, got %d", len(settings))
+	if len(settings) != 2 {
+		t.Fatalf("Expected 2 settings, got %d", len(settings))
 	}
-	if settings[0].Key != "postman.api.key" {
-		t.Errorf("Expected key 'postman.api.key', got %q", settings[0].Key)
+
+	expectedKeys := []string{"postman.api.key", "postman.export.mode"}
+	for i, expected := range expectedKeys {
+		if settings[i].Key != expected {
+			t.Errorf("settings[%d].Key = %q, want %q", i, settings[i].Key, expected)
+		}
 	}
-	if settings[0].Required {
-		t.Error("postman.api.key should not be required (formatter works in file mode)")
+
+	for _, s := range settings {
+		if s.Required {
+			t.Errorf("setting %q should not be required (formatter works in file mode)", s.Key)
+		}
 	}
 }
 
@@ -670,6 +677,60 @@ func TestResolveAPIKey_None(t *testing.T) {
 	key := resolveAPIKey(p, opts)
 	if key != "" {
 		t.Errorf("Expected empty string when no key configured, got %q", key)
+	}
+}
+
+func TestResolveExportMode_Default(t *testing.T) {
+	p := Params{}
+	opts := formatter.FormatOptions{}
+
+	mode := resolveExportMode(p, opts)
+	if mode != ExportModeCreateNew {
+		t.Errorf("Expected %q, got %q", ExportModeCreateNew, mode)
+	}
+}
+
+func TestResolveExportMode_FromParams(t *testing.T) {
+	p := Params{ExportMode: "UPDATE_EXISTING"}
+	opts := formatter.FormatOptions{}
+
+	mode := resolveExportMode(p, opts)
+	if mode != ExportModeUpdateExisting {
+		t.Errorf("Expected %q, got %q", ExportModeUpdateExisting, mode)
+	}
+}
+
+func TestResolveExportMode_FromSettings(t *testing.T) {
+	p := Params{}
+	opts := formatter.FormatOptions{
+		Settings: &mapSettings{"postman.export.mode": "UPDATE_EXISTING"},
+	}
+
+	mode := resolveExportMode(p, opts)
+	if mode != ExportModeUpdateExisting {
+		t.Errorf("Expected %q, got %q", ExportModeUpdateExisting, mode)
+	}
+}
+
+func TestResolveExportMode_ParamsTakesPrecedence(t *testing.T) {
+	p := Params{ExportMode: "CREATE_NEW"}
+	opts := formatter.FormatOptions{
+		Settings: &mapSettings{"postman.export.mode": "UPDATE_EXISTING"},
+	}
+
+	mode := resolveExportMode(p, opts)
+	if mode != ExportModeCreateNew {
+		t.Errorf("Params should take precedence over settings, got %q", mode)
+	}
+}
+
+func TestResolveExportMode_CaseInsensitive(t *testing.T) {
+	p := Params{ExportMode: "update_existing"}
+	opts := formatter.FormatOptions{}
+
+	mode := resolveExportMode(p, opts)
+	if mode != ExportModeUpdateExisting {
+		t.Errorf("Expected %q (uppercased), got %q", ExportModeUpdateExisting, mode)
 	}
 }
 
@@ -804,3 +865,59 @@ func TestFormat_ArrayModelBody(t *testing.T) {
 type mapSettings map[string]string
 
 func (s mapSettings) Get(key string) string { return s[key] }
+
+func TestResolveMode_ExplicitMode(t *testing.T) {
+	p := Params{Mode: "api"}
+	mode := resolveMode(p, "some-key")
+	if mode != "api" {
+		t.Errorf("Expected 'api', got %q", mode)
+	}
+}
+
+func TestResolveMode_ExplicitFileMode(t *testing.T) {
+	p := Params{Mode: "file"}
+	mode := resolveMode(p, "some-key")
+	if mode != "file" {
+		t.Errorf("Expected 'file', got %q", mode)
+	}
+}
+
+func TestResolveMode_AutoAPIKey(t *testing.T) {
+	p := Params{}
+	mode := resolveMode(p, "PMAK-xxxx")
+	if mode != "api" {
+		t.Errorf("Expected 'api' when API key is available, got %q", mode)
+	}
+}
+
+func TestResolveMode_AutoNoKey(t *testing.T) {
+	p := Params{}
+	mode := resolveMode(p, "")
+	if mode != "file" {
+		t.Errorf("Expected 'file' when no API key, got %q", mode)
+	}
+}
+
+func TestResolveMode_ExplicitOverridesAuto(t *testing.T) {
+	p := Params{Mode: "file"}
+	mode := resolveMode(p, "PMAK-xxxx")
+	if mode != "file" {
+		t.Errorf("Explicit mode should override auto-detection, got %q", mode)
+	}
+}
+
+func TestResolveMode_OutputPathForcesFile(t *testing.T) {
+	p := Params{OutputPath: "collection.json"}
+	mode := resolveMode(p, "PMAK-xxxx")
+	if mode != "file" {
+		t.Errorf("OutputPath should force file mode even with API key, got %q", mode)
+	}
+}
+
+func TestResolveMode_ExplicitAPIOverridesOutputPath(t *testing.T) {
+	p := Params{Mode: "api", OutputPath: "collection.json"}
+	mode := resolveMode(p, "PMAK-xxxx")
+	if mode != "api" {
+		t.Errorf("Explicit api mode should override OutputPath, got %q", mode)
+	}
+}

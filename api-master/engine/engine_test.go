@@ -389,7 +389,7 @@ func TestRunCLI_SetAndGetCommand(t *testing.T) {
 	originalArgs := os.Args
 	defer func() { os.Args = originalArgs }()
 
-	os.Args = []string{"apilot", "set", "test.cli.key", "test-cli-value"}
+	os.Args = []string{"apilot", "set", "test.cli.value", "test-cli-value"}
 
 	var setOutput bytes.Buffer
 	setStdout := os.Stdout
@@ -402,11 +402,11 @@ func TestRunCLI_SetAndGetCommand(t *testing.T) {
 	os.Stdout = setStdout
 	setOutput.ReadFrom(r)
 
-	if !strings.Contains(setOutput.String(), "Set test.cli.key") {
-		t.Errorf("Expected 'Set test.cli.key' in output, got: %s", setOutput.String())
+	if !strings.Contains(setOutput.String(), "Set test.cli.value") {
+		t.Errorf("Expected 'Set test.cli.value' in output, got: %s", setOutput.String())
 	}
 
-	os.Args = []string{"apilot", "get", "test.cli.key"}
+	os.Args = []string{"apilot", "get", "test.cli.value"}
 
 	var getOutput bytes.Buffer
 	getStdout := os.Stdout
@@ -421,6 +421,40 @@ func TestRunCLI_SetAndGetCommand(t *testing.T) {
 
 	if !strings.Contains(getOutput.String(), "test-cli-value") {
 		t.Errorf("Expected 'test-cli-value' in output, got: %s", getOutput.String())
+	}
+}
+
+func TestRunCLI_GetMasksSensitiveKeys(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir := tmpDir + "/config"
+	os.Setenv("APILOT_CONFIG_DIR", configDir)
+	defer os.Unsetenv("APILOT_CONFIG_DIR")
+
+	originalArgs := os.Args
+	defer func() { os.Args = originalArgs }()
+
+	os.Args = []string{"apilot", "set", "postman.api.key", "PMAK-12345678-abcdef"}
+	RunCLI()
+
+	os.Args = []string{"apilot", "get", "postman.api.key"}
+
+	var getOutput bytes.Buffer
+	getStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	RunCLI()
+
+	w.Close()
+	os.Stdout = getStdout
+	getOutput.ReadFrom(r)
+
+	output := getOutput.String()
+	if strings.Contains(output, "PMAK-12345678-abcdef") {
+		t.Errorf("Sensitive key should be masked, got plain value: %s", output)
+	}
+	if !strings.Contains(output, "****") {
+		t.Errorf("Expected masked output with ****, got: %s", output)
 	}
 }
 
