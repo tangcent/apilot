@@ -653,6 +653,365 @@ func TestMaskValue(t *testing.T) {
 	}
 }
 
+func TestFilterEndpointsByFile(t *testing.T) {
+	endpoints := []collector.ApiEndpoint{
+		{Name: "getUser", Folder: "UserController", Path: "/users/{id}", Method: "GET", Protocol: "http"},
+		{Name: "createUser", Folder: "UserController", Path: "/users", Method: "POST", Protocol: "http"},
+		{Name: "getOrder", Folder: "OrderController", Path: "/orders/{id}", Method: "GET", Protocol: "http"},
+	}
+
+	filtered := filterEndpointsByFile(endpoints, "/project/src/UserController.java")
+	if len(filtered) != 2 {
+		t.Fatalf("Expected 2 endpoints for UserController, got %d", len(filtered))
+	}
+	for _, ep := range filtered {
+		if ep.Folder != "UserController" {
+			t.Errorf("Expected Folder=UserController, got %q", ep.Folder)
+		}
+	}
+}
+
+func TestFilterEndpointsByFile_NoMatch(t *testing.T) {
+	endpoints := []collector.ApiEndpoint{
+		{Name: "getOrder", Folder: "OrderController", Path: "/orders/{id}", Method: "GET", Protocol: "http"},
+	}
+
+	filtered := filterEndpointsByFile(endpoints, "/project/src/UserController.java")
+	if len(filtered) != 0 {
+		t.Fatalf("Expected 0 endpoints, got %d", len(filtered))
+	}
+}
+
+func TestFilterEndpointsByMethod(t *testing.T) {
+	endpoints := []collector.ApiEndpoint{
+		{Name: "getUser", Folder: "UserController", Path: "/users/{id}", Method: "GET", Protocol: "http"},
+		{Name: "createUser", Folder: "UserController", Path: "/users", Method: "POST", Protocol: "http"},
+		{Name: "getUser", Folder: "OrderController", Path: "/orders/{id}", Method: "GET", Protocol: "http"},
+	}
+
+	filtered := filterEndpointsByMethod(endpoints, "getUser")
+	if len(filtered) != 2 {
+		t.Fatalf("Expected 2 endpoints named getUser, got %d", len(filtered))
+	}
+	for _, ep := range filtered {
+		if ep.Name != "getUser" {
+			t.Errorf("Expected Name=getUser, got %q", ep.Name)
+		}
+	}
+}
+
+func TestFilterEndpointsByMethod_NoMatch(t *testing.T) {
+	endpoints := []collector.ApiEndpoint{
+		{Name: "getUser", Folder: "UserController", Path: "/users/{id}", Method: "GET", Protocol: "http"},
+	}
+
+	filtered := filterEndpointsByMethod(endpoints, "deleteUser")
+	if len(filtered) != 0 {
+		t.Fatalf("Expected 0 endpoints, got %d", len(filtered))
+	}
+}
+
+func TestFindProjectRoot(t *testing.T) {
+	tmpDir := t.TempDir()
+	subDir := tmpDir + "/src/main/java/com/example"
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("Failed to create subdirectory: %v", err)
+	}
+	if err := os.WriteFile(tmpDir+"/pom.xml", []byte{}, 0644); err != nil {
+		t.Fatalf("Failed to create pom.xml: %v", err)
+	}
+
+	root, err := findProjectRoot(subDir)
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+	if root != tmpDir {
+		t.Errorf("Expected root %q, got %q", tmpDir, root)
+	}
+}
+
+func TestFindProjectRoot_MultiModule(t *testing.T) {
+	tmpDir := t.TempDir()
+	moduleDir := tmpDir + "/user-service"
+	subDir := moduleDir + "/src/main/java/com/example"
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("Failed to create subdirectory: %v", err)
+	}
+	if err := os.WriteFile(tmpDir+"/pom.xml", []byte{}, 0644); err != nil {
+		t.Fatalf("Failed to create parent pom.xml: %v", err)
+	}
+	if err := os.WriteFile(moduleDir+"/pom.xml", []byte{}, 0644); err != nil {
+		t.Fatalf("Failed to create module pom.xml: %v", err)
+	}
+
+	root, err := findProjectRoot(subDir)
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+	if root != tmpDir {
+		t.Errorf("Expected topmost root %q, got %q", tmpDir, root)
+	}
+}
+
+func TestFindProjectRoot_GradleMultiModule(t *testing.T) {
+	tmpDir := t.TempDir()
+	moduleDir := tmpDir + "/user-service"
+	subDir := moduleDir + "/src/main/java/com/example"
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("Failed to create subdirectory: %v", err)
+	}
+	if err := os.WriteFile(tmpDir+"/build.gradle", []byte{}, 0644); err != nil {
+		t.Fatalf("Failed to create root build.gradle: %v", err)
+	}
+	if err := os.WriteFile(moduleDir+"/build.gradle", []byte{}, 0644); err != nil {
+		t.Fatalf("Failed to create module build.gradle: %v", err)
+	}
+
+	root, err := findProjectRoot(subDir)
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+	if root != tmpDir {
+		t.Errorf("Expected topmost root %q, got %q", tmpDir, root)
+	}
+}
+
+func TestFindProjectRoot_NotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	_, err := findProjectRoot(tmpDir)
+	if err == nil {
+		t.Error("Expected error when no project root indicator found, got nil")
+	}
+}
+
+func TestRun_FileLevelExport(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(tmpDir+"/pom.xml", []byte{}, 0644); err != nil {
+		t.Fatalf("Failed to create pom.xml: %v", err)
+	}
+	javaFile := tmpDir + "/UserController.java"
+	if err := os.WriteFile(javaFile, []byte("class UserController {}"), 0644); err != nil {
+		t.Fatalf("Failed to create java file: %v", err)
+	}
+
+	RegisterCollector(&mockCollector{
+		name:           "java",
+		supportedLangs: []string{"java"},
+		collectEndpoints: []collector.ApiEndpoint{
+			{Name: "getUser", Folder: "UserController", Path: "/users/{id}", Method: "GET", Protocol: "http"},
+			{Name: "getOrder", Folder: "OrderController", Path: "/orders/{id}", Method: "GET", Protocol: "http"},
+		},
+	})
+
+	RegisterFormatter(&mockFormatter{
+		name:         "test-formatter",
+		formatOutput: []byte("filtered output"),
+	})
+
+	cfg := Config{
+		SourceDir:     javaFile,
+		CollectorName: "java",
+		FormatterName: "test-formatter",
+	}
+
+	var output bytes.Buffer
+	originalStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := Run(cfg)
+
+	w.Close()
+	os.Stdout = originalStdout
+	output.ReadFrom(r)
+
+	if err != nil {
+		t.Errorf("Expected no error, got: %v", err)
+	}
+	if !bytes.Contains(output.Bytes(), []byte("filtered output")) {
+		t.Errorf("Expected 'filtered output' in stdout, got: %s", output.String())
+	}
+}
+
+func TestRun_MethodFilter(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	RegisterCollector(&mockCollector{
+		name:             "test-collector",
+		supportedLangs:   []string{"test"},
+		collectEndpoints: []collector.ApiEndpoint{{Name: "getUser", Folder: "UserController"}, {Name: "createUser", Folder: "UserController"}},
+	})
+
+	var capturedEndpoints []collector.ApiEndpoint
+	RegisterFormatter(&captureFormatter{
+		name: "capture-formatter",
+		capture: &capturedEndpoints,
+	})
+
+	cfg := Config{
+		SourceDir:     tmpDir,
+		CollectorName: "test-collector",
+		FormatterName: "capture-formatter",
+		MethodFilter:  "getUser",
+	}
+
+	err := Run(cfg)
+	if err != nil {
+		t.Errorf("Expected no error, got: %v", err)
+	}
+	if len(capturedEndpoints) != 1 {
+		t.Fatalf("Expected 1 endpoint after method filter, got %d", len(capturedEndpoints))
+	}
+	if capturedEndpoints[0].Name != "getUser" {
+		t.Errorf("Expected Name=getUser, got %q", capturedEndpoints[0].Name)
+	}
+}
+
+func TestRun_FileAndMethodFilter(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(tmpDir+"/pom.xml", []byte{}, 0644); err != nil {
+		t.Fatalf("Failed to create pom.xml: %v", err)
+	}
+	javaFile := tmpDir + "/UserController.java"
+	if err := os.WriteFile(javaFile, []byte("class UserController {}"), 0644); err != nil {
+		t.Fatalf("Failed to create java file: %v", err)
+	}
+
+	RegisterCollector(&mockCollector{
+		name:           "java",
+		supportedLangs: []string{"java"},
+		collectEndpoints: []collector.ApiEndpoint{
+			{Name: "getUser", Folder: "UserController", Path: "/users/{id}", Method: "GET", Protocol: "http"},
+			{Name: "createUser", Folder: "UserController", Path: "/users", Method: "POST", Protocol: "http"},
+			{Name: "getOrder", Folder: "OrderController", Path: "/orders/{id}", Method: "GET", Protocol: "http"},
+		},
+	})
+
+	var capturedEndpoints []collector.ApiEndpoint
+	RegisterFormatter(&captureFormatter{
+		name:    "capture-formatter",
+		capture: &capturedEndpoints,
+	})
+
+	cfg := Config{
+		SourceDir:     javaFile,
+		CollectorName: "java",
+		FormatterName: "capture-formatter",
+		MethodFilter:  "getUser",
+	}
+
+	err := Run(cfg)
+	if err != nil {
+		t.Errorf("Expected no error, got: %v", err)
+	}
+	if len(capturedEndpoints) != 1 {
+		t.Fatalf("Expected 1 endpoint after file+method filter, got %d", len(capturedEndpoints))
+	}
+	if capturedEndpoints[0].Name != "getUser" {
+		t.Errorf("Expected Name=getUser, got %q", capturedEndpoints[0].Name)
+	}
+	if capturedEndpoints[0].Folder != "UserController" {
+		t.Errorf("Expected Folder=UserController, got %q", capturedEndpoints[0].Folder)
+	}
+}
+
+func TestRun_ProjectRootOverride(t *testing.T) {
+	projectRoot := t.TempDir()
+	moduleDir := projectRoot + "/user-service"
+	subDir := moduleDir + "/src/main/java/com/example"
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("Failed to create subdirectory: %v", err)
+	}
+	if err := os.WriteFile(projectRoot+"/pom.xml", []byte{}, 0644); err != nil {
+		t.Fatalf("Failed to create root pom.xml: %v", err)
+	}
+	if err := os.WriteFile(moduleDir+"/pom.xml", []byte{}, 0644); err != nil {
+		t.Fatalf("Failed to create module pom.xml: %v", err)
+	}
+	javaFile := moduleDir + "/UserController.java"
+	if err := os.WriteFile(javaFile, []byte("class UserController {}"), 0644); err != nil {
+		t.Fatalf("Failed to create java file: %v", err)
+	}
+
+	var capturedEndpoints []collector.ApiEndpoint
+	RegisterCollector(&mockCollector{
+		name:           "java",
+		supportedLangs: []string{"java"},
+		collectEndpoints: []collector.ApiEndpoint{
+			{Name: "getUser", Folder: "UserController", Path: "/users/{id}", Method: "GET", Protocol: "http"},
+		},
+	})
+	RegisterFormatter(&captureFormatter{
+		name:    "capture-formatter",
+		capture: &capturedEndpoints,
+	})
+
+	cfg := Config{
+		SourceDir:     javaFile,
+		CollectorName: "java",
+		FormatterName: "capture-formatter",
+		ProjectRoot:   projectRoot,
+	}
+
+	err := Run(cfg)
+	if err != nil {
+		t.Errorf("Expected no error, got: %v", err)
+	}
+	if len(capturedEndpoints) != 1 {
+		t.Fatalf("Expected 1 endpoint, got %d", len(capturedEndpoints))
+	}
+}
+
+func TestRun_ProjectRootOverrideWithDir(t *testing.T) {
+	projectRoot := t.TempDir()
+	if err := os.WriteFile(projectRoot+"/pom.xml", []byte{}, 0644); err != nil {
+		t.Fatalf("Failed to create pom.xml: %v", err)
+	}
+
+	subDir := projectRoot + "/subdir"
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("Failed to create subdirectory: %v", err)
+	}
+
+	var capturedEndpoints []collector.ApiEndpoint
+	RegisterCollector(&mockCollector{
+		name:           "java",
+		supportedLangs: []string{"java"},
+		collectEndpoints: []collector.ApiEndpoint{
+			{Name: "getUser", Folder: "UserController", Path: "/users/{id}", Method: "GET", Protocol: "http"},
+		},
+	})
+	RegisterFormatter(&captureFormatter{
+		name:    "capture-formatter",
+		capture: &capturedEndpoints,
+	})
+
+	cfg := Config{
+		SourceDir:     subDir,
+		CollectorName: "java",
+		FormatterName: "capture-formatter",
+		ProjectRoot:   projectRoot,
+	}
+
+	err := Run(cfg)
+	if err != nil {
+		t.Errorf("Expected no error, got: %v", err)
+	}
+}
+
+type captureFormatter struct {
+	name    string
+	capture *[]collector.ApiEndpoint
+}
+
+func (m *captureFormatter) Name() string { return m.name }
+
+func (m *captureFormatter) Format(endpoints []collector.ApiEndpoint, opts formatter.FormatOptions) ([]byte, error) {
+	*m.capture = endpoints
+	return []byte("ok"), nil
+}
+
 type mockFormatter struct {
 	name         string
 	formatOutput []byte

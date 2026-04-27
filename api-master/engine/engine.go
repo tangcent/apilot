@@ -17,6 +17,9 @@ import (
 
 type Config struct {
 	SourceDir      string
+	SourceFile     string
+	MethodFilter   string
+	ProjectRoot    string
 	CollectorName  string
 	FormatterName  string
 	FormatParams   string
@@ -25,15 +28,52 @@ type Config struct {
 }
 
 func Run(cfg Config) error {
-	c, err := resolveCollector(cfg)
+	sourceDir := cfg.SourceDir
+	var sourceFile string
+
+	info, err := os.Stat(sourceDir)
+	if err != nil {
+		return fmt.Errorf("source path %q: %w", sourceDir, err)
+	}
+
+	if !info.IsDir() {
+		sourceFile, err = filepath.Abs(sourceDir)
+		if err != nil {
+			return fmt.Errorf("resolving source file path: %w", err)
+		}
+		if cfg.ProjectRoot != "" {
+			sourceDir = cfg.ProjectRoot
+		} else {
+			projectRoot, findErr := findProjectRoot(filepath.Dir(sourceFile))
+			if findErr != nil {
+				return fmt.Errorf("could not find project root for %q: %w", sourceDir, findErr)
+			}
+			sourceDir = projectRoot
+		}
+	} else if cfg.ProjectRoot != "" {
+		sourceDir = cfg.ProjectRoot
+	}
+
+	c, err := resolveCollectorWithDir(cfg, sourceDir)
 	if err != nil {
 		return fmt.Errorf("collector: %w", err)
 	}
 
-	ctx := collector.CollectContext{SourceDir: cfg.SourceDir}
+	ctx := collector.CollectContext{
+		SourceDir:  sourceDir,
+		SourceFile: sourceFile,
+	}
 	endpoints, err := c.Collect(ctx)
 	if err != nil {
 		return fmt.Errorf("collection failed: %w", err)
+	}
+
+	if sourceFile != "" {
+		endpoints = filterEndpointsByFile(endpoints, sourceFile)
+	}
+
+	if cfg.MethodFilter != "" {
+		endpoints = filterEndpointsByMethod(endpoints, cfg.MethodFilter)
 	}
 
 	formatterName := cfg.FormatterName
@@ -51,7 +91,7 @@ func Run(cfg Config) error {
 		return checkErr
 	}
 
-	projectName := resolveProjectName(cfg.SourceDir)
+	projectName := resolveProjectName(sourceDir)
 
 	opts := formatter.FormatOptions{
 		Settings:    settings,
@@ -112,23 +152,96 @@ func resolveCollector(cfg Config) (collector.Collector, error) {
 	return LookupCollector(name)
 }
 
-func detectCollector(sourceDir string) (string, error) {
-	indicators := []struct {
-		file      string
-		collector string
-	}{
-		{"pom.xml", "java"},
-		{"build.gradle", "java"},
-		{"build.gradle.kts", "java"},
-		{"go.mod", "go"},
-		{"package.json", "node"},
-		{"requirements.txt", "python"},
-		{"pyproject.toml", "python"},
+func resolveCollectorWithDir(cfg Config, sourceDir string) (collector.Collector, error) {
+	name := cfg.CollectorName
+	if name == "" {
+		detected, err := detectCollector(sourceDir)
+		if err != nil {
+			return nil, fmt.Errorf("auto-detect failed: %w", err)
+		}
+		name = detected
 	}
-	for _, ind := range indicators {
-		if _, err := os.Stat(sourceDir + "/" + ind.file); err == nil {
-			if _, ok := collectors[ind.collector]; ok {
-				return ind.collector, nil
+	return LookupCollector(name)
+}
+
+var projectRootIndicators = []string{
+	"pom.xml",
+	"build.gradle",
+	"build.gradle.kts",
+	"go.mod",
+	"package.json",
+	"requirements.txt",
+	"pyproject.toml",
+}
+
+func findProjectRoot(dir string) (string, error) {
+	var lastFound string
+	for {
+		for _, indicator := range projectRootIndicators {
+			if _, err := os.Stat(filepath.Join(dir, indicator)); err == nil {
+				lastFound = dir
+				break
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	if lastFound == "" {
+		return "", fmt.Errorf("no project root indicator found")
+	}
+	return lastFound, nil
+}
+
+func filterEndpointsByFile(endpoints []collector.ApiEndpoint, sourceFile string) []collector.ApiEndpoint {
+	absFile, err := filepath.Abs(sourceFile)
+	if err != nil {
+		absFile = sourceFile
+	}
+	baseName := filepath.Base(absFile)
+	className := strings.TrimSuffix(baseName, filepath.Ext(baseName))
+
+	var filtered []collector.ApiEndpoint
+	for _, ep := range endpoints {
+		if ep.Folder == className {
+			filtered = append(filtered, ep)
+		}
+	}
+	return filtered
+}
+
+func filterEndpointsByMethod(endpoints []collector.ApiEndpoint, method string) []collector.ApiEndpoint {
+	var filtered []collector.ApiEndpoint
+	for _, ep := range endpoints {
+		if ep.Name == method {
+			filtered = append(filtered, ep)
+		}
+	}
+	return filtered
+}
+
+type collectorIndicator struct {
+	file      string
+	collector string
+}
+
+var collectorIndicators = []collectorIndicator{
+	{"pom.xml", "java"},
+	{"build.gradle", "java"},
+	{"build.gradle.kts", "java"},
+	{"go.mod", "go"},
+	{"package.json", "node"},
+	{"requirements.txt", "python"},
+	{"pyproject.toml", "python"},
+}
+
+func detectCollector(sourceDir string) (string, error) {
+	for _, ci := range collectorIndicators {
+		if _, err := os.Stat(filepath.Join(sourceDir, ci.file)); err == nil {
+			if _, ok := collectors[ci.collector]; ok {
+				return ci.collector, nil
 			}
 		}
 	}
@@ -302,6 +415,8 @@ func handleExport(args []string) {
 		formatParams   string
 		outputPath     string
 		pluginRegistry string
+		methodFilter   string
+		projectRoot    string
 		listCollectors bool
 		listFormatters bool
 		showHelp       bool
@@ -314,6 +429,8 @@ func handleExport(args []string) {
 	fs.StringVar(&formatParams, "params", "", "formatter params as JSON (e.g. '{\"variant\":\"detailed\"}')")
 	fs.StringVar(&outputPath, "output", "", "output file path (default: stdout)")
 	fs.StringVar(&pluginRegistry, "plugin-registry", "", "path to plugins.json")
+	fs.StringVar(&methodFilter, "method", "", "filter to a specific method name (used with file-level export)")
+	fs.StringVar(&projectRoot, "project-root", "", "override auto-detected project root directory")
 	fs.BoolVar(&listCollectors, "list-collectors", false, "print registered collectors and exit")
 	fs.BoolVar(&listFormatters, "list-formatters", false, "print registered formatters and exit")
 	fs.BoolVar(&showHelp, "help", false, "print help and exit")
@@ -373,6 +490,8 @@ func handleExport(args []string) {
 		FormatParams:   formatParams,
 		OutputPath:     outputPath,
 		PluginRegistry: pluginRegistry,
+		MethodFilter:   methodFilter,
+		ProjectRoot:    projectRoot,
 	}
 
 	if err := Run(cfg); err != nil {
@@ -413,6 +532,11 @@ func printHelp() {
 func printExportHelp() {
 	fmt.Println("Usage: apilot <source-path> [flags]")
 	fmt.Println("")
+	fmt.Println("  source-path can be a directory or a single source file.")
+	fmt.Println("  When a file is given, the project root is auto-detected by walking up")
+	fmt.Println("  to find pom.xml, build.gradle, go.mod, package.json, etc.")
+	fmt.Println("  For multi-module projects, the topmost directory with an indicator is used.")
+	fmt.Println("")
 	fmt.Println("Flags:")
 	fmt.Println("  --collector string")
 	fmt.Println("        collector name (auto-detect if omitted)")
@@ -420,6 +544,10 @@ func printExportHelp() {
 	fmt.Println("        formatter name (default: markdown)")
 	fmt.Println("  --format string")
 	fmt.Println("        format variant, e.g. simple, detailed (default: simple)")
+	fmt.Println("  --method string")
+	fmt.Println("        filter to a specific method name (used with file-level export)")
+	fmt.Println("  --project-root string")
+	fmt.Println("        override auto-detected project root directory")
 	fmt.Println("  --params string")
 	fmt.Println("        formatter params as JSON (e.g. '{\"variant\":\"detailed\"}')")
 	fmt.Println("  --output string")

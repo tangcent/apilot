@@ -1,6 +1,6 @@
 ---
 name: apilot
-version: 0.4.0
+version: 0.5.0
 description: "Navigate your APIs. Automatically scans source code (Java/Spring, Go/Gin, Node.js/Express, Python/FastAPI) and exports API endpoints to Postman collections, Markdown docs, or cURL commands. Use when the user needs to extract APIs from code, generate API documentation, create Postman collections, or export API endpoints from a codebase."
 metadata:
   requires:
@@ -34,10 +34,14 @@ apilot export ./my-service --formatter curl
 
 Scan source code and export API endpoints.
 
+`source-path` can be a **directory** or a **single source file**. When a file is given, the project root is auto-detected by walking up to find `pom.xml`, `build.gradle`, `go.mod`, `package.json`, etc. For multi-module projects, the topmost directory with an indicator is used as the project root.
+
 **Flags:**
 - `--collector <name>` — Collector to use (auto-detected if omitted)
 - `--formatter <name>` — Output format: `markdown`, `curl`, `postman` (default: `markdown`)
 - `--format <variant>` — Format variant: `simple`, `detailed` (default: `simple`)
+- `--method <name>` — Filter to a specific method name (used with file-level export)
+- `--project-root <path>` — Override auto-detected project root directory
 - `--params <json>` — Formatter-specific params as JSON
 - `--output <path>` — Output file path (default: stdout)
 
@@ -340,6 +344,34 @@ apilot export ./my-api --formatter curl > api-reference.sh
 apilot export ./mixed-project --collector java --formatter postman --params '{"mode":"api"}'
 ```
 
+### Export APIs from a specific file
+
+```bash
+# Export all APIs from a single Java controller
+apilot export UserController.java --formatter postman --output user-api.json
+
+# Export all APIs from a specific file in a Go project
+apilot export handlers/user.go --formatter markdown
+```
+
+### Export a specific method from a file
+
+```bash
+# Export only the getUser API from UserController
+apilot export UserController.java --method getUser --formatter curl
+
+# Export a specific endpoint as Postman collection
+apilot export OrderController.java --method createOrder --formatter postman
+```
+
+### Three levels of granularity
+
+| Command | Scope |
+|---------|-------|
+| `apilot export ./project` | All APIs in project |
+| `apilot export UserController.java` | All APIs in that file |
+| `apilot export UserController.java --method getUser` | One specific API |
+
 ### Manage collection bindings
 
 ```bash
@@ -359,6 +391,9 @@ apilot collections remove old-project
 - Project-to-collection bindings (including workspace) are stored automatically per-project — no need to manually configure collection UIDs or workspace IDs
 - The project name is auto-inferred from the source directory basename
 - Output to stdout by default — redirect or use `--output` to save to file
+- When pointing at a single file, the project root is auto-detected by walking up to find build files (pom.xml, build.gradle, go.mod, etc.)
+- For multi-module projects, auto-detection walks to the topmost directory with an indicator — use `--project-root` to override
+- Use `--method` with a file path to export a single API endpoint — great for quick lookups
 
 ## Plugin System
 
