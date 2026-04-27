@@ -142,13 +142,20 @@ After making code changes, just re-run `./scripts/install-local.sh` to rebuild a
 ```
 apilot export <source-path> [flags]
 
+  source-path can be a directory or a single source file.
+  When a file is given, the project root is auto-detected by walking up
+  to find pom.xml, build.gradle, go.mod, package.json, etc.
+  For multi-module projects, the topmost directory with an indicator is used.
+
 Flags:
-  --collector   string   Collector name (auto-detected if omitted)
-  --formatter   string   Output format: markdown, curl, postman (default: markdown)
-  --format      string   Format variant, e.g. simple, detailed (default: simple)
-  --output      string   Output file path (default: stdout)
-  --list-collectors      Print available collectors and exit
-  --list-formatters      Print available formatters and exit
+  --collector      string   Collector name (auto-detected if omitted)
+  --formatter      string   Output format: markdown, curl, postman (default: markdown)
+  --format         string   Format variant, e.g. simple, detailed (default: simple)
+  --method         string   Filter to a specific method name (used with file-level export)
+  --project-root   string   Override auto-detected project root directory
+  --output         string   Output file path (default: stdout)
+  --list-collectors         Print available collectors and exit
+  --list-formatters         Print available formatters and exit
 ```
 
 ### Examples
@@ -162,7 +169,24 @@ apilot export ./backend --formatter markdown --format detailed --output API.md
 
 # Quick cURL reference to stdout
 apilot export ./backend --formatter curl
+
+# Export all APIs from a specific file
+apilot export UserController.java --formatter markdown
+
+# Export a single method from a file
+apilot export UserController.java --method getUser --formatter curl
+
+# Multi-module project: override project root
+apilot export user-service/src/.../UserController.java --project-root ./company-platform
 ```
+
+### Three levels of granularity
+
+| Command | Scope |
+|---------|-------|
+| `apilot export ./project` | All APIs in project |
+| `apilot export UserController.java` | All APIs in that file |
+| `apilot export UserController.java --method getUser` | One specific API |
 
 ---
 

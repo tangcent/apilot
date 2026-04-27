@@ -43,9 +43,23 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 	}
 	defer p.Close()
 
-	results, err := p.ParseDirectory(ctx.SourceDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse directory %s: %w", ctx.SourceDir, err)
+	var results []parser.ParseResult
+	if ctx.SourceFile != "" {
+		r, parseErr := p.ParseFile(ctx.SourceFile)
+		if parseErr != nil {
+			return nil, fmt.Errorf("failed to parse file %s: %w", ctx.SourceFile, parseErr)
+		}
+		results = []parser.ParseResult{*r}
+
+		resolverResults, resolverErr := p.ParseDirectory(ctx.SourceDir)
+		if resolverErr == nil {
+			results = append(results, resolverResults...)
+		}
+	} else {
+		results, err = p.ParseDirectory(ctx.SourceDir)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse directory %s: %w", ctx.SourceDir, err)
+		}
 	}
 
 	frameworks := resolveFrameworks(ctx)

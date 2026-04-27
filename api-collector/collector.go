@@ -19,6 +19,12 @@ type CollectContext struct {
 	// SourceDir is the absolute path to the root of the source tree to parse.
 	SourceDir string `json:"sourceDir"`
 
+	// SourceFile is the absolute path to a specific source file when file-level
+	// export is requested. When empty, all files under SourceDir are scanned.
+	// Collectors may use this to optimize parsing (e.g. only parse one file)
+	// or ignore it and rely on post-collection filtering by the engine.
+	SourceFile string `json:"sourceFile,omitempty"`
+
 	// Frameworks is an optional list of framework hints (e.g. ["spring-mvc", "feign"]).
 	Frameworks []string `json:"frameworks,omitempty"`
 
