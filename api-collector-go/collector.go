@@ -41,9 +41,16 @@ func (c *GoCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEndp
 		framework string
 	}
 
+	var depResolver collector.DependencyResolver
+	if c.dependencyResolver != nil {
+		depResolver = c.dependencyResolver
+	} else {
+		depResolver = NewGoDependencyResolver(ctx.SourceDir)
+	}
+
 	parsers := []struct {
-		name    string
-		parse   func(string) ([]collector.ApiEndpoint, error)
+		name  string
+		parse func(string, ...collector.DependencyResolver) ([]collector.ApiEndpoint, error)
 	}{
 		{"gin", gin.Parse},
 		{"echo", echo.Parse},
@@ -55,9 +62,9 @@ func (c *GoCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEndp
 
 	for _, p := range parsers {
 		wg.Add(1)
-		go func(name string, fn func(string) ([]collector.ApiEndpoint, error)) {
+		go func(name string, fn func(string, ...collector.DependencyResolver) ([]collector.ApiEndpoint, error)) {
 			defer wg.Done()
-			endpoints, err := fn(ctx.SourceDir)
+			endpoints, err := fn(ctx.SourceDir, depResolver)
 			ch <- parseResult{endpoints: endpoints, err: err, framework: name}
 		}(p.name, p.parse)
 	}

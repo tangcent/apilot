@@ -196,6 +196,7 @@ type TypeResolver struct {
 	structRegistry    map[string]StructDef
 	resolving         map[string]bool
 	dependencyResolver collector.DependencyResolver
+	importMaps        map[string]string
 }
 
 // NewTypeResolver creates a new TypeResolver with the given struct definitions.
@@ -208,6 +209,10 @@ func NewTypeResolver(structs map[string]StructDef) *TypeResolver {
 
 func (r *TypeResolver) SetDependencyResolver(dr collector.DependencyResolver) {
 	r.dependencyResolver = dr
+}
+
+func (r *TypeResolver) SetImportMaps(importMaps map[string]string) {
+	r.importMaps = importMaps
 }
 
 var goPrimitives = map[string]string{
@@ -263,6 +268,20 @@ func (r *TypeResolver) Resolve(typeName string) *model.ObjectModel {
 
 	structDef, found := r.structRegistry[typeName]
 	if !found {
+		// Try to resolve package-qualified types using import maps
+		if r.importMaps != nil && strings.Contains(typeName, ".") {
+			parts := strings.SplitN(typeName, ".", 2)
+			if pkg, ok := r.importMaps[parts[0]]; ok {
+				fullTypeName := pkg + "." + parts[1]
+				if r.dependencyResolver != nil {
+					if rt := r.dependencyResolver.ResolveType(fullTypeName); rt != nil {
+						sd := resolvedTypeToStructDef(rt)
+						r.structRegistry[typeName] = sd
+						return r.Resolve(typeName)
+					}
+				}
+			}
+		}
 		if r.dependencyResolver != nil {
 			if rt := r.dependencyResolver.ResolveType(typeName); rt != nil {
 				sd := resolvedTypeToStructDef(rt)
