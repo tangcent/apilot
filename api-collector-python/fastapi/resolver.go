@@ -1,10 +1,14 @@
 package fastapi
 
 import (
+	"fmt"
+	"os"
 	"strings"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
+	python "github.com/tree-sitter/tree-sitter-python/bindings/go"
 
+	collector "github.com/tangcent/apilot/api-collector"
 	model "github.com/tangcent/apilot/api-model"
 )
 
@@ -79,6 +83,30 @@ func ExtractPydanticModels(rootNode *tree_sitter.Node, source []byte) map[string
 	}
 
 	return models
+}
+
+func ExtractPydanticModelsFromFile(filePath string) (map[string]PydanticModel, error) {
+	source, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
+
+	p := tree_sitter.NewParser()
+	defer p.Close()
+
+	lang := tree_sitter.NewLanguage(python.Language())
+	if err := p.SetLanguage(lang); err != nil {
+		return nil, fmt.Errorf("failed to set language: %w", err)
+	}
+
+	tree := p.Parse(source, nil)
+	if tree == nil {
+		return nil, nil
+	}
+	defer tree.Close()
+
+	rootNode := tree.RootNode()
+	return ExtractPydanticModels(rootNode, source), nil
 }
 
 type classInfo struct {
@@ -317,8 +345,9 @@ func extractFieldTypeInfoFromArgs(argList *tree_sitter.Node, source []byte, call
 }
 
 type PythonTypeResolver struct {
-	modelRegistry map[string]PydanticModel
-	resolving     map[string]bool
+	modelRegistry     map[string]PydanticModel
+	resolving         map[string]bool
+	dependencyResolver collector.DependencyResolver
 }
 
 func NewPythonTypeResolver(models map[string]PydanticModel) *PythonTypeResolver {
@@ -326,6 +355,10 @@ func NewPythonTypeResolver(models map[string]PydanticModel) *PythonTypeResolver 
 		modelRegistry: models,
 		resolving:     make(map[string]bool),
 	}
+}
+
+func (r *PythonTypeResolver) SetDependencyResolver(dr collector.DependencyResolver) {
+	r.dependencyResolver = dr
 }
 
 func (r *PythonTypeResolver) Resolve(typeText string) *model.ObjectModel {
@@ -447,7 +480,32 @@ func (r *PythonTypeResolver) Resolve(typeText string) *model.ObjectModel {
 		}
 	}
 
+	if r.dependencyResolver != nil {
+		if rt := r.dependencyResolver.ResolveType(baseName); rt != nil {
+			md := resolvedTypeToPydanticModel(rt)
+			r.modelRegistry[baseName] = md
+			return r.Resolve(typeText)
+		}
+	}
+
 	return model.SingleModel(typeText)
+}
+
+func resolvedTypeToPydanticModel(rt *collector.ResolvedType) PydanticModel {
+	md := PydanticModel{
+		Name: rt.Name,
+	}
+	for _, f := range rt.Fields {
+		md.Fields = append(md.Fields, PydanticField{
+			Name:     f.Name,
+			Type:     f.Type,
+			Required: f.Required,
+		})
+	}
+	for _, iface := range rt.Interfaces {
+		md.EmbeddedTypes = append(md.EmbeddedTypes, iface)
+	}
+	return md
 }
 
 func (r *PythonTypeResolver) resolveFieldModel(f PydanticField) *model.FieldModel {

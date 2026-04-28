@@ -5,12 +5,14 @@ import (
 	"path"
 	"strings"
 
+	collector "github.com/tangcent/apilot/api-collector"
 	"github.com/tangcent/apilot/api-collector-java/parser"
 	"github.com/tangcent/apilot/api-collector-java/resolver"
 )
 
 type Parser struct {
 	dependencyResolver resolver.DependencyResolver
+	collectorDepResolver collector.DependencyResolver
 }
 
 // NewParser creates a new JAX-RS parser.
@@ -22,12 +24,18 @@ func (p *Parser) SetDependencyResolver(dr resolver.DependencyResolver) {
 	p.dependencyResolver = dr
 }
 
+func (p *Parser) SetCollectorDependencyResolver(cdr collector.DependencyResolver) {
+	p.collectorDepResolver = cdr
+}
+
 // ExtractResources extracts JAX-RS resources from parse results.
 func (p *Parser) ExtractResources(results []parser.ParseResult) []Resource {
 	classRegistry := buildClassRegistry(results)
 	typeResolver := resolver.NewTypeResolver(flattenClasses(results))
 	if p.dependencyResolver != nil {
 		typeResolver.SetDependencyResolver(p.dependencyResolver)
+	} else if p.collectorDepResolver != nil {
+		typeResolver.SetCollectorDependencyResolver(p.collectorDepResolver)
 	}
 
 	var resources []Resource

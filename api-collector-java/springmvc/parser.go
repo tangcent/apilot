@@ -4,12 +4,14 @@ import (
 	"path"
 	"strings"
 
+	collector "github.com/tangcent/apilot/api-collector"
 	"github.com/tangcent/apilot/api-collector-java/parser"
 	"github.com/tangcent/apilot/api-collector-java/resolver"
 )
 
 type Parser struct {
 	dependencyResolver resolver.DependencyResolver
+	collectorDepResolver collector.DependencyResolver
 }
 
 func NewParser() *Parser {
@@ -20,11 +22,17 @@ func (p *Parser) SetDependencyResolver(dr resolver.DependencyResolver) {
 	p.dependencyResolver = dr
 }
 
+func (p *Parser) SetCollectorDependencyResolver(cdr collector.DependencyResolver) {
+	p.collectorDepResolver = cdr
+}
+
 func (p *Parser) ExtractControllers(results []parser.ParseResult) []Controller {
 	classRegistry := buildClassRegistry(results)
 	typeResolver := resolver.NewTypeResolver(flattenClasses(results))
 	if p.dependencyResolver != nil {
 		typeResolver.SetDependencyResolver(p.dependencyResolver)
+	} else if p.collectorDepResolver != nil {
+		typeResolver.SetCollectorDependencyResolver(p.collectorDepResolver)
 	}
 
 	var controllers []Controller

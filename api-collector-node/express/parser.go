@@ -89,6 +89,231 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 	return allEndpoints, nil
 }
 
+func ParseWithDependencyResolver(sourceDir string, depResolver collector.DependencyResolver) ([]collector.ApiEndpoint, error) {
+	allFiles, err := discoverSourceFiles(sourceDir)
+	if err != nil || len(allFiles) == 0 {
+		return nil, nil
+	}
+
+	var tsFiles []string
+	var jsFiles []string
+	for _, f := range allFiles {
+		if strings.HasSuffix(f, ".ts") || strings.HasSuffix(f, ".tsx") {
+			tsFiles = append(tsFiles, f)
+		} else {
+			jsFiles = append(jsFiles, f)
+		}
+	}
+
+	typeRegistry := NewTSTypeRegistry()
+	if len(tsFiles) > 0 {
+		reg, err := ParseTSTypes(sourceDir)
+		if err == nil && reg != nil {
+			typeRegistry = reg
+		}
+	}
+
+	ctx := &parseContext{
+		typeRegistry:    typeRegistry,
+		dependencyResolver: depResolver,
+	}
+
+	ch := make(chan fileResult, len(allFiles))
+	var wg sync.WaitGroup
+
+	for _, path := range jsFiles {
+		wg.Add(1)
+		go func(filePath string) {
+			defer wg.Done()
+			res := ctx.processJSFile(filePath)
+			ch <- res
+		}(path)
+	}
+
+	for _, path := range tsFiles {
+		wg.Add(1)
+		go func(filePath string) {
+			defer wg.Done()
+			res := ctx.processTSFile(filePath)
+			ch <- res
+		}(path)
+	}
+
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
+	var allEndpoints []collector.ApiEndpoint
+	for res := range ch {
+		if res.err != nil {
+			continue
+		}
+		allEndpoints = append(allEndpoints, res.endpoints...)
+	}
+
+	if len(allEndpoints) == 0 {
+		return nil, nil
+	}
+
+	return allEndpoints, nil
+}
+
+type parseContext struct {
+	typeRegistry       *TSTypeRegistry
+	dependencyResolver collector.DependencyResolver
+}
+
+func (ctx *parseContext) processJSFile(filePath string) fileResult {
+	source, err := os.ReadFile(filePath)
+	if err != nil {
+		return fileResult{err: fmt.Errorf("failed to read file: %w", err)}
+	}
+
+	p := tree_sitter.NewParser()
+	defer p.Close()
+
+	lang := tree_sitter.NewLanguage(javascript.Language())
+	if err := p.SetLanguage(lang); err != nil {
+		return fileResult{err: fmt.Errorf("failed to set language: %w", err)}
+	}
+
+	tree := p.Parse(source, nil)
+	if tree == nil {
+		return fileResult{}
+	}
+	defer tree.Close()
+
+	rootNode := tree.RootNode()
+	endpoints := ctx.extractEndpoints(rootNode, source)
+
+	return fileResult{endpoints: endpoints}
+}
+
+func (ctx *parseContext) processTSFile(filePath string) fileResult {
+	source, err := os.ReadFile(filePath)
+	if err != nil {
+		return fileResult{err: fmt.Errorf("failed to read file: %w", err)}
+	}
+
+	p := tree_sitter.NewParser()
+	defer p.Close()
+
+	lang := tree_sitter.NewLanguage(typescript.LanguageTypescript())
+	if err := p.SetLanguage(lang); err != nil {
+		return fileResult{err: fmt.Errorf("failed to set language: %w", err)}
+	}
+
+	tree := p.Parse(source, nil)
+	if tree == nil {
+		return fileResult{}
+	}
+	defer tree.Close()
+
+	rootNode := tree.RootNode()
+	endpoints := ctx.extractEndpoints(rootNode, source)
+
+	return fileResult{endpoints: endpoints}
+}
+
+func (ctx *parseContext) extractEndpoints(rootNode *tree_sitter.Node, source []byte) []collector.ApiEndpoint {
+	var endpoints []collector.ApiEndpoint
+	var lastComment string
+
+	for i := uint(0); i < rootNode.ChildCount(); i++ {
+		child := rootNode.Child(i)
+
+		if child.Kind() == "comment" {
+			commentText := child.Utf8Text(source)
+			if isJSDocComment(commentText) {
+				lastComment = cleanJSDocComment(commentText)
+			} else {
+				lastComment = ""
+			}
+			continue
+		}
+
+		if child.Kind() == "expression_statement" {
+			ep := ctx.extractFromExpressionStatement(child, source, lastComment)
+			if ep != nil {
+				endpoints = append(endpoints, *ep)
+			}
+			lastComment = ""
+		} else {
+			lastComment = ""
+		}
+	}
+
+	return endpoints
+}
+
+func (ctx *parseContext) extractFromExpressionStatement(node *tree_sitter.Node, source []byte, description string) *collector.ApiEndpoint {
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "call_expression" {
+			return ctx.extractFromCallExpression(child, source, description)
+		}
+	}
+	return nil
+}
+
+func (ctx *parseContext) extractFromCallExpression(callNode *tree_sitter.Node, source []byte, description string) *collector.ApiEndpoint {
+	method, isRoute := extractMethodInfo(callNode, source)
+	if !isRoute {
+		return nil
+	}
+
+	path, handlerName := extractCallArguments(callNode, source)
+	if path == "" {
+		return nil
+	}
+
+	standardPath := convertExpressPath(path)
+
+	ep := &collector.ApiEndpoint{
+		Name:        handlerName,
+		Path:        standardPath,
+		Method:      strings.ToUpper(method),
+		Protocol:    "http",
+		Description: description,
+	}
+
+	pathParams := extractPathParams(standardPath)
+	if len(pathParams) > 0 {
+		var params []collector.ApiParameter
+		for _, p := range pathParams {
+			params = append(params, collector.ApiParameter{
+				Name:     p.name,
+				In:       "path",
+				Required: true,
+				Type:     "text",
+			})
+		}
+		ep.Parameters = params
+	}
+
+	if ctx.typeRegistry != nil {
+		handlerInfo := AnalyzeExpressHandler(callNode, source)
+		if handlerInfo != nil {
+			reqBody, resBody := ResolveHandlerTypesWithDepResolver(handlerInfo, ctx.typeRegistry, ctx.dependencyResolver)
+			if reqBody != nil && !reqBody.IsNull() {
+				ep.RequestBody = &collector.ApiBody{
+					MediaType: "application/json",
+					Body:      reqBody,
+				}
+			}
+			if resBody != nil && !resBody.IsNull() {
+				ep.Response = &collector.ApiBody{
+					MediaType: "application/json",
+					Body:      resBody,
+				}
+			}
+		}
+	}
+
+	return ep
+}
+
 type fileResult struct {
 	endpoints []collector.ApiEndpoint
 	err       error

@@ -13,14 +13,19 @@ import (
 )
 
 // PythonCollector parses Python source trees for API route definitions.
-type PythonCollector struct{}
+type PythonCollector struct {
+	dependencyResolver collector.DependencyResolver
+}
 
-// New returns a new PythonCollector.
 func New() collector.Collector { return &PythonCollector{} }
 
 func (c *PythonCollector) Name() string { return "python" }
 
 func (c *PythonCollector) SupportedLanguages() []string { return []string{"python"} }
+
+func (c *PythonCollector) SetDependencyResolver(dr collector.DependencyResolver) {
+	c.dependencyResolver = dr
+}
 
 // Collect walks the source directory and extracts endpoints from FastAPI, Django REST, and Flask sources.
 // Each framework parser is invoked concurrently. Results are merged into a

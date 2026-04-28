@@ -13,14 +13,19 @@ import (
 )
 
 // NodeCollector parses TypeScript/JavaScript source trees for API route definitions.
-type NodeCollector struct{}
+type NodeCollector struct {
+	dependencyResolver collector.DependencyResolver
+}
 
-// New returns a new NodeCollector.
 func New() collector.Collector { return &NodeCollector{} }
 
 func (c *NodeCollector) Name() string { return "node" }
 
 func (c *NodeCollector) SupportedLanguages() []string { return []string{"typescript", "javascript"} }
+
+func (c *NodeCollector) SetDependencyResolver(dr collector.DependencyResolver) {
+	c.dependencyResolver = dr
+}
 
 // Collect walks the source directory and extracts endpoints from Express, Fastify, and NestJS sources.
 // Each framework parser is invoked concurrently. Results are merged into a
@@ -37,7 +42,12 @@ func (c *NodeCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 		name  string
 		parse func(string) ([]collector.ApiEndpoint, error)
 	}{
-		{"express", express.Parse},
+		{"express", func(dir string) ([]collector.ApiEndpoint, error) {
+			if c.dependencyResolver != nil {
+				return express.ParseWithDependencyResolver(dir, c.dependencyResolver)
+			}
+			return express.Parse(dir)
+		}},
 		{"fastify", fastify.Parse},
 		{"nestjs", nestjs.Parse},
 	}

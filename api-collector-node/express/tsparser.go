@@ -24,7 +24,7 @@ func ParseTSTypes(sourceDir string) (*TSTypeRegistry, error) {
 		wg.Add(1)
 		go func(filePath string) {
 			defer wg.Done()
-			registry, err := extractTypesFromFile(filePath)
+			registry, err := ExtractTypesFromFile(filePath)
 			if err != nil {
 				ch <- NewTSTypeRegistry()
 				return
@@ -63,7 +63,7 @@ func discoverTSFiles(sourceDir string) ([]string, error) {
 	return tsFiles, nil
 }
 
-func extractTypesFromFile(filePath string) (*TSTypeRegistry, error) {
+func ExtractTypesFromFile(filePath string) (*TSTypeRegistry, error) {
 	source, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)

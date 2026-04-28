@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"testing"
 
+	collector "github.com/tangcent/apilot/api-collector"
 	model "github.com/tangcent/apilot/api-model"
 )
 
@@ -259,4 +260,75 @@ func TestResolve_CircularReference(t *testing.T) {
 	if !nextField.Model.IsRef() {
 		t.Errorf("Expected ref model for circular reference, got kind=%s", nextField.Model.Kind)
 	}
+}
+
+type mockGoDepResolver struct {
+	types map[string]*collector.ResolvedType
+}
+
+func (m *mockGoDepResolver) DetectDependencies(sourceDir string) ([]collector.Dependency, error) {
+	return nil, nil
+}
+
+func (m *mockGoDepResolver) ResolveType(typeName string) *collector.ResolvedType {
+	if rt, ok := m.types[typeName]; ok {
+		return rt
+	}
+	return nil
+}
+
+func TestResolve_DependencyResolverFallback(t *testing.T) {
+	localStructs := map[string]StructDef{
+		"LocalDTO": {
+			Name: "LocalDTO",
+			Fields: []StructField{
+				{Name: "ID", Type: "int64", JsonTag: "id"},
+			},
+		},
+	}
+
+	depResolver := &mockGoDepResolver{
+		types: map[string]*collector.ResolvedType{
+			"ExternalDTO": {
+				Name: "ExternalDTO",
+				Fields: []collector.ResolvedField{
+					{Name: "code", Type: "string", Required: true},
+					{Name: "value", Type: "int", Required: false},
+				},
+			},
+		},
+	}
+
+	r := NewTypeResolver(localStructs)
+	r.SetDependencyResolver(depResolver)
+
+	t.Run("local struct resolved normally", func(t *testing.T) {
+		result := r.Resolve("LocalDTO")
+		if !result.IsObject() {
+			t.Fatalf("Expected object, got %s", result.Kind)
+		}
+		if result.TypeName != "LocalDTO" {
+			t.Errorf("Expected typeName 'LocalDTO', got '%s'", result.TypeName)
+		}
+	})
+
+	t.Run("external struct resolved via dependency resolver", func(t *testing.T) {
+		result := r.Resolve("ExternalDTO")
+		if !result.IsObject() {
+			t.Fatalf("Expected object, got %s", result.Kind)
+		}
+		if result.TypeName != "ExternalDTO" {
+			t.Errorf("Expected typeName 'ExternalDTO', got '%s'", result.TypeName)
+		}
+		if len(result.Fields) != 2 {
+			t.Fatalf("Expected 2 fields, got %d", len(result.Fields))
+		}
+	})
+
+	t.Run("unknown type still returns single", func(t *testing.T) {
+		result := r.Resolve("CompletelyUnknown")
+		if !result.IsSingle() {
+			t.Errorf("Expected single for unknown type, got %s", result.Kind)
+		}
+	})
 }

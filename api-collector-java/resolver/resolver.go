@@ -3,6 +3,7 @@ package resolver
 import (
 	"strings"
 
+	collector "github.com/tangcent/apilot/api-collector"
 	"github.com/tangcent/apilot/api-collector-java/parser"
 	model "github.com/tangcent/apilot/api-model"
 )
@@ -68,6 +69,47 @@ func NewTypeResolver(classes []parser.Class) *TypeResolver {
 
 func (r *TypeResolver) SetDependencyResolver(dr DependencyResolver) {
 	r.dependencyResolver = dr
+}
+
+func (r *TypeResolver) SetCollectorDependencyResolver(cdr collector.DependencyResolver) {
+	r.dependencyResolver = &collectorDependencyAdapter{resolver: cdr}
+}
+
+type collectorDependencyAdapter struct {
+	resolver collector.DependencyResolver
+}
+
+func (a *collectorDependencyAdapter) ResolveClass(className string) *parser.Class {
+	rt := a.resolver.ResolveType(className)
+	if rt == nil {
+		return nil
+	}
+	return resolvedTypeToClass(rt)
+}
+
+func resolvedTypeToClass(rt *collector.ResolvedType) *parser.Class {
+	class := &parser.Class{
+		Name:               rt.Name,
+		TypeParameters:     rt.TypeParameters,
+		SuperClass:         rt.SuperClass,
+		SuperClassTypeArgs: rt.SuperClassTypeArgs,
+		IsInterface:        rt.IsInterface,
+		Interfaces:         rt.Interfaces,
+	}
+
+	for _, f := range rt.Fields {
+		var annotations []parser.Annotation
+		if !f.Required {
+			annotations = append(annotations, parser.Annotation{Name: "Nullable"})
+		}
+		class.Fields = append(class.Fields, parser.Field{
+			Name:        f.Name,
+			Type:        f.Type,
+			Annotations: annotations,
+		})
+	}
+
+	return class
 }
 
 func (r *TypeResolver) Resolve(rawType string, typeBindings map[string]string) *model.ObjectModel {
