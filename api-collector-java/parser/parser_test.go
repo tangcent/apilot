@@ -255,3 +255,67 @@ func TestParser_ConcurrentAccess(t *testing.T) {
 		}
 	}
 }
+
+func TestParser_ParseSource(t *testing.T) {
+	p, err := NewParser(ParserOptions{LogLevel: LogLevelError})
+	if err != nil {
+		t.Fatalf("Failed to create parser: %v", err)
+	}
+	defer p.Close()
+
+	t.Run("parses simple class", func(t *testing.T) {
+		source := []byte(`package com.example;
+
+public class User {
+    private Long id;
+    private String name;
+}`)
+		classes, err := p.ParseSource(source)
+		if err != nil {
+			t.Fatalf("Failed to parse source: %v", err)
+		}
+		if len(classes) != 1 {
+			t.Fatalf("Expected 1 class, got %d", len(classes))
+		}
+		if classes[0].Name != "User" {
+			t.Errorf("Expected class name 'User', got '%s'", classes[0].Name)
+		}
+		if classes[0].Package != "com.example" {
+			t.Errorf("Expected package 'com.example', got '%s'", classes[0].Package)
+		}
+		if len(classes[0].Fields) != 2 {
+			t.Fatalf("Expected 2 fields, got %d", len(classes[0].Fields))
+		}
+	})
+
+	t.Run("parses generic class", func(t *testing.T) {
+		source := []byte(`public class Result<T> {
+    private int code;
+    private T data;
+}`)
+		classes, err := p.ParseSource(source)
+		if err != nil {
+			t.Fatalf("Failed to parse source: %v", err)
+		}
+		if len(classes) != 1 {
+			t.Fatalf("Expected 1 class, got %d", len(classes))
+		}
+		if classes[0].Name != "Result" {
+			t.Errorf("Expected class name 'Result', got '%s'", classes[0].Name)
+		}
+		if len(classes[0].TypeParameters) != 1 || classes[0].TypeParameters[0] != "T" {
+			t.Errorf("Expected type parameter 'T', got %v", classes[0].TypeParameters)
+		}
+	})
+
+	t.Run("returns empty classes for empty source", func(t *testing.T) {
+		source := []byte("")
+		classes, err := p.ParseSource(source)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if len(classes) != 0 {
+			t.Errorf("Expected 0 classes for empty source, got %d", len(classes))
+		}
+	})
+}

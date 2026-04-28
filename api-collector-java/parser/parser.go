@@ -92,6 +92,19 @@ func (p *Parser) ParseFile(path string) (*ParseResult, error) {
 	return result, nil
 }
 
+func (p *Parser) ParseSource(source []byte) ([]Class, error) {
+	p.mu.Lock()
+	tree := p.parser.Parse(source, nil)
+	p.mu.Unlock()
+
+	if tree == nil {
+		return nil, fmt.Errorf("failed to parse source")
+	}
+	defer tree.Close()
+
+	return extractAllClasses(tree, source)
+}
+
 // ParseDirectory parses all Java files in a directory sequentially.
 func (p *Parser) ParseDirectory(dir string) ([]ParseResult, error) {
 	p.logger.Info("Parsing directory: %s", dir)

@@ -28,12 +28,21 @@ func (c *JavaCollector) SupportedLanguages() []string { return []string{"java", 
 // When maven-indexer-cli is available and a build file (pom.xml/build.gradle) is present,
 // it attempts to resolve dependency JARs for improved type analysis.
 func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEndpoint, error) {
+	var depResolver *maven.MavenDependencyResolver
 	if maven.HasBuildFile(ctx.SourceDir) && maven.IsAvailable() {
 		jarPaths, err := maven.Resolve(ctx.SourceDir)
 		if err != nil {
 			log.Printf("[maven] dependency resolution skipped: %v", err)
 		} else if len(jarPaths) > 0 {
 			log.Printf("[maven] resolved %d dependency JARs", len(jarPaths))
+		}
+
+		dr, err := maven.NewMavenDependencyResolver()
+		if err != nil {
+			log.Printf("[maven] dependency class resolver unavailable: %v", err)
+		} else {
+			depResolver = dr
+			defer depResolver.Close()
 		}
 	}
 
@@ -67,6 +76,9 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 
 	if frameworks["spring-mvc"] {
 		sm := springmvc.NewParser()
+		if depResolver != nil {
+			sm.SetDependencyResolver(depResolver)
+		}
 		for _, ctrl := range sm.ExtractControllers(results) {
 			for _, ep := range ctrl.Endpoints {
 				endpoints = append(endpoints, springmvcEndpointToAPI(ep, ctrl.Name))
@@ -76,6 +88,9 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 
 	if frameworks["jaxrs"] {
 		jr := jaxrs.NewParser()
+		if depResolver != nil {
+			jr.SetDependencyResolver(depResolver)
+		}
 		for _, res := range jr.ExtractResources(results) {
 			for _, ep := range res.Endpoints {
 				endpoints = append(endpoints, jaxrsEndpointToAPI(ep, res.Name))
@@ -85,6 +100,9 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 
 	if frameworks["feign"] {
 		fg := feign.NewParser()
+		if depResolver != nil {
+			fg.SetDependencyResolver(depResolver)
+		}
 		for _, client := range fg.ExtractClients(results) {
 			for _, ep := range client.Endpoints {
 				endpoints = append(endpoints, feignEndpointToAPI(ep, client.Name))

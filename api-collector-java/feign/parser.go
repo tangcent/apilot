@@ -9,11 +9,17 @@ import (
 )
 
 // Parser extracts Feign client endpoints from parsed Java classes.
-type Parser struct{}
+type Parser struct {
+	dependencyResolver resolver.DependencyResolver
+}
 
 // NewParser creates a new Feign client parser.
 func NewParser() *Parser {
 	return &Parser{}
+}
+
+func (p *Parser) SetDependencyResolver(dr resolver.DependencyResolver) {
+	p.dependencyResolver = dr
 }
 
 // ExtractClients extracts Feign clients from parse results.
@@ -22,6 +28,9 @@ func NewParser() *Parser {
 func (p *Parser) ExtractClients(results []parser.ParseResult) []FeignClient {
 	classRegistry := buildClassRegistry(results)
 	typeResolver := resolver.NewTypeResolver(flattenClasses(results))
+	if p.dependencyResolver != nil {
+		typeResolver.SetDependencyResolver(p.dependencyResolver)
+	}
 
 	var clients []FeignClient
 	for _, result := range results {

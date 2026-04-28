@@ -9,18 +9,26 @@ import (
 	"github.com/tangcent/apilot/api-collector-java/resolver"
 )
 
-// Parser extracts JAX-RS endpoints from parsed Java classes.
-type Parser struct{}
+type Parser struct {
+	dependencyResolver resolver.DependencyResolver
+}
 
 // NewParser creates a new JAX-RS parser.
 func NewParser() *Parser {
 	return &Parser{}
 }
 
+func (p *Parser) SetDependencyResolver(dr resolver.DependencyResolver) {
+	p.dependencyResolver = dr
+}
+
 // ExtractResources extracts JAX-RS resources from parse results.
 func (p *Parser) ExtractResources(results []parser.ParseResult) []Resource {
 	classRegistry := buildClassRegistry(results)
 	typeResolver := resolver.NewTypeResolver(flattenClasses(results))
+	if p.dependencyResolver != nil {
+		typeResolver.SetDependencyResolver(p.dependencyResolver)
+	}
 
 	var resources []Resource
 	for _, result := range results {
