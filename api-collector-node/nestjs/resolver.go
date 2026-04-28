@@ -5,6 +5,7 @@ import (
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 
+	collector "github.com/tangcent/apilot/api-collector"
 	"github.com/tangcent/apilot/api-collector-node/express"
 	model "github.com/tangcent/apilot/api-model"
 )
@@ -190,7 +191,14 @@ func extractApiResponseObject(objNode *tree_sitter.Node, source []byte, resp *Ap
 }
 
 func ResolveNestJSHandlerTypes(handlerInfo *NestJSHandlerInfo, registry *express.TSTypeRegistry) (reqBody *model.ObjectModel, resBody *model.ObjectModel) {
+	return ResolveNestJSHandlerTypesWithDepResolver(handlerInfo, registry, nil)
+}
+
+func ResolveNestJSHandlerTypesWithDepResolver(handlerInfo *NestJSHandlerInfo, registry *express.TSTypeRegistry, depResolver collector.DependencyResolver) (reqBody *model.ObjectModel, resBody *model.ObjectModel) {
 	resolver := express.NewTSTypeResolver(registry)
+	if depResolver != nil {
+		resolver.SetDependencyResolver(depResolver)
+	}
 
 	if handlerInfo.BodyType != "" {
 		bodyType := unwrapPromise(handlerInfo.BodyType)

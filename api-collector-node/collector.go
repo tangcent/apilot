@@ -48,8 +48,18 @@ func (c *NodeCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 			}
 			return express.Parse(dir)
 		}},
-		{"fastify", fastify.Parse},
-		{"nestjs", nestjs.Parse},
+		{"fastify", func(dir string) ([]collector.ApiEndpoint, error) {
+			if c.dependencyResolver != nil {
+				return fastify.ParseWithDependencyResolver(dir, c.dependencyResolver)
+			}
+			return fastify.Parse(dir)
+		}},
+		{"nestjs", func(dir string) ([]collector.ApiEndpoint, error) {
+			if c.dependencyResolver != nil {
+				return nestjs.ParseWithDependencyResolver(dir, c.dependencyResolver)
+			}
+			return nestjs.Parse(dir)
+		}},
 	}
 
 	ch := make(chan parseResult, len(parsers))
