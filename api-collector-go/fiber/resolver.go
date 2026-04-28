@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 
+	collector "github.com/tangcent/apilot/api-collector"
 	model "github.com/tangcent/apilot/api-model"
 )
 
@@ -187,8 +188,9 @@ func inferTypeFromExpr(expr ast.Expr) string {
 }
 
 type TypeResolver struct {
-	structRegistry map[string]StructDef
-	resolving      map[string]bool
+	structRegistry    map[string]StructDef
+	resolving         map[string]bool
+	dependencyResolver collector.DependencyResolver
 }
 
 func NewTypeResolver(structs map[string]StructDef) *TypeResolver {
@@ -196,6 +198,10 @@ func NewTypeResolver(structs map[string]StructDef) *TypeResolver {
 		structRegistry: structs,
 		resolving:      make(map[string]bool),
 	}
+}
+
+func (r *TypeResolver) SetDependencyResolver(dr collector.DependencyResolver) {
+	r.dependencyResolver = dr
 }
 
 var goPrimitives = map[string]string{
@@ -250,6 +256,13 @@ func (r *TypeResolver) Resolve(typeName string) *model.ObjectModel {
 
 	structDef, found := r.structRegistry[typeName]
 	if !found {
+		if r.dependencyResolver != nil {
+			if rt := r.dependencyResolver.ResolveType(typeName); rt != nil {
+				sd := resolvedTypeToStructDef(rt)
+				r.structRegistry[typeName] = sd
+				return r.Resolve(typeName)
+			}
+		}
 		return model.SingleModel(typeName)
 	}
 
@@ -311,6 +324,23 @@ func parseMapType(typeName string) (string, string) {
 		}
 	}
 	return "string", "interface{}"
+}
+
+func resolvedTypeToStructDef(rt *collector.ResolvedType) StructDef {
+	sd := StructDef{
+		Name: rt.Name,
+	}
+	for _, f := range rt.Fields {
+		sf := StructField{
+			Name: f.Name,
+			Type: f.Type,
+		}
+		if !f.Required {
+			sf.BindingTag = ""
+		}
+		sd.Fields = append(sd.Fields, sf)
+	}
+	return sd
 }
 
 func resolveVarType(typeName string, handlerKey string, varTypeMaps map[string]map[string]string) string {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	collector "github.com/tangcent/apilot/api-collector"
 	"github.com/tangcent/apilot/api-collector-java/parser"
 )
 
@@ -114,6 +115,57 @@ func (r *MavenDependencyResolver) fetchSource(className string) (string, error) 
 	}
 
 	return source, nil
+}
+
+func (r *MavenDependencyResolver) DetectDependencies(sourceDir string) ([]collector.Dependency, error) {
+	deps, err := detectDependencies(sourceDir)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []collector.Dependency
+	for _, d := range deps {
+		result = append(result, collector.Dependency{
+			Name:    d.ArtifactID,
+			Version: d.Version,
+		})
+	}
+	return result, nil
+}
+
+func (r *MavenDependencyResolver) ResolveType(typeName string) *collector.ResolvedType {
+	class := r.ResolveClass(typeName)
+	if class == nil {
+		return nil
+	}
+
+	rt := &collector.ResolvedType{
+		Name:               class.Name,
+		TypeParameters:     class.TypeParameters,
+		SuperClass:         class.SuperClass,
+		SuperClassTypeArgs: class.SuperClassTypeArgs,
+		IsInterface:        class.IsInterface,
+		Interfaces:         class.Interfaces,
+	}
+
+	for _, f := range class.Fields {
+		if f.IsStatic || f.IsFinal {
+			continue
+		}
+		required := true
+		for _, ann := range f.Annotations {
+			if ann.Name == "Nullable" || ann.Name == "Null" {
+				required = false
+			}
+		}
+		rt.Fields = append(rt.Fields, collector.ResolvedField{
+			Name:     f.Name,
+			Type:     f.Type,
+			Required: required,
+		})
+	}
+
+	return rt
 }
 
 func extractSourceFromMarkdown(raw string) (string, error) {

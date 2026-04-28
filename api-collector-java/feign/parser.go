@@ -4,6 +4,7 @@ package feign
 import (
 	"strings"
 
+	collector "github.com/tangcent/apilot/api-collector"
 	"github.com/tangcent/apilot/api-collector-java/parser"
 	"github.com/tangcent/apilot/api-collector-java/resolver"
 )
@@ -11,6 +12,7 @@ import (
 // Parser extracts Feign client endpoints from parsed Java classes.
 type Parser struct {
 	dependencyResolver resolver.DependencyResolver
+	collectorDepResolver collector.DependencyResolver
 }
 
 // NewParser creates a new Feign client parser.
@@ -22,6 +24,10 @@ func (p *Parser) SetDependencyResolver(dr resolver.DependencyResolver) {
 	p.dependencyResolver = dr
 }
 
+func (p *Parser) SetCollectorDependencyResolver(cdr collector.DependencyResolver) {
+	p.collectorDepResolver = cdr
+}
+
 // ExtractClients extracts Feign clients from parse results.
 // It supports both Spring Cloud OpenFeign (Spring MVC annotations) and
 // Netflix Feign (@RequestLine annotations).
@@ -30,6 +36,8 @@ func (p *Parser) ExtractClients(results []parser.ParseResult) []FeignClient {
 	typeResolver := resolver.NewTypeResolver(flattenClasses(results))
 	if p.dependencyResolver != nil {
 		typeResolver.SetDependencyResolver(p.dependencyResolver)
+	} else if p.collectorDepResolver != nil {
+		typeResolver.SetCollectorDependencyResolver(p.collectorDepResolver)
 	}
 
 	var clients []FeignClient

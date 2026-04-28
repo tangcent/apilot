@@ -3,6 +3,7 @@ package resolver
 import (
 	"testing"
 
+	collector "github.com/tangcent/apilot/api-collector"
 	"github.com/tangcent/apilot/api-collector-java/parser"
 	model "github.com/tangcent/apilot/api-model"
 )
@@ -721,6 +722,21 @@ func (m *mockDependencyResolver) ResolveClass(className string) *parser.Class {
 	return nil
 }
 
+type mockCollectorDependencyResolver struct {
+	types map[string]*collector.ResolvedType
+}
+
+func (m *mockCollectorDependencyResolver) DetectDependencies(sourceDir string) ([]collector.Dependency, error) {
+	return nil, nil
+}
+
+func (m *mockCollectorDependencyResolver) ResolveType(typeName string) *collector.ResolvedType {
+	if rt, ok := m.types[typeName]; ok {
+		return rt
+	}
+	return nil
+}
+
 func TestResolve_DependencyResolverFallback(t *testing.T) {
 	localClasses := []parser.Class{
 		{
@@ -835,5 +851,89 @@ func TestResolve_NoDependencyResolver(t *testing.T) {
 	}
 	if result.TypeName != "UnknownType" {
 		t.Errorf("Expected typeName 'UnknownType', got '%s'", result.TypeName)
+	}
+}
+
+func TestResolve_CollectorDependencyResolverFallback(t *testing.T) {
+	localClasses := []parser.Class{
+		{
+			Name: "LocalDTO",
+			Fields: []parser.Field{
+				{Name: "id", Type: "Long"},
+			},
+		},
+	}
+
+	cdr := &mockCollectorDependencyResolver{
+		types: map[string]*collector.ResolvedType{
+			"ExternalDTO": {
+				Name: "ExternalDTO",
+				Fields: []collector.ResolvedField{
+					{Name: "code", Type: "String", Required: true},
+					{Name: "value", Type: "int", Required: false},
+				},
+			},
+		},
+	}
+
+	r := NewTypeResolver(localClasses)
+	r.SetCollectorDependencyResolver(cdr)
+
+	t.Run("local class resolved normally", func(t *testing.T) {
+		result := r.Resolve("LocalDTO", nil)
+		if result.Kind != model.KindObject {
+			t.Fatalf("Expected KindObject, got %s", result.Kind)
+		}
+		if result.TypeName != "LocalDTO" {
+			t.Errorf("Expected typeName 'LocalDTO', got '%s'", result.TypeName)
+		}
+	})
+
+	t.Run("external class resolved via collector dependency resolver", func(t *testing.T) {
+		result := r.Resolve("ExternalDTO", nil)
+		if result.Kind != model.KindObject {
+			t.Fatalf("Expected KindObject, got %s", result.Kind)
+		}
+		if result.TypeName != "ExternalDTO" {
+			t.Errorf("Expected typeName 'ExternalDTO', got '%s'", result.TypeName)
+		}
+		if len(result.Fields) != 2 {
+			t.Fatalf("Expected 2 fields, got %d", len(result.Fields))
+		}
+		codeField := result.Fields["code"]
+		if codeField == nil || codeField.Model.TypeName != model.JsonTypeString {
+			t.Errorf("Expected code field typeName 'string', got '%v'", codeField)
+		}
+	})
+
+	t.Run("unknown type still returns SingleModel", func(t *testing.T) {
+		result := r.Resolve("CompletelyUnknown", nil)
+		if result.Kind != model.KindSingle {
+			t.Fatalf("Expected KindSingle, got %s", result.Kind)
+		}
+	})
+}
+
+func TestResolve_CollectorDependencyResolverPreferredOverNone(t *testing.T) {
+	cdr := &mockCollectorDependencyResolver{
+		types: map[string]*collector.ResolvedType{
+			"DepClass": {
+				Name: "DepClass",
+				Fields: []collector.ResolvedField{
+					{Name: "name", Type: "String", Required: true},
+				},
+			},
+		},
+	}
+
+	r := NewTypeResolver(nil)
+	r.SetCollectorDependencyResolver(cdr)
+
+	result := r.Resolve("DepClass", nil)
+	if result.Kind != model.KindObject {
+		t.Fatalf("Expected KindObject, got %s", result.Kind)
+	}
+	if result.TypeName != "DepClass" {
+		t.Errorf("Expected typeName 'DepClass', got '%s'", result.TypeName)
 	}
 }

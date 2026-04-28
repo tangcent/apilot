@@ -13,14 +13,19 @@ import (
 )
 
 // GoCollector parses Go source trees for API route registrations.
-type GoCollector struct{}
+type GoCollector struct {
+	dependencyResolver collector.DependencyResolver
+}
 
-// New returns a new GoCollector.
 func New() collector.Collector { return &GoCollector{} }
 
 func (c *GoCollector) Name() string { return "go" }
 
 func (c *GoCollector) SupportedLanguages() []string { return []string{"go"} }
+
+func (c *GoCollector) SetDependencyResolver(dr collector.DependencyResolver) {
+	c.dependencyResolver = dr
+}
 
 // Collect walks the source directory and extracts endpoints from Gin, Echo,
 // and Fiber route registrations.

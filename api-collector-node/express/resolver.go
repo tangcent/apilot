@@ -3,6 +3,7 @@ package express
 import (
 	"strings"
 
+	collector "github.com/tangcent/apilot/api-collector"
 	model "github.com/tangcent/apilot/api-model"
 )
 
@@ -51,8 +52,9 @@ var tsCollectionTypes = map[string]bool{
 }
 
 type TSTypeResolver struct {
-	registry   *TSTypeRegistry
-	resolving  map[string]bool
+	registry           *TSTypeRegistry
+	resolving          map[string]bool
+	dependencyResolver collector.DependencyResolver
 }
 
 func NewTSTypeResolver(registry *TSTypeRegistry) *TSTypeResolver {
@@ -60,6 +62,10 @@ func NewTSTypeResolver(registry *TSTypeRegistry) *TSTypeResolver {
 		registry:  registry,
 		resolving: make(map[string]bool),
 	}
+}
+
+func (r *TSTypeResolver) SetDependencyResolver(dr collector.DependencyResolver) {
+	r.dependencyResolver = dr
 }
 
 func (r *TSTypeResolver) Resolve(rawType string, typeBindings map[string]string) *model.ObjectModel {
@@ -119,6 +125,26 @@ func (r *TSTypeResolver) Resolve(rawType string, typeBindings map[string]string)
 
 	if alias, found := r.registry.TypeAliases[baseName]; found {
 		return r.resolveTypeAlias(alias, typeArgs, typeBindings)
+	}
+
+	if r.dependencyResolver != nil {
+		if rt := r.dependencyResolver.ResolveType(baseName); rt != nil {
+			if iface, ok := r.registry.Interfaces[baseName]; !ok {
+				iface = &TSInterface{
+					Name:           rt.Name,
+					TypeParameters: rt.TypeParameters,
+				}
+				for _, f := range rt.Fields {
+					iface.Fields = append(iface.Fields, TSField{
+						Name:     f.Name,
+						Type:     f.Type,
+						Required: f.Required,
+					})
+				}
+				r.registry.Interfaces[baseName] = iface
+			}
+			return r.Resolve(rawType, typeBindings)
+		}
 	}
 
 	return model.SingleModel(rawType)
@@ -362,7 +388,14 @@ func parseTSTypeArgs(rawType string) (string, []string) {
 }
 
 func ResolveHandlerTypes(handlerInfo *ExpressHandlerInfo, registry *TSTypeRegistry) (reqBody *model.ObjectModel, resBody *model.ObjectModel) {
+	return ResolveHandlerTypesWithDepResolver(handlerInfo, registry, nil)
+}
+
+func ResolveHandlerTypesWithDepResolver(handlerInfo *ExpressHandlerInfo, registry *TSTypeRegistry, depResolver collector.DependencyResolver) (reqBody *model.ObjectModel, resBody *model.ObjectModel) {
 	resolver := NewTSTypeResolver(registry)
+	if depResolver != nil {
+		resolver.SetDependencyResolver(depResolver)
+	}
 
 	if handlerInfo.ReqBodyType != "" {
 		reqBody = resolver.Resolve(handlerInfo.ReqBodyType, nil)

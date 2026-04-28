@@ -3,6 +3,7 @@ package express
 import (
 	"testing"
 
+	collector "github.com/tangcent/apilot/api-collector"
 	model "github.com/tangcent/apilot/api-model"
 )
 
@@ -456,6 +457,100 @@ func TestResolveHandlerTypes(t *testing.T) {
 	} else {
 		if _, ok := resBody.Fields["id"]; !ok {
 			t.Error("resBody should have 'id' field")
+		}
+	}
+}
+
+type mockDepResolver struct {
+	types map[string]*collector.ResolvedType
+}
+
+func (m *mockDepResolver) DetectDependencies(sourceDir string) ([]collector.Dependency, error) {
+	return nil, nil
+}
+
+func (m *mockDepResolver) ResolveType(typeName string) *collector.ResolvedType {
+	if rt, ok := m.types[typeName]; ok {
+		return rt
+	}
+	return nil
+}
+
+func TestTSTypeResolver_DependencyResolverFallback(t *testing.T) {
+	registry := NewTSTypeRegistry()
+	resolver := NewTSTypeResolver(registry)
+
+	depResolver := &mockDepResolver{
+		types: map[string]*collector.ResolvedType{
+			"ExternalDTO": {
+				Name: "ExternalDTO",
+				Fields: []collector.ResolvedField{
+					{Name: "code", Type: "string", Required: true},
+					{Name: "value", Type: "number", Required: false},
+				},
+			},
+		},
+	}
+	resolver.SetDependencyResolver(depResolver)
+
+	t.Run("unknown type resolved via dependency resolver", func(t *testing.T) {
+		result := resolver.Resolve("ExternalDTO", nil)
+		if !result.IsObject() {
+			t.Fatalf("Expected object, got %s", result.Kind)
+		}
+		if result.TypeName != "ExternalDTO" {
+			t.Errorf("Expected typeName 'ExternalDTO', got '%s'", result.TypeName)
+		}
+		if len(result.Fields) != 2 {
+			t.Fatalf("Expected 2 fields, got %d", len(result.Fields))
+		}
+	})
+
+	t.Run("completely unknown type still returns single", func(t *testing.T) {
+		result := resolver.Resolve("CompletelyUnknown", nil)
+		if !result.IsSingle() {
+			t.Errorf("Expected single for unknown type, got %s", result.Kind)
+		}
+	})
+}
+
+func TestResolveHandlerTypesWithDepResolver(t *testing.T) {
+	registry := NewTSTypeRegistry()
+	registry.Interfaces["CreateUserRequest"] = &TSInterface{
+		Name: "CreateUserRequest",
+		Fields: []TSField{
+			{Name: "name", Type: "string", Required: true},
+		},
+	}
+
+	depResolver := &mockDepResolver{
+		types: map[string]*collector.ResolvedType{
+			"UserResponse": {
+				Name: "UserResponse",
+				Fields: []collector.ResolvedField{
+					{Name: "id", Type: "number", Required: true},
+					{Name: "name", Type: "string", Required: true},
+				},
+			},
+		},
+	}
+
+	handlerInfo := &ExpressHandlerInfo{
+		ReqBodyType: "CreateUserRequest",
+		ResBodyType: "UserResponse",
+	}
+
+	reqBody, resBody := ResolveHandlerTypesWithDepResolver(handlerInfo, registry, depResolver)
+
+	if reqBody == nil || !reqBody.IsObject() {
+		t.Errorf("reqBody should be object, got %v", reqBody)
+	}
+
+	if resBody == nil || !resBody.IsObject() {
+		t.Errorf("resBody should be object, got %v", resBody)
+	} else {
+		if _, ok := resBody.Fields["id"]; !ok {
+			t.Error("resBody should have 'id' field from dependency resolver")
 		}
 	}
 }

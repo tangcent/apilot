@@ -6,6 +6,7 @@ import (
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 	python "github.com/tree-sitter/tree-sitter-python/bindings/go"
 
+	collector "github.com/tangcent/apilot/api-collector"
 	model "github.com/tangcent/apilot/api-model"
 )
 
@@ -428,4 +429,75 @@ func createTestParser(t *testing.T) *tree_sitter.Parser {
 		t.Fatalf("failed to set language: %v", err)
 	}
 	return p
+}
+
+type mockPyDepResolver struct {
+	types map[string]*collector.ResolvedType
+}
+
+func (m *mockPyDepResolver) DetectDependencies(sourceDir string) ([]collector.Dependency, error) {
+	return nil, nil
+}
+
+func (m *mockPyDepResolver) ResolveType(typeName string) *collector.ResolvedType {
+	if rt, ok := m.types[typeName]; ok {
+		return rt
+	}
+	return nil
+}
+
+func TestPythonTypeResolver_DependencyResolverFallback(t *testing.T) {
+	localModels := map[string]PydanticModel{
+		"LocalDTO": {
+			Name: "LocalDTO",
+			Fields: []PydanticField{
+				{Name: "id", Type: "int", Required: true},
+			},
+		},
+	}
+
+	depResolver := &mockPyDepResolver{
+		types: map[string]*collector.ResolvedType{
+			"ExternalDTO": {
+				Name: "ExternalDTO",
+				Fields: []collector.ResolvedField{
+					{Name: "code", Type: "str", Required: true},
+					{Name: "value", Type: "int", Required: false},
+				},
+			},
+		},
+	}
+
+	r := NewPythonTypeResolver(localModels)
+	r.SetDependencyResolver(depResolver)
+
+	t.Run("local model resolved normally", func(t *testing.T) {
+		result := r.Resolve("LocalDTO")
+		if !result.IsObject() {
+			t.Fatalf("Expected object, got %s", result.Kind)
+		}
+		if result.TypeName != "LocalDTO" {
+			t.Errorf("Expected typeName 'LocalDTO', got '%s'", result.TypeName)
+		}
+	})
+
+	t.Run("external model resolved via dependency resolver", func(t *testing.T) {
+		result := r.Resolve("ExternalDTO")
+		if !result.IsObject() {
+			t.Fatalf("Expected object, got %s", result.Kind)
+		}
+		if result.TypeName != "ExternalDTO" {
+			t.Errorf("Expected typeName 'ExternalDTO', got '%s'", result.TypeName)
+		}
+		if len(result.Fields) != 2 {
+			t.Fatalf("Expected 2 fields, got %d", len(result.Fields))
+		}
+	})
+
+	t.Run("unknown type still returns single", func(t *testing.T) {
+		result := r.Resolve("CompletelyUnknown")
+		if !result.IsSingle() {
+			t.Errorf("Expected single for unknown type, got %s", result.Kind)
+		}
+	})
 }
