@@ -59,7 +59,7 @@ var fiberMethods = map[string]bool{
 // Per the collector contract:
 //   - Returns nil, nil (not an error) when no endpoints are found.
 //   - Skips unparseable files silently.
-func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
+func Parse(sourceDir string, depResolver ...collector.DependencyResolver) ([]collector.ApiEndpoint, error) {
 	goFiles, err := discoverGoFiles(sourceDir)
 	if err != nil || len(goFiles) == 0 {
 		return nil, nil
@@ -87,6 +87,7 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 	handlerAnalyses := make(map[string]handlerAnalysis)
 	allStructs := make(map[string]StructDef)
 	varTypeMaps := make(map[string]map[string]string)
+	importMaps := make(map[string]string)
 	var allRaw []rawEndpoint
 
 	for res := range ch {
@@ -105,6 +106,9 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 		for k, v := range res.varTypeMaps {
 			varTypeMaps[k] = v
 		}
+		for k, v := range res.importMap {
+			importMaps[k] = v
+		}
 		allRaw = append(allRaw, res.rawEndpoints...)
 	}
 
@@ -113,6 +117,10 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 	}
 
 	typeResolver := NewTypeResolver(allStructs)
+	if len(depResolver) > 0 {
+		typeResolver.SetDependencyResolver(depResolver[0])
+		typeResolver.SetImportMaps(importMaps)
+	}
 
 	endpoints := make([]collector.ApiEndpoint, 0, len(allRaw))
 	for _, raw := range allRaw {
@@ -233,6 +241,7 @@ type fileResult struct {
 	handlerAnalyses map[string]handlerAnalysis
 	structDefs      map[string]StructDef
 	varTypeMaps     map[string]map[string]string
+	importMap       map[string]string
 }
 
 // discoverGoFiles walks sourceDir and returns paths to all non-test .go files.
@@ -267,9 +276,10 @@ func processFile(filePath string) fileResult {
 	}
 
 	structDefs := extractStructs(f)
+	importMap := buildImportMap(f)
 
 	if !importsPackage(f, "github.com/gofiber/fiber/v2") {
-		return fileResult{structDefs: structDefs}
+		return fileResult{structDefs: structDefs, importMap: importMap}
 	}
 
 	varTypeMaps := make(map[string]map[string]string)
@@ -367,6 +377,7 @@ func processFile(filePath string) fileResult {
 		handlerAnalyses: handlerAnalyses,
 		structDefs:      structDefs,
 		varTypeMaps:     varTypeMaps,
+		importMap:       importMap,
 	}
 }
 
@@ -651,4 +662,20 @@ func importsPackage(f *ast.File, pkgPath string) bool {
 		}
 	}
 	return false
+}
+
+func buildImportMap(f *ast.File) map[string]string {
+	m := make(map[string]string)
+	for _, imp := range f.Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		if imp.Name != nil && imp.Name.Name != "_" && imp.Name.Name != "." {
+			m[imp.Name.Name] = path
+		} else {
+			parts := strings.Split(path, "/")
+			if len(parts) > 0 {
+				m[parts[len(parts)-1]] = path
+			}
+		}
+	}
+	return m
 }
