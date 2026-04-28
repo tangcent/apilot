@@ -39,10 +39,15 @@ var mapTypes = map[string]bool{
 	"TreeMap":       true,
 }
 
+type DependencyResolver interface {
+	ResolveClass(className string) *parser.Class
+}
+
 type TypeResolver struct {
-	classRegistry map[string]parser.Class
-	allTypeParams map[string]bool
-	resolving     map[string]bool
+	classRegistry     map[string]parser.Class
+	allTypeParams     map[string]bool
+	resolving         map[string]bool
+	dependencyResolver DependencyResolver
 }
 
 func NewTypeResolver(classes []parser.Class) *TypeResolver {
@@ -59,6 +64,10 @@ func NewTypeResolver(classes []parser.Class) *TypeResolver {
 		allTypeParams: allTypeParams,
 		resolving:     make(map[string]bool),
 	}
+}
+
+func (r *TypeResolver) SetDependencyResolver(dr DependencyResolver) {
+	r.dependencyResolver = dr
 }
 
 func (r *TypeResolver) Resolve(rawType string, typeBindings map[string]string) *model.ObjectModel {
@@ -166,6 +175,16 @@ func (r *TypeResolver) Resolve(rawType string, typeBindings map[string]string) *
 			Kind:     model.KindObject,
 			TypeName: baseName,
 			Fields:   fields,
+		}
+	}
+
+	if r.dependencyResolver != nil {
+		if depClass := r.dependencyResolver.ResolveClass(baseName); depClass != nil {
+			r.classRegistry[baseName] = *depClass
+			for _, tp := range depClass.TypeParameters {
+				r.allTypeParams[tp] = true
+			}
+			return r.Resolve(rawType, typeBindings)
 		}
 	}
 

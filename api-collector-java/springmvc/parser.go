@@ -8,15 +8,24 @@ import (
 	"github.com/tangcent/apilot/api-collector-java/resolver"
 )
 
-type Parser struct{}
+type Parser struct {
+	dependencyResolver resolver.DependencyResolver
+}
 
 func NewParser() *Parser {
 	return &Parser{}
 }
 
+func (p *Parser) SetDependencyResolver(dr resolver.DependencyResolver) {
+	p.dependencyResolver = dr
+}
+
 func (p *Parser) ExtractControllers(results []parser.ParseResult) []Controller {
 	classRegistry := buildClassRegistry(results)
 	typeResolver := resolver.NewTypeResolver(flattenClasses(results))
+	if p.dependencyResolver != nil {
+		typeResolver.SetDependencyResolver(p.dependencyResolver)
+	}
 
 	var controllers []Controller
 

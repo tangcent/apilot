@@ -709,3 +709,131 @@ func TestResolve_FieldOverrideInSubclass(t *testing.T) {
 		t.Errorf("Expected name typeName 'string', got '%s'", nameField.Model.TypeName)
 	}
 }
+
+type mockDependencyResolver struct {
+	classes map[string]parser.Class
+}
+
+func (m *mockDependencyResolver) ResolveClass(className string) *parser.Class {
+	if c, ok := m.classes[className]; ok {
+		return &c
+	}
+	return nil
+}
+
+func TestResolve_DependencyResolverFallback(t *testing.T) {
+	localClasses := []parser.Class{
+		{
+			Name: "LocalDTO",
+			Fields: []parser.Field{
+				{Name: "id", Type: "Long"},
+			},
+		},
+	}
+
+	depClasses := map[string]parser.Class{
+		"ExternalDTO": {
+			Name: "ExternalDTO",
+			Fields: []parser.Field{
+				{Name: "code", Type: "String"},
+				{Name: "value", Type: "int"},
+			},
+		},
+	}
+
+	r := NewTypeResolver(localClasses)
+	r.SetDependencyResolver(&mockDependencyResolver{classes: depClasses})
+
+	t.Run("local class resolved normally", func(t *testing.T) {
+		result := r.Resolve("LocalDTO", nil)
+		if result.Kind != model.KindObject {
+			t.Fatalf("Expected KindObject, got %s", result.Kind)
+		}
+		if result.TypeName != "LocalDTO" {
+			t.Errorf("Expected typeName 'LocalDTO', got '%s'", result.TypeName)
+		}
+	})
+
+	t.Run("external class resolved via dependency resolver", func(t *testing.T) {
+		result := r.Resolve("ExternalDTO", nil)
+		if result.Kind != model.KindObject {
+			t.Fatalf("Expected KindObject, got %s", result.Kind)
+		}
+		if result.TypeName != "ExternalDTO" {
+			t.Errorf("Expected typeName 'ExternalDTO', got '%s'", result.TypeName)
+		}
+		if len(result.Fields) != 2 {
+			t.Fatalf("Expected 2 fields, got %d", len(result.Fields))
+		}
+		codeField := result.Fields["code"]
+		if codeField == nil || codeField.Model.TypeName != model.JsonTypeString {
+			t.Errorf("Expected code field typeName 'string', got '%v'", codeField)
+		}
+	})
+
+	t.Run("unknown type still returns SingleModel", func(t *testing.T) {
+		result := r.Resolve("CompletelyUnknown", nil)
+		if result.Kind != model.KindSingle {
+			t.Fatalf("Expected KindSingle, got %s", result.Kind)
+		}
+		if result.TypeName != "CompletelyUnknown" {
+			t.Errorf("Expected typeName 'CompletelyUnknown', got '%s'", result.TypeName)
+		}
+	})
+
+	t.Run("resolved class is cached in registry", func(t *testing.T) {
+		r.Resolve("ExternalDTO", nil)
+		if _, found := r.classRegistry["ExternalDTO"]; !found {
+			t.Error("Expected ExternalDTO to be cached in classRegistry after resolution")
+		}
+	})
+}
+
+func TestResolve_DependencyResolverWithGenerics(t *testing.T) {
+	depClasses := map[string]parser.Class{
+		"Result": {
+			Name:           "Result",
+			TypeParameters: []string{"T"},
+			Fields: []parser.Field{
+				{Name: "code", Type: "int"},
+				{Name: "data", Type: "T"},
+			},
+		},
+		"User": {
+			Name: "User",
+			Fields: []parser.Field{
+				{Name: "name", Type: "String"},
+			},
+		},
+	}
+
+	r := NewTypeResolver(nil)
+	r.SetDependencyResolver(&mockDependencyResolver{classes: depClasses})
+
+	result := r.Resolve("Result<User>", nil)
+	if result.Kind != model.KindObject {
+		t.Fatalf("Expected KindObject, got %s", result.Kind)
+	}
+
+	dataField := result.Fields["data"]
+	if dataField == nil {
+		t.Fatal("Expected 'data' field")
+	}
+	if dataField.Model.Kind != model.KindObject {
+		t.Errorf("Expected data KindObject, got %s", dataField.Model.Kind)
+	}
+	if dataField.Model.TypeName != "User" {
+		t.Errorf("Expected data typeName 'User', got '%s'", dataField.Model.TypeName)
+	}
+}
+
+func TestResolve_NoDependencyResolver(t *testing.T) {
+	r := NewTypeResolver(nil)
+	result := r.Resolve("UnknownType", nil)
+	if result.Kind != model.KindSingle {
+		t.Fatalf("Expected KindSingle, got %s", result.Kind)
+	}
+	if result.TypeName != "UnknownType" {
+		t.Errorf("Expected typeName 'UnknownType', got '%s'", result.TypeName)
+	}
+}
