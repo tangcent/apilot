@@ -24,6 +24,10 @@ var httpMethods = map[string]bool{
 }
 
 func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
+	return ParseWithDependencyResolver(sourceDir, nil)
+}
+
+func ParseWithDependencyResolver(sourceDir string, depResolver collector.DependencyResolver) ([]collector.ApiEndpoint, error) {
 	allFiles, err := discoverSourceFiles(sourceDir)
 	if err != nil || len(allFiles) == 0 {
 		return nil, nil
@@ -47,6 +51,11 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 		}
 	}
 
+	ctx := &parseContext{
+		typeRegistry:       typeRegistry,
+		dependencyResolver: depResolver,
+	}
+
 	ch := make(chan fileResult, len(allFiles))
 	var wg sync.WaitGroup
 
@@ -54,7 +63,7 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 		wg.Add(1)
 		go func(filePath string) {
 			defer wg.Done()
-			res := processJSFile(filePath, typeRegistry)
+			res := ctx.processJSFile(filePath)
 			ch <- res
 		}(path)
 	}
@@ -63,7 +72,7 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 		wg.Add(1)
 		go func(filePath string) {
 			defer wg.Done()
-			res := processTSFile(filePath, typeRegistry)
+			res := ctx.processTSFile(filePath)
 			ch <- res
 		}(path)
 	}
@@ -86,6 +95,11 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 	}
 
 	return allEndpoints, nil
+}
+
+type parseContext struct {
+	typeRegistry       *express.TSTypeRegistry
+	dependencyResolver collector.DependencyResolver
 }
 
 type fileResult struct {
@@ -132,7 +146,7 @@ func discoverJSFiles(sourceDir string) ([]string, error) {
 	return jsFiles, nil
 }
 
-func processJSFile(filePath string, typeRegistry *express.TSTypeRegistry) fileResult {
+func (ctx *parseContext) processJSFile(filePath string) fileResult {
 	source, err := os.ReadFile(filePath)
 	if err != nil {
 		return fileResult{err: fmt.Errorf("failed to read file: %w", err)}
@@ -153,12 +167,12 @@ func processJSFile(filePath string, typeRegistry *express.TSTypeRegistry) fileRe
 	defer tree.Close()
 
 	rootNode := tree.RootNode()
-	endpoints := extractEndpoints(rootNode, source, typeRegistry)
+	endpoints := ctx.extractEndpoints(rootNode, source)
 
 	return fileResult{endpoints: endpoints}
 }
 
-func processTSFile(filePath string, typeRegistry *express.TSTypeRegistry) fileResult {
+func (ctx *parseContext) processTSFile(filePath string) fileResult {
 	source, err := os.ReadFile(filePath)
 	if err != nil {
 		return fileResult{err: fmt.Errorf("failed to read file: %w", err)}
@@ -179,7 +193,7 @@ func processTSFile(filePath string, typeRegistry *express.TSTypeRegistry) fileRe
 	defer tree.Close()
 
 	rootNode := tree.RootNode()
-	endpoints := extractEndpoints(rootNode, source, typeRegistry)
+	endpoints := ctx.extractEndpoints(rootNode, source)
 
 	return fileResult{endpoints: endpoints}
 }
@@ -205,12 +219,13 @@ func processFile(filePath string) fileResult {
 	defer tree.Close()
 
 	rootNode := tree.RootNode()
-	endpoints := extractEndpoints(rootNode, source, nil)
+	ctx := &parseContext{}
+	endpoints := ctx.extractEndpoints(rootNode, source)
 
 	return fileResult{endpoints: endpoints}
 }
 
-func extractEndpoints(rootNode *tree_sitter.Node, source []byte, typeRegistry *express.TSTypeRegistry) []collector.ApiEndpoint {
+func (ctx *parseContext) extractEndpoints(rootNode *tree_sitter.Node, source []byte) []collector.ApiEndpoint {
 	var endpoints []collector.ApiEndpoint
 	var lastComment string
 
@@ -228,7 +243,7 @@ func extractEndpoints(rootNode *tree_sitter.Node, source []byte, typeRegistry *e
 		}
 
 		if child.Kind() == "expression_statement" {
-			ep := extractFromExpressionStatement(child, source, lastComment, typeRegistry)
+			ep := ctx.extractFromExpressionStatement(child, source, lastComment)
 			if ep != nil {
 				endpoints = append(endpoints, ep...)
 			}
@@ -241,20 +256,20 @@ func extractEndpoints(rootNode *tree_sitter.Node, source []byte, typeRegistry *e
 	return endpoints
 }
 
-func extractFromExpressionStatement(node *tree_sitter.Node, source []byte, description string, typeRegistry *express.TSTypeRegistry) []collector.ApiEndpoint {
+func (ctx *parseContext) extractFromExpressionStatement(node *tree_sitter.Node, source []byte, description string) []collector.ApiEndpoint {
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "call_expression" {
-			return extractFromCallExpression(child, source, description, typeRegistry)
+			return ctx.extractFromCallExpression(child, source, description)
 		}
 	}
 	return nil
 }
 
-func extractFromCallExpression(callNode *tree_sitter.Node, source []byte, description string, typeRegistry *express.TSTypeRegistry) []collector.ApiEndpoint {
+func (ctx *parseContext) extractFromCallExpression(callNode *tree_sitter.Node, source []byte, description string) []collector.ApiEndpoint {
 	method, isRoute := extractMethodInfo(callNode, source)
 	if isRoute {
-		ep := extractShorthandRoute(callNode, source, method, description, typeRegistry)
+		ep := ctx.extractShorthandRoute(callNode, source, method, description)
 		if ep != nil {
 			return []collector.ApiEndpoint{*ep}
 		}
@@ -262,7 +277,7 @@ func extractFromCallExpression(callNode *tree_sitter.Node, source []byte, descri
 	}
 
 	if isRouteObjectCall(callNode, source) {
-		return extractRouteObject(callNode, source, description, typeRegistry)
+		return ctx.extractRouteObject(callNode, source, description)
 	}
 
 	return nil
@@ -318,7 +333,7 @@ func isRouteProperty(memberNode *tree_sitter.Node, source []byte) bool {
 	return false
 }
 
-func extractShorthandRoute(callNode *tree_sitter.Node, source []byte, method string, description string, typeRegistry *express.TSTypeRegistry) *collector.ApiEndpoint {
+func (ctx *parseContext) extractShorthandRoute(callNode *tree_sitter.Node, source []byte, method string, description string) *collector.ApiEndpoint {
 	path, handlerName := extractShorthandArguments(callNode, source)
 	if path == "" {
 		return nil
@@ -354,15 +369,15 @@ func extractShorthandRoute(callNode *tree_sitter.Node, source []byte, method str
 		if optionsNode != nil {
 			schemaNode := extractSchemaFromOptions(optionsNode, source)
 			if schemaNode != nil {
-				populateSchemaBody(schemaNode, source, ep, typeRegistry)
+				ctx.populateSchemaBody(schemaNode, source, ep)
 			}
 		}
 	}
 
-	if typeRegistry != nil && ep.RequestBody == nil && ep.Response == nil {
+	if ctx.typeRegistry != nil && ep.RequestBody == nil && ep.Response == nil {
 		handlerInfo := AnalyzeFastifyHandler(callNode, source)
 		if handlerInfo != nil {
-			reqBody, resBody := ResolveFastifyHandlerTypes(handlerInfo, typeRegistry)
+			reqBody, resBody := ResolveFastifyHandlerTypesWithDepResolver(handlerInfo, ctx.typeRegistry, ctx.dependencyResolver)
 			if reqBody != nil && !reqBody.IsNull() {
 				ep.RequestBody = &collector.ApiBody{
 					MediaType: "application/json",
@@ -381,11 +396,14 @@ func extractShorthandRoute(callNode *tree_sitter.Node, source []byte, method str
 	return ep
 }
 
-func populateSchemaBody(schemaNode *tree_sitter.Node, source []byte, ep *collector.ApiEndpoint, typeRegistry *express.TSTypeRegistry) {
+func (ctx *parseContext) populateSchemaBody(schemaNode *tree_sitter.Node, source []byte, ep *collector.ApiEndpoint) {
 	bodySchema := extractSchemaBody(schemaNode, source)
 	if bodySchema != nil && !bodySchema.IsNull() {
-		if bodySchema.IsSingle() && bodySchema.TypeName != "" && typeRegistry != nil {
-			resolver := express.NewTSTypeResolver(typeRegistry)
+		if bodySchema.IsSingle() && bodySchema.TypeName != "" && ctx.typeRegistry != nil {
+			resolver := express.NewTSTypeResolver(ctx.typeRegistry)
+			if ctx.dependencyResolver != nil {
+				resolver.SetDependencyResolver(ctx.dependencyResolver)
+			}
 			resolved := resolver.Resolve(bodySchema.TypeName, nil)
 			if resolved != nil && !resolved.IsNull() {
 				bodySchema = resolved
@@ -399,8 +417,11 @@ func populateSchemaBody(schemaNode *tree_sitter.Node, source []byte, ep *collect
 
 	responseSchema := extractSchemaResponse(schemaNode, source)
 	if responseSchema != nil && !responseSchema.IsNull() {
-		if responseSchema.IsSingle() && responseSchema.TypeName != "" && typeRegistry != nil {
-			resolver := express.NewTSTypeResolver(typeRegistry)
+		if responseSchema.IsSingle() && responseSchema.TypeName != "" && ctx.typeRegistry != nil {
+			resolver := express.NewTSTypeResolver(ctx.typeRegistry)
+			if ctx.dependencyResolver != nil {
+				resolver.SetDependencyResolver(ctx.dependencyResolver)
+			}
 			resolved := resolver.Resolve(responseSchema.TypeName, nil)
 			if resolved != nil && !resolved.IsNull() {
 				responseSchema = resolved
@@ -458,27 +479,27 @@ func extractShorthandArgsFromNode(argsNode *tree_sitter.Node, source []byte) (pa
 	return path, handlerName
 }
 
-func extractRouteObject(callNode *tree_sitter.Node, source []byte, description string, typeRegistry *express.TSTypeRegistry) []collector.ApiEndpoint {
+func (ctx *parseContext) extractRouteObject(callNode *tree_sitter.Node, source []byte, description string) []collector.ApiEndpoint {
 	for i := uint(0); i < callNode.ChildCount(); i++ {
 		child := callNode.Child(i)
 		if child.Kind() == "arguments" {
-			return extractRouteObjectArgs(child, source, description, typeRegistry)
+			return ctx.extractRouteObjectArgs(child, source, description)
 		}
 	}
 	return nil
 }
 
-func extractRouteObjectArgs(argsNode *tree_sitter.Node, source []byte, description string, typeRegistry *express.TSTypeRegistry) []collector.ApiEndpoint {
+func (ctx *parseContext) extractRouteObjectArgs(argsNode *tree_sitter.Node, source []byte, description string) []collector.ApiEndpoint {
 	for i := uint(0); i < argsNode.ChildCount(); i++ {
 		child := argsNode.Child(i)
 		if child.Kind() == "object" {
-			return extractRouteObjectFromObject(child, source, description, typeRegistry)
+			return ctx.extractRouteObjectFromObject(child, source, description)
 		}
 	}
 	return nil
 }
 
-func extractRouteObjectFromObject(objNode *tree_sitter.Node, source []byte, description string, typeRegistry *express.TSTypeRegistry) []collector.ApiEndpoint {
+func (ctx *parseContext) extractRouteObjectFromObject(objNode *tree_sitter.Node, source []byte, description string) []collector.ApiEndpoint {
 	var method, path, handlerName string
 
 	for i := uint(0); i < objNode.ChildCount(); i++ {
@@ -539,7 +560,7 @@ func extractRouteObjectFromObject(objNode *tree_sitter.Node, source []byte, desc
 
 	schemaNode := extractSchemaFromRouteObject(objNode, source)
 	if schemaNode != nil {
-		populateSchemaBody(schemaNode, source, &ep, typeRegistry)
+		ctx.populateSchemaBody(schemaNode, source, &ep)
 	}
 
 	return []collector.ApiEndpoint{ep}

@@ -36,6 +36,10 @@ var paramDecorators = map[string]string{
 }
 
 func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
+	return ParseWithDependencyResolver(sourceDir, nil)
+}
+
+func ParseWithDependencyResolver(sourceDir string, depResolver collector.DependencyResolver) ([]collector.ApiEndpoint, error) {
 	tsFiles, err := discoverTSFiles(sourceDir)
 	if err != nil || len(tsFiles) == 0 {
 		return nil, nil
@@ -47,6 +51,11 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 		typeRegistry = reg
 	}
 
+	ctx := &parseContext{
+		typeRegistry:       typeRegistry,
+		dependencyResolver: depResolver,
+	}
+
 	ch := make(chan fileResult, len(tsFiles))
 	var wg sync.WaitGroup
 
@@ -54,7 +63,7 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 		wg.Add(1)
 		go func(filePath string) {
 			defer wg.Done()
-			res := processFile(filePath, typeRegistry)
+			res := ctx.processFile(filePath)
 			ch <- res
 		}(path)
 	}
@@ -79,6 +88,11 @@ func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
 	return allEndpoints, nil
 }
 
+type parseContext struct {
+	typeRegistry       *express.TSTypeRegistry
+	dependencyResolver collector.DependencyResolver
+}
+
 type fileResult struct {
 	endpoints []collector.ApiEndpoint
 	err       error
@@ -101,7 +115,7 @@ func discoverTSFiles(sourceDir string) ([]string, error) {
 	return tsFiles, nil
 }
 
-func processFile(filePath string, typeRegistry *express.TSTypeRegistry) fileResult {
+func (ctx *parseContext) processFile(filePath string) fileResult {
 	source, err := os.ReadFile(filePath)
 	if err != nil {
 		return fileResult{err: fmt.Errorf("failed to read file: %w", err)}
@@ -122,19 +136,19 @@ func processFile(filePath string, typeRegistry *express.TSTypeRegistry) fileResu
 	defer tree.Close()
 
 	rootNode := tree.RootNode()
-	endpoints := extractEndpoints(rootNode, source, typeRegistry)
+	endpoints := ctx.extractEndpoints(rootNode, source)
 
 	return fileResult{endpoints: endpoints}
 }
 
-func extractEndpoints(rootNode *tree_sitter.Node, source []byte, typeRegistry *express.TSTypeRegistry) []collector.ApiEndpoint {
+func (ctx *parseContext) extractEndpoints(rootNode *tree_sitter.Node, source []byte) []collector.ApiEndpoint {
 	var endpoints []collector.ApiEndpoint
 
 	for i := uint(0); i < rootNode.ChildCount(); i++ {
 		child := rootNode.Child(i)
 
 		if child.Kind() == "class_declaration" {
-			eps := extractFromClassNode(child, nil, source, typeRegistry)
+			eps := ctx.extractFromClassNode(child, nil, source)
 			endpoints = append(endpoints, eps...)
 		}
 
@@ -142,7 +156,7 @@ func extractEndpoints(rootNode *tree_sitter.Node, source []byte, typeRegistry *e
 			classNode := findChildByKind(child, "class_declaration")
 			if classNode != nil {
 				controllerDecorator := findControllerDecorator(child, source)
-				eps := extractFromClassNode(classNode, controllerDecorator, source, typeRegistry)
+				eps := ctx.extractFromClassNode(classNode, controllerDecorator, source)
 				endpoints = append(endpoints, eps...)
 			}
 		}
@@ -168,7 +182,7 @@ func isControllerDecorator(name string) bool {
 	return name == "Controller" || name == "RestController" || name == "Api" || name == "WebSocketGateway"
 }
 
-func extractFromClassNode(classNode *tree_sitter.Node, controllerDecorator *decoratorInfo, source []byte, typeRegistry *express.TSTypeRegistry) []collector.ApiEndpoint {
+func (ctx *parseContext) extractFromClassNode(classNode *tree_sitter.Node, controllerDecorator *decoratorInfo, source []byte) []collector.ApiEndpoint {
 	basePath := ""
 	classComment := ""
 
@@ -193,10 +207,10 @@ func extractFromClassNode(classNode *tree_sitter.Node, controllerDecorator *deco
 		return nil
 	}
 
-	return extractFromClassBody(classBody, basePath, classComment, source, typeRegistry)
+	return ctx.extractFromClassBody(classBody, basePath, classComment, source)
 }
 
-func extractFromClassBody(classBody *tree_sitter.Node, basePath string, classComment string, source []byte, typeRegistry *express.TSTypeRegistry) []collector.ApiEndpoint {
+func (ctx *parseContext) extractFromClassBody(classBody *tree_sitter.Node, basePath string, classComment string, source []byte) []collector.ApiEndpoint {
 	var endpoints []collector.ApiEndpoint
 
 	var pendingDecorator *decoratorInfo
@@ -221,7 +235,7 @@ func extractFromClassBody(classBody *tree_sitter.Node, basePath string, classCom
 
 		case "method_definition":
 			if pendingDecorator != nil {
-				ep := buildEndpoint(pendingDecorator, child, basePath, pendingComment, classComment, source, typeRegistry)
+				ep := ctx.buildEndpoint(pendingDecorator, child, basePath, pendingComment, classComment, source)
 				if ep != nil {
 					endpoints = append(endpoints, *ep)
 				}
@@ -237,7 +251,7 @@ func extractFromClassBody(classBody *tree_sitter.Node, basePath string, classCom
 	return endpoints
 }
 
-func buildEndpoint(methodDecorator *decoratorInfo, methodNode *tree_sitter.Node, basePath string, methodComment string, classComment string, source []byte, typeRegistry *express.TSTypeRegistry) *collector.ApiEndpoint {
+func (ctx *parseContext) buildEndpoint(methodDecorator *decoratorInfo, methodNode *tree_sitter.Node, basePath string, methodComment string, classComment string, source []byte) *collector.ApiEndpoint {
 	handlerName := extractHandlerName(methodNode, source)
 	paramBindings := extractParamBindings(methodNode, source)
 
@@ -288,10 +302,10 @@ func buildEndpoint(methodDecorator *decoratorInfo, methodNode *tree_sitter.Node,
 		}
 	}
 
-	if typeRegistry != nil {
+	if ctx.typeRegistry != nil {
 		handlerInfo := AnalyzeNestJSHandler(methodNode, source)
 		if handlerInfo != nil {
-			reqBody, resBody := ResolveNestJSHandlerTypes(handlerInfo, typeRegistry)
+			reqBody, resBody := ResolveNestJSHandlerTypesWithDepResolver(handlerInfo, ctx.typeRegistry, ctx.dependencyResolver)
 			if reqBody != nil && !reqBody.IsNull() {
 				ep.RequestBody = &collector.ApiBody{
 					MediaType: "application/json",

@@ -5,6 +5,7 @@ import (
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 
+	collector "github.com/tangcent/apilot/api-collector"
 	"github.com/tangcent/apilot/api-collector-node/express"
 	model "github.com/tangcent/apilot/api-model"
 )
@@ -296,7 +297,14 @@ func splitTypeArgs(s string) []string {
 }
 
 func ResolveFastifyHandlerTypes(handlerInfo *FastifyHandlerInfo, registry *express.TSTypeRegistry) (reqBody *model.ObjectModel, resBody *model.ObjectModel) {
+	return ResolveFastifyHandlerTypesWithDepResolver(handlerInfo, registry, nil)
+}
+
+func ResolveFastifyHandlerTypesWithDepResolver(handlerInfo *FastifyHandlerInfo, registry *express.TSTypeRegistry, depResolver collector.DependencyResolver) (reqBody *model.ObjectModel, resBody *model.ObjectModel) {
 	resolver := express.NewTSTypeResolver(registry)
+	if depResolver != nil {
+		resolver.SetDependencyResolver(depResolver)
+	}
 
 	if handlerInfo.ReqBodyType != "" {
 		reqBody = resolver.Resolve(handlerInfo.ReqBodyType, nil)
