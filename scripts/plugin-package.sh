@@ -32,18 +32,28 @@ echo "Downloading apilot binaries (v${CLI_VERSION})..."
 BASE_URL="https://github.com/tangcent/apilot/releases/download/v${CLI_VERSION}"
 
 download_binary() {
-  local os=$1
-  local arch=$2
+  local archive_os=$1
+  local archive_arch=$2
   local ext=$3
-  local archive="apilot-${CLI_VERSION}-${os}-${arch}${ext}"
-  local target="$BIN_DIR/apilot-${os}-${arch}"
-  if [ "$os" = "windows" ]; then
+  local archive="apilot-${CLI_VERSION}-${archive_os}-${archive_arch}${ext}"
+
+  local local_os="${archive_os}"
+  if [ "$local_os" = "windows" ]; then
+    local_os="win32"
+  fi
+  local local_arch="${archive_arch}"
+  local target="$BIN_DIR/apilot-${local_os}-${local_arch}"
+  if [ "$archive_os" = "windows" ]; then
     target="${target}.exe"
   fi
+
   if [ ! -f "$target" ]; then
     echo "  Downloading ${archive}..."
-    curl -fsSL "${BASE_URL}/${archive}" -o "tmp/${archive}"
-    if [ "$os" = "windows" ]; then
+    if ! curl -fsSL "${BASE_URL}/${archive}" -o "tmp/${archive}"; then
+      echo "  Warning: Failed to download ${archive}, skipping..."
+      return 0
+    fi
+    if [ "$archive_os" = "windows" ]; then
       unzip -o "tmp/${archive}" -d tmp
     else
       tar -xzf "tmp/${archive}" -C tmp
@@ -51,15 +61,14 @@ download_binary() {
     cp "tmp/apilot" "$target" 2>/dev/null || cp "tmp/apilot.exe" "$target" 2>/dev/null || true
     chmod +x "$target"
   else
-    echo "  apilot-${os}-${arch} already exists, skipping..."
+    echo "  apilot-${local_os}-${local_arch} already exists, skipping..."
   fi
 }
 
 download_binary darwin arm64 ".tar.gz"
-download_binary darwin amd64 ".tar.gz"
 download_binary linux arm64 ".tar.gz"
-download_binary linux amd64 ".tar.gz"
-download_binary windows amd64 ".zip"
+download_binary linux x64 ".tar.gz"
+download_binary windows x64 ".zip"
 
 rm -rf tmp
 

@@ -35,6 +35,16 @@ jobs:
         working-directory: vscode-plugin
         run: npm run compile
 
+      - name: Install Xvfb
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y xvfb
+
       - name: Test
         working-directory: vscode-plugin
-        run: npm test
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a npm test
+          else
+            npm test
+          fi
+        shell: bash

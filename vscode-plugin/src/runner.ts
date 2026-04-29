@@ -9,7 +9,7 @@ const outputChannel = vscode.window.createOutputChannel('APilot');
  * Runs apilot-cli against the given source directory and writes output
  * to the configured destination (VSCode channel or file).
  */
-export async function runExport(sourceDir: string, settings: Settings): Promise<void> {
+export async function runExport(sourcePath: string, settings: Settings): Promise<void> {
   let binary: string;
   try {
     binary = resolveBinary(settings);
@@ -22,7 +22,7 @@ export async function runExport(sourceDir: string, settings: Settings): Promise<
     'export',
     '--formatter', settings.formatter,
     '--params', JSON.stringify({ variant: settings.format }),
-    sourceDir,
+    sourcePath,
   ];
 
   if (settings.outputDestination === 'file' && settings.outputFile) {
@@ -36,6 +36,11 @@ export async function runExport(sourceDir: string, settings: Settings): Promise<
 
     proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
     proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+
+    proc.on('error', (err: Error) => {
+      vscode.window.showErrorMessage(`APilot failed: ${err.message}`);
+      resolve();
+    });
 
     proc.on('close', (code) => {
       if (code !== 0) {

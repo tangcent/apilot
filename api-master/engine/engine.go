@@ -175,12 +175,10 @@ var projectRootIndicators = []string{
 }
 
 func findProjectRoot(dir string) (string, error) {
-	var lastFound string
 	for {
 		for _, indicator := range projectRootIndicators {
 			if _, err := os.Stat(filepath.Join(dir, indicator)); err == nil {
-				lastFound = dir
-				break
+				return dir, nil
 			}
 		}
 		parent := filepath.Dir(dir)
@@ -189,10 +187,7 @@ func findProjectRoot(dir string) (string, error) {
 		}
 		dir = parent
 	}
-	if lastFound == "" {
-		return "", fmt.Errorf("no project root indicator found")
-	}
-	return lastFound, nil
+	return "", fmt.Errorf("no project root indicator found")
 }
 
 func filterEndpointsByFile(endpoints []collector.ApiEndpoint, sourceFile string) []collector.ApiEndpoint {
@@ -535,7 +530,7 @@ func printExportHelp() {
 	fmt.Println("  source-path can be a directory or a single source file.")
 	fmt.Println("  When a file is given, the project root is auto-detected by walking up")
 	fmt.Println("  to find pom.xml, build.gradle, go.mod, package.json, etc.")
-	fmt.Println("  For multi-module projects, the topmost directory with an indicator is used.")
+	fmt.Println("  For multi-module projects, the nearest directory with an indicator is used.")
 	fmt.Println("")
 	fmt.Println("Flags:")
 	fmt.Println("  --collector string")
