@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -732,15 +733,15 @@ func TestFindProjectRoot(t *testing.T) {
 
 func TestFindProjectRoot_MultiModule(t *testing.T) {
 	tmpDir := t.TempDir()
-	moduleDir := tmpDir + "/user-service"
-	subDir := moduleDir + "/src/main/java/com/example"
+	moduleDir := filepath.Join(tmpDir, "user-service")
+	subDir := filepath.Join(moduleDir, "src", "main", "java", "com", "example")
 	if err := os.MkdirAll(subDir, 0755); err != nil {
 		t.Fatalf("Failed to create subdirectory: %v", err)
 	}
-	if err := os.WriteFile(tmpDir+"/pom.xml", []byte{}, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "pom.xml"), []byte{}, 0644); err != nil {
 		t.Fatalf("Failed to create parent pom.xml: %v", err)
 	}
-	if err := os.WriteFile(moduleDir+"/pom.xml", []byte{}, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(moduleDir, "pom.xml"), []byte{}, 0644); err != nil {
 		t.Fatalf("Failed to create module pom.xml: %v", err)
 	}
 
@@ -748,22 +749,22 @@ func TestFindProjectRoot_MultiModule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
-	if root != tmpDir {
-		t.Errorf("Expected topmost root %q, got %q", tmpDir, root)
+	if root != moduleDir {
+		t.Errorf("Expected nearest root %q, got %q", moduleDir, root)
 	}
 }
 
 func TestFindProjectRoot_GradleMultiModule(t *testing.T) {
 	tmpDir := t.TempDir()
-	moduleDir := tmpDir + "/user-service"
-	subDir := moduleDir + "/src/main/java/com/example"
+	moduleDir := filepath.Join(tmpDir, "user-service")
+	subDir := filepath.Join(moduleDir, "src", "main", "java", "com", "example")
 	if err := os.MkdirAll(subDir, 0755); err != nil {
 		t.Fatalf("Failed to create subdirectory: %v", err)
 	}
-	if err := os.WriteFile(tmpDir+"/build.gradle", []byte{}, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "build.gradle"), []byte{}, 0644); err != nil {
 		t.Fatalf("Failed to create root build.gradle: %v", err)
 	}
-	if err := os.WriteFile(moduleDir+"/build.gradle", []byte{}, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(moduleDir, "build.gradle"), []byte{}, 0644); err != nil {
 		t.Fatalf("Failed to create module build.gradle: %v", err)
 	}
 
@@ -771,8 +772,8 @@ func TestFindProjectRoot_GradleMultiModule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
-	if root != tmpDir {
-		t.Errorf("Expected topmost root %q, got %q", tmpDir, root)
+	if root != moduleDir {
+		t.Errorf("Expected nearest root %q, got %q", moduleDir, root)
 	}
 }
 
