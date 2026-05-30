@@ -246,6 +246,78 @@ func TestParser_RequestMappingWithMethod(t *testing.T) {
 	}
 }
 
+func TestParser_DocumentationMetadata(t *testing.T) {
+	results := []parser.ParseResult{
+		{
+			Classes: []parser.Class{
+				{
+					Name:    "DocumentedController",
+					Package: "com.example.api",
+					Annotations: []parser.Annotation{
+						{Name: "RestController"},
+					},
+					Methods: []parser.Method{
+						{
+							Name:    "getUser",
+							JavaDoc: "JavaDoc fallback",
+							JavaDocParams: map[string]string{
+								"id": "fallback id",
+							},
+							Annotations: []parser.Annotation{
+								{Name: "Operation", Params: map[string]string{
+									"summary":     "Fetch user",
+									"description": "Fetch user by id",
+								}},
+								{Name: "GetMapping", Params: map[string]string{"value": "/users/{id}"}},
+							},
+							Parameters: []parser.Parameter{
+								{
+									Name:    "id",
+									Type:    "Long",
+									JavaDoc: "parameter fallback",
+									Annotations: []parser.Annotation{
+										{Name: "Parameter", Params: map[string]string{
+											"description": "User id",
+											"example":     "42",
+											"required":    "true",
+										}},
+										{Name: "PathVariable"},
+									},
+								},
+							},
+							ReturnType: "DocumentedResponse",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	p := NewParser()
+	controllers := p.ExtractControllers(results)
+	if len(controllers) != 1 || len(controllers[0].Endpoints) != 1 {
+		t.Fatalf("Expected one documented endpoint, got %#v", controllers)
+	}
+
+	endpoint := controllers[0].Endpoints[0]
+	if endpoint.Description != "Fetch user\n\nFetch user by id" {
+		t.Fatalf("Expected annotation endpoint description, got %q", endpoint.Description)
+	}
+	if len(endpoint.Parameters) != 1 {
+		t.Fatalf("Expected one parameter, got %d", len(endpoint.Parameters))
+	}
+	param := endpoint.Parameters[0]
+	if param.Description != "User id" {
+		t.Errorf("Expected parameter description, got %q", param.Description)
+	}
+	if param.Example != "42" {
+		t.Errorf("Expected parameter example, got %q", param.Example)
+	}
+	if !param.Required {
+		t.Error("Expected parameter required from annotation")
+	}
+}
+
 func TestParser_PathCombination(t *testing.T) {
 	tests := []struct {
 		name       string

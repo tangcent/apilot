@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	collector "github.com/tangcent/apilot/api-collector"
+	javadoc "github.com/tangcent/apilot/api-collector-java/doc"
 	"github.com/tangcent/apilot/api-collector-java/parser"
 	model "github.com/tangcent/apilot/api-model"
 )
@@ -45,9 +46,9 @@ type DependencyResolver interface {
 }
 
 type TypeResolver struct {
-	classRegistry     map[string]parser.Class
-	allTypeParams     map[string]bool
-	resolving         map[string]bool
+	classRegistry      map[string]parser.Class
+	allTypeParams      map[string]bool
+	resolving          map[string]bool
 	dependencyResolver DependencyResolver
 }
 
@@ -242,6 +243,25 @@ func (r *TypeResolver) resolveField(f parser.Field, localBindings map[string]str
 	for _, ann := range f.Annotations {
 		if ann.Name == "Nullable" || ann.Name == "Null" {
 			fm.Required = false
+		}
+	}
+	doc := javadoc.FieldDocumentationFor(f.Annotations, f.JavaDoc)
+	if doc.Description != "" {
+		fm.Comment = doc.Description
+	}
+	if doc.Example != "" {
+		fm.Demo = doc.Example
+	}
+	if doc.Default != "" {
+		fm.DefaultValue = doc.Default
+	}
+	if doc.Required != nil {
+		fm.Required = *doc.Required
+	}
+	if len(doc.Enum) > 0 {
+		fm.Options = make([]model.FieldOption, 0, len(doc.Enum))
+		for _, value := range doc.Enum {
+			fm.Options = append(fm.Options, model.FieldOption{Value: value})
 		}
 	}
 	if r.isUnboundTypeParam(f.Type, localBindings, typeParamSet) {
