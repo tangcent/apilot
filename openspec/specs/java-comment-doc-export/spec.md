@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Java Spring MVC APIs often carry public-facing documentation in JavaDoc and Swagger/OpenAPI annotations. This capability ensures the Java collector exports that documentation through existing canonical model fields so downstream formatters can render richer API documentation without contract changes.
+
+## Requirements
 
 ### Requirement: Spring MVC endpoint descriptions
 The Java collector SHALL populate Spring MVC endpoint descriptions from documentation annotations or JavaDoc.
