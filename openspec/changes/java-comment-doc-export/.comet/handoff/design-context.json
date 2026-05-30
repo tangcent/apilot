@@ -1,0 +1,14 @@
+{
+  "change": "java-comment-doc-export",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "a434b04795ac43c817cf9e31045b07a08cbca71f07909358910dcb3d6113c9f6",
+  "files": [
+    { "path": "openspec/changes/java-comment-doc-export/proposal.md", "sha256": "2da11dee33fc183c10ae29892849f184d65fa225555a4d9bf5bb219a246e5b71" },
+    { "path": "openspec/changes/java-comment-doc-export/design.md", "sha256": "0b0028c84fe69da2659b2548a1b0ef3342658405cf31c5d65c8e22f3574a92f9" },
+    { "path": "openspec/changes/java-comment-doc-export/tasks.md", "sha256": "d5aa36f3448e5ecb7b024aab528f0c67e1745a6dede2e4ea45cfe0e755b0fd3d" },
+    { "path": "openspec/changes/java-comment-doc-export/specs/java-comment-doc-export/spec.md", "sha256": "18387b3072a607e72ec3a40e08adf25eac17c7684ad411738059a5f0ab01a3ce" }
+  ]
+}

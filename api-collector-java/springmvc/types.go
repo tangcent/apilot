@@ -21,6 +21,9 @@ type EndpointParameter struct {
 	ParamType    string
 	Required     bool
 	DefaultValue string
+	Description  string
+	Example      string
+	Enum         []string
 }
 
 // Endpoint represents a REST API endpoint
@@ -28,6 +31,7 @@ type Endpoint struct {
 	Path              string
 	Method            HTTPMethod
 	MethodName        string
+	Description       string
 	Parameters        []EndpointParameter
 	ReturnType        string
 	ClassName         string

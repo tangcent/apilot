@@ -1,6 +1,8 @@
 package parser
 
 import (
+	"strings"
+
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -18,6 +20,7 @@ func extractPackageName(node *tree_sitter.Node, source []byte) string {
 // extractClass extracts class information including annotations and methods.
 func extractClass(node *tree_sitter.Node, source []byte) Class {
 	class := Class{}
+	class.JavaDoc = extractLeadingJavaDoc(node, source)
 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -46,7 +49,7 @@ func extractClass(node *tree_sitter.Node, source []byte) Class {
 
 // extractInterface extracts interface information including annotations and methods.
 func extractInterface(node *tree_sitter.Node, source []byte) Class {
-	class := Class{IsInterface: true}
+	class := Class{IsInterface: true, JavaDoc: extractLeadingJavaDoc(node, source)}
 
 	// Extract interface name
 	for i := uint(0); i < node.ChildCount(); i++ {
@@ -123,8 +126,8 @@ func extractAnnotationParams(node *tree_sitter.Node, source []byte, params map[s
 				subChild := child.Child(j)
 				if subChild.Kind() == "identifier" {
 					key = subChild.Utf8Text(source)
-				} else if subChild.Kind() == "string_literal" {
-					value = extractStringLiteral(subChild, source)
+				} else if subChild.Kind() != "=" {
+					value = extractAnnotationValue(subChild, source)
 				}
 			}
 			if key != "" {
@@ -132,7 +135,38 @@ func extractAnnotationParams(node *tree_sitter.Node, source []byte, params map[s
 			}
 		} else if child.Kind() == "string_literal" {
 			params["value"] = extractStringLiteral(child, source)
+		} else if isAnnotationValueNode(child.Kind()) {
+			params["value"] = extractAnnotationValue(child, source)
 		}
+	}
+}
+
+func extractAnnotationValue(node *tree_sitter.Node, source []byte) string {
+	switch node.Kind() {
+	case "string_literal":
+		return extractStringLiteral(node, source)
+	case "true", "false", "decimal_integer_literal", "identifier", "scoped_identifier", "field_access":
+		return node.Utf8Text(source)
+	case "element_value_array_initializer":
+		var values []string
+		for i := uint(0); i < node.ChildCount(); i++ {
+			child := node.Child(i)
+			if isAnnotationValueNode(child.Kind()) {
+				values = append(values, extractAnnotationValue(child, source))
+			}
+		}
+		return strings.Join(values, ",")
+	default:
+		return strings.TrimSpace(node.Utf8Text(source))
+	}
+}
+
+func isAnnotationValueNode(kind string) bool {
+	switch kind {
+	case "string_literal", "true", "false", "decimal_integer_literal", "identifier", "scoped_identifier", "field_access", "element_value_array_initializer":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -143,6 +177,82 @@ func extractStringLiteral(node *tree_sitter.Node, source []byte) string {
 		return text[1 : len(text)-1]
 	}
 	return text
+}
+
+func extractLeadingJavaDoc(node *tree_sitter.Node, source []byte) string {
+	return cleanJavaDoc(rawLeadingJavaDoc(node, source), false)
+}
+
+func rawLeadingJavaDoc(node *tree_sitter.Node, source []byte) string {
+	for prev := node.PrevSibling(); prev != nil; prev = prev.PrevSibling() {
+		switch prev.Kind() {
+		case "line_comment":
+			continue
+		case "block_comment":
+			text := strings.TrimSpace(prev.Utf8Text(source))
+			if strings.HasPrefix(text, "/**") {
+				return text
+			}
+			return ""
+		default:
+			if strings.TrimSpace(prev.Utf8Text(source)) == "" {
+				continue
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
+func cleanJavaDoc(raw string, includeTags bool) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	raw = strings.TrimPrefix(raw, "/**")
+	raw = strings.TrimSuffix(raw, "*/")
+
+	var lines []string
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, "*")
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !includeTags && strings.HasPrefix(line, "@") {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func parseJavaDocParamsFromText(raw string) map[string]string {
+	cleaned := cleanJavaDoc(raw, true)
+	if cleaned == "" {
+		return nil
+	}
+
+	params := make(map[string]string)
+	for _, line := range strings.Split(cleaned, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "@param ") {
+			continue
+		}
+		rest := strings.TrimSpace(strings.TrimPrefix(line, "@param "))
+		parts := strings.Fields(rest)
+		if len(parts) == 0 {
+			continue
+		}
+		name := parts[0]
+		desc := strings.TrimSpace(strings.TrimPrefix(rest, name))
+		params[name] = desc
+	}
+	if len(params) == 0 {
+		return nil
+	}
+	return params
 }
 
 // extractMethods extracts all methods from a class body.
@@ -164,6 +274,8 @@ func extractMethods(classBody *tree_sitter.Node, source []byte) []Method {
 func extractMethod(node *tree_sitter.Node, source []byte) Method {
 	method := Method{}
 
+	method.JavaDoc = extractLeadingJavaDoc(node, source)
+	method.JavaDocParams = parseJavaDocParamsFromText(rawLeadingJavaDoc(node, source))
 	method.Annotations = extractAnnotations(node, source)
 
 	for i := uint(0); i < node.ChildCount(); i++ {
@@ -201,6 +313,7 @@ func extractParameters(node *tree_sitter.Node, source []byte) []Parameter {
 func extractParameter(node *tree_sitter.Node, source []byte) Parameter {
 	param := Parameter{}
 
+	param.JavaDoc = extractLeadingJavaDoc(node, source)
 	param.Annotations = extractAnnotations(node, source)
 
 	for i := uint(0); i < node.ChildCount(); i++ {
@@ -235,7 +348,7 @@ func extractFields(classBody *tree_sitter.Node, source []byte) []Field {
 
 // extractField extracts a single field declaration.
 func extractField(node *tree_sitter.Node, source []byte) *Field {
-	field := &Field{}
+	field := &Field{JavaDoc: extractLeadingJavaDoc(node, source)}
 
 	field.Annotations = extractAnnotations(node, source)
 

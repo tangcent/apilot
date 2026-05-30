@@ -9,10 +9,12 @@ type Annotation struct {
 
 // Method represents a Java method with annotations.
 type Method struct {
-	Name        string
-	Annotations []Annotation
-	Parameters  []Parameter
-	ReturnType  string
+	Name          string
+	Annotations   []Annotation
+	Parameters    []Parameter
+	ReturnType    string
+	JavaDoc       string
+	JavaDocParams map[string]string
 }
 
 // Parameter represents a method parameter.
@@ -20,6 +22,7 @@ type Parameter struct {
 	Name        string
 	Type        string
 	Annotations []Annotation
+	JavaDoc     string
 }
 
 // Field represents a Java class field declaration.
@@ -27,6 +30,7 @@ type Field struct {
 	Name        string
 	Type        string
 	Annotations []Annotation
+	JavaDoc     string
 	IsStatic    bool
 	IsFinal     bool
 }
@@ -35,6 +39,7 @@ type Field struct {
 type Class struct {
 	Name               string
 	Package            string
+	JavaDoc            string
 	IsInterface        bool
 	Annotations        []Annotation
 	Methods            []Method

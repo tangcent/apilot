@@ -5,12 +5,13 @@ import (
 	"strings"
 
 	collector "github.com/tangcent/apilot/api-collector"
+	javadoc "github.com/tangcent/apilot/api-collector-java/doc"
 	"github.com/tangcent/apilot/api-collector-java/parser"
 	"github.com/tangcent/apilot/api-collector-java/resolver"
 )
 
 type Parser struct {
-	dependencyResolver resolver.DependencyResolver
+	dependencyResolver   resolver.DependencyResolver
 	collectorDepResolver collector.DependencyResolver
 }
 
@@ -228,7 +229,7 @@ func (p *Parser) extractEndpoint(method parser.Method, basePath string, class pa
 	var params []EndpointParameter
 	var requestBodyType string
 	for _, param := range method.Parameters {
-		if ep := p.extractParameter(param); ep != nil {
+		if ep := p.extractParameter(param, method.JavaDocParams); ep != nil {
 			params = append(params, *ep)
 			if ep.ParamType == "body" {
 				requestBodyType = param.Type
@@ -237,13 +238,14 @@ func (p *Parser) extractEndpoint(method parser.Method, basePath string, class pa
 	}
 
 	endpoint := &Endpoint{
-		Path:       fullPath,
-		Method:     httpMethod,
-		MethodName: method.Name,
-		Parameters: params,
-		ReturnType: method.ReturnType,
-		ClassName:  class.Name,
-		Package:    class.Package,
+		Path:        fullPath,
+		Method:      httpMethod,
+		MethodName:  method.Name,
+		Description: javadoc.EndpointDescription(method.Annotations, method.JavaDoc),
+		Parameters:  params,
+		ReturnType:  method.ReturnType,
+		ClassName:   class.Name,
+		Package:     class.Package,
 	}
 
 	if requestBodyType != "" {
@@ -309,17 +311,26 @@ func (p *Parser) extractHTTPMethodFromRequestMapping(ann parser.Annotation) HTTP
 	return GET
 }
 
-func (p *Parser) extractParameter(param parser.Parameter) *EndpointParameter {
+func (p *Parser) extractParameter(param parser.Parameter, methodJavaDocParams map[string]string) *EndpointParameter {
 	paramType := p.detectParameterType(param.Annotations)
 	if paramType == "" {
 		return nil
 	}
 
+	paramJavaDoc := param.JavaDoc
+	if paramJavaDoc == "" && methodJavaDocParams != nil {
+		paramJavaDoc = methodJavaDocParams[param.Name]
+	}
+	doc := javadoc.ParameterDocumentation(param.Annotations, paramJavaDoc)
+
 	ep := &EndpointParameter{
-		Name:      param.Name,
-		Type:      param.Type,
-		ParamType: paramType,
-		Required:  true,
+		Name:        param.Name,
+		Type:        param.Type,
+		ParamType:   paramType,
+		Required:    true,
+		Description: doc.Description,
+		Example:     doc.Example,
+		Enum:        doc.Enum,
 	}
 
 	for _, ann := range param.Annotations {
@@ -333,6 +344,12 @@ func (p *Parser) extractParameter(param parser.Parameter) *EndpointParameter {
 				ep.Required = false
 			}
 		}
+	}
+	if doc.Default != "" {
+		ep.DefaultValue = doc.Default
+	}
+	if doc.Required != nil {
+		ep.Required = *doc.Required
 	}
 
 	return ep

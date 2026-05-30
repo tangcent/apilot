@@ -158,6 +158,92 @@ func TestCollect_FrameworkAliases(t *testing.T) {
 	}
 }
 
+func TestCollect_SpringMVCDocumentation(t *testing.T) {
+	c := New()
+	testdataDir, _ := filepath.Abs("testdata")
+
+	endpoints, err := c.Collect(collector.CollectContext{
+		SourceDir:  testdataDir,
+		Frameworks: []string{"spring-mvc"},
+	})
+	if err != nil {
+		t.Fatalf("Collect failed: %v", err)
+	}
+
+	var documented *collector.ApiEndpoint
+	for i := range endpoints {
+		if endpoints[i].Name == "getDocumented" {
+			documented = &endpoints[i]
+			break
+		}
+	}
+	if documented == nil {
+		t.Fatal("Expected getDocumented endpoint")
+	}
+
+	if documented.Description != "Fetch documented item\n\nReturns a documented item by id" {
+		t.Fatalf("Expected endpoint description, got %q", documented.Description)
+	}
+
+	params := make(map[string]collector.ApiParameter)
+	for _, p := range documented.Parameters {
+		params[p.Name] = p
+	}
+
+	id := params["id"]
+	if id.Description != "Documented item id" {
+		t.Errorf("Expected id description, got %q", id.Description)
+	}
+	if id.Example != "42" {
+		t.Errorf("Expected id example, got %q", id.Example)
+	}
+	if !id.Required {
+		t.Error("Expected id to be required")
+	}
+
+	status := params["status"]
+	if status.Description != "fallback status" {
+		t.Errorf("Expected status JavaDoc fallback, got %q", status.Description)
+	}
+	if status.Default != "active" {
+		t.Errorf("Expected status default, got %q", status.Default)
+	}
+	if status.Required {
+		t.Error("Expected status to be optional because it has a default")
+	}
+
+	if documented.RequestBody == nil || documented.RequestBody.Body == nil {
+		t.Fatal("Expected documented request body")
+	}
+	requestName := documented.RequestBody.Body.Fields["name"]
+	if requestName == nil {
+		t.Fatal("Expected documented request field name")
+	}
+	if requestName.Comment != "Requested name" {
+		t.Errorf("Expected request field comment, got %q", requestName.Comment)
+	}
+	if requestName.Demo != "Ada" {
+		t.Errorf("Expected request field demo, got %q", requestName.Demo)
+	}
+	if !requestName.Required {
+		t.Error("Expected request field to be required")
+	}
+
+	if documented.Response == nil || documented.Response.Body == nil {
+		t.Fatal("Expected documented response body")
+	}
+	responseDisplayName := documented.Response.Body.Fields["displayName"]
+	if responseDisplayName == nil {
+		t.Fatal("Expected documented response field displayName")
+	}
+	if responseDisplayName.Comment != "Display name" {
+		t.Errorf("Expected response field comment, got %q", responseDisplayName.Comment)
+	}
+	if responseDisplayName.Demo != "Ada" {
+		t.Errorf("Expected response field demo, got %q", responseDisplayName.Demo)
+	}
+}
+
 func TestCollect_SchemaResolution_SimpleController(t *testing.T) {
 	c := New()
 	testdataDir, _ := filepath.Abs("testdata")

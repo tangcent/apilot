@@ -86,6 +86,95 @@ func TestResolve_SimpleClass(t *testing.T) {
 	}
 }
 
+func TestResolve_DocumentationMetadata(t *testing.T) {
+	classes := []parser.Class{
+		{
+			Name: "DocumentedResponse",
+			Fields: []parser.Field{
+				{
+					Name:    "displayName",
+					Type:    "String",
+					JavaDoc: "Display name fallback",
+					Annotations: []parser.Annotation{
+						{Name: "Schema", Params: map[string]string{
+							"description":     "Display name",
+							"example":         "Ada",
+							"required":        "true",
+							"defaultValue":    "Ada",
+							"allowableValues": "Ada,Grace",
+						}},
+					},
+				},
+				{
+					Name:    "legacyName",
+					Type:    "String",
+					JavaDoc: "Legacy fallback",
+					Annotations: []parser.Annotation{
+						{Name: "ApiModelProperty", Params: map[string]string{
+							"value":    "Legacy display name",
+							"required": "false",
+							"example":  "Grace",
+						}},
+					},
+				},
+				{
+					Name:    "note",
+					Type:    "String",
+					JavaDoc: "JavaDoc note",
+				},
+			},
+		},
+	}
+
+	r := NewTypeResolver(classes)
+	result := r.Resolve("DocumentedResponse", nil)
+	if result.Kind != model.KindObject {
+		t.Fatalf("Expected KindObject, got %s", result.Kind)
+	}
+
+	displayName := result.Fields["displayName"]
+	if displayName == nil {
+		t.Fatal("Expected displayName field")
+	}
+	if displayName.Comment != "Display name" {
+		t.Errorf("Expected Schema comment, got %q", displayName.Comment)
+	}
+	if displayName.Demo != "Ada" {
+		t.Errorf("Expected Schema demo, got %q", displayName.Demo)
+	}
+	if !displayName.Required {
+		t.Error("Expected displayName to be required")
+	}
+	if displayName.DefaultValue != "Ada" {
+		t.Errorf("Expected default value, got %q", displayName.DefaultValue)
+	}
+	if len(displayName.Options) != 2 || displayName.Options[0].Value != "Ada" || displayName.Options[1].Value != "Grace" {
+		t.Fatalf("Expected enum options Ada/Grace, got %#v", displayName.Options)
+	}
+
+	legacyName := result.Fields["legacyName"]
+	if legacyName == nil {
+		t.Fatal("Expected legacyName field")
+	}
+	if legacyName.Comment != "Legacy display name" {
+		t.Errorf("Expected ApiModelProperty comment, got %q", legacyName.Comment)
+	}
+	if legacyName.Required {
+		t.Error("Expected legacyName to be optional from ApiModelProperty")
+	}
+	if legacyName.Demo != "Grace" {
+		t.Errorf("Expected ApiModelProperty demo, got %q", legacyName.Demo)
+	}
+
+	note := result.Fields["note"]
+	if note == nil {
+		t.Fatal("Expected note field")
+	}
+	if note.Comment != "JavaDoc note" {
+		t.Errorf("Expected JavaDoc comment, got %q", note.Comment)
+	}
+}
+
 func TestResolve_GenericClass(t *testing.T) {
 	classes := []parser.Class{
 		{
@@ -518,8 +607,8 @@ func TestResolve_InheritedFieldsWithGenerics(t *testing.T) {
 			},
 		},
 		{
-			Name:              "Product",
-			SuperClass:        "TypedEntity",
+			Name:               "Product",
+			SuperClass:         "TypedEntity",
 			SuperClassTypeArgs: []string{"String"},
 			Fields: []parser.Field{
 				{Name: "productName", Type: "String"},
@@ -630,10 +719,10 @@ func TestResolve_InheritedFieldsWithGenericSuperclass(t *testing.T) {
 			},
 		},
 		{
-			Name:              "OrderController",
-			SuperClass:        "BaseCrudController",
+			Name:               "OrderController",
+			SuperClass:         "BaseCrudController",
 			SuperClassTypeArgs: []string{"CreateOrderReq", "OrderVO"},
-			Fields:            []parser.Field{},
+			Fields:             []parser.Field{},
 		},
 		{
 			Name: "CreateOrderReq",

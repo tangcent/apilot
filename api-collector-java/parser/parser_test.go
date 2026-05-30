@@ -215,6 +215,141 @@ func TestParser_ParseDirectoryParallel(t *testing.T) {
 	}
 }
 
+func TestParser_ExtractsDocumentationMetadata(t *testing.T) {
+	p, err := NewParser(ParserOptions{LogLevel: LogLevelError})
+	if err != nil {
+		t.Fatalf("Failed to create parser: %v", err)
+	}
+	defer p.Close()
+
+	source := []byte(`package com.example;
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Schema;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+
+/**
+ * Documented API
+ */
+public class DocumentedController {
+    /**
+     * Fetch by id.
+     *
+     * @param id fallback id
+     */
+    @Operation(summary = "Fetch user", description = "Fetch user by id")
+    @GetMapping("/{id}")
+    public DocumentedResponse getUser(
+            /**
+             * user id
+             */
+            @Parameter(description = "User id", example = "42", required = true)
+            @PathVariable Long id) {
+        return null;
+    }
+}
+
+class DocumentedResponse {
+    /**
+     * Display name fallback
+     */
+    @Schema(description = "Display name", example = "Ada", required = true, allowableValues = {"Ada", "Grace"})
+    private String name;
+}`)
+
+	classes, err := p.ParseSource(source)
+	if err != nil {
+		t.Fatalf("Failed to parse source: %v", err)
+	}
+	if len(classes) != 2 {
+		t.Fatalf("Expected 2 classes, got %d", len(classes))
+	}
+
+	controller := classes[0]
+	if controller.JavaDoc != "Documented API" {
+		t.Fatalf("Expected class JavaDoc, got %q", controller.JavaDoc)
+	}
+	if len(controller.Methods) != 1 {
+		t.Fatalf("Expected 1 method, got %d", len(controller.Methods))
+	}
+
+	method := controller.Methods[0]
+	if method.JavaDoc != "Fetch by id." {
+		t.Errorf("Expected method JavaDoc, got %q", method.JavaDoc)
+	}
+	if method.JavaDocParams["id"] != "fallback id" {
+		t.Errorf("Expected @param fallback, got %q", method.JavaDocParams["id"])
+	}
+
+	operation := findAnnotation(method.Annotations, "Operation")
+	if operation == nil {
+		t.Fatal("Expected Operation annotation")
+	}
+	if operation.Params["summary"] != "Fetch user" {
+		t.Errorf("Expected Operation summary, got %q", operation.Params["summary"])
+	}
+	if operation.Params["description"] != "Fetch user by id" {
+		t.Errorf("Expected Operation description, got %q", operation.Params["description"])
+	}
+
+	if len(method.Parameters) != 1 {
+		t.Fatalf("Expected 1 parameter, got %d", len(method.Parameters))
+	}
+	param := method.Parameters[0]
+	if param.JavaDoc != "user id" {
+		t.Errorf("Expected parameter JavaDoc, got %q", param.JavaDoc)
+	}
+	parameterAnn := findAnnotation(param.Annotations, "Parameter")
+	if parameterAnn == nil {
+		t.Fatal("Expected Parameter annotation")
+	}
+	if parameterAnn.Params["description"] != "User id" {
+		t.Errorf("Expected Parameter description, got %q", parameterAnn.Params["description"])
+	}
+	if parameterAnn.Params["example"] != "42" {
+		t.Errorf("Expected Parameter example, got %q", parameterAnn.Params["example"])
+	}
+	if parameterAnn.Params["required"] != "true" {
+		t.Errorf("Expected Parameter required, got %q", parameterAnn.Params["required"])
+	}
+
+	response := classes[1]
+	if len(response.Fields) != 1 {
+		t.Fatalf("Expected 1 response field, got %d", len(response.Fields))
+	}
+	field := response.Fields[0]
+	if field.JavaDoc != "Display name fallback" {
+		t.Errorf("Expected field JavaDoc, got %q", field.JavaDoc)
+	}
+	schema := findAnnotation(field.Annotations, "Schema")
+	if schema == nil {
+		t.Fatal("Expected Schema annotation")
+	}
+	if schema.Params["description"] != "Display name" {
+		t.Errorf("Expected Schema description, got %q", schema.Params["description"])
+	}
+	if schema.Params["example"] != "Ada" {
+		t.Errorf("Expected Schema example, got %q", schema.Params["example"])
+	}
+	if schema.Params["required"] != "true" {
+		t.Errorf("Expected Schema required, got %q", schema.Params["required"])
+	}
+	if schema.Params["allowableValues"] != "Ada,Grace" {
+		t.Errorf("Expected Schema allowableValues, got %q", schema.Params["allowableValues"])
+	}
+}
+
+func findAnnotation(annotations []Annotation, name string) *Annotation {
+	for i := range annotations {
+		if annotations[i].Name == name {
+			return &annotations[i]
+		}
+	}
+	return nil
+}
+
 func TestParser_LogLevels(t *testing.T) {
 	for _, level := range []LogLevel{LogLevelDebug, LogLevelInfo, LogLevelWarn, LogLevelError} {
 		p, err := NewParser(ParserOptions{
