@@ -1,14 +1,14 @@
 workflow: full
-phase: verify
+phase: archive
 build_mode: executing-plans
 isolation: branch
 verify_mode: full
 design_doc: docs/superpowers/specs/2026-05-30-java-comment-doc-export-design.md
 plan: docs/superpowers/plans/2026-05-30-java-comment-doc-export.md
-verify_result: pending
+verify_result: pass
 verification_report: docs/superpowers/reports/2026-05-30-java-comment-doc-export-verify.md
 branch_status: handled
-verified_at: null
+verified_at: 2026-05-30
 archived: false
 handoff_context: openspec/changes/java-comment-doc-export/.comet/handoff/design-context.json
 handoff_hash: a434b04795ac43c817cf9e31045b07a08cbca71f07909358910dcb3d6113c9f6
