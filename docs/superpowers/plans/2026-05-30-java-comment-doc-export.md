@@ -2,6 +2,7 @@
 change: java-comment-doc-export
 design-doc: docs/superpowers/specs/2026-05-30-java-comment-doc-export-design.md
 base-ref: bfcd220372c6f1b9e2d2ffefe83c54f19f8a3dc5
+archived-with: 2026-05-30-java-comment-doc-export
 ---
 
 # Java Comment Doc Export Implementation Plan
@@ -13,8 +14,6 @@ base-ref: bfcd220372c6f1b9e2d2ffefe83c54f19f8a3dc5
 **Architecture:** Extend the Java parser to retain JavaDoc and richer annotation values, add Java documentation normalization helpers, enrich Spring MVC endpoints and resolved field models, then verify via parser and collector tests. No formatter contract changes are planned because Markdown already renders existing description fields.
 
 **Tech Stack:** Go, tree-sitter Java bindings, existing `api-collector-java` parser/resolver/Spring MVC packages, Go test.
-
----
 
 ## File Structure
 

@@ -2,6 +2,8 @@
 comet_change: java-comment-doc-export
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-05-30-java-comment-doc-export
+status: final
 ---
 
 # Java Comment Documentation Export Design
