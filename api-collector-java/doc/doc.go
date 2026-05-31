@@ -56,7 +56,7 @@ func EndpointDescription(annotations []parser.Annotation, javaDoc string) string
 
 func ParameterDocumentation(annotations []parser.Annotation, javaDoc string) FieldDocumentation {
 	doc := FieldDocumentation{Description: strings.TrimSpace(javaDoc)}
-	for _, name := range []string{"Parameter", "Schema"} {
+	for _, name := range []string{"Parameter", "ApiParam", "Schema"} {
 		if ann := findAnnotation(annotations, name); ann != nil {
 			applyCommonParams(&doc, ann.Params)
 		}
