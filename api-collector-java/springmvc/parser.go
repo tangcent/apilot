@@ -274,7 +274,7 @@ func (p *Parser) extractMethodInfo(annotations []parser.Annotation) (HTTPMethod,
 		case "PatchMapping":
 			return PATCH, p.extractPathFromMapping(ann)
 		case "RequestMapping":
-			method := p.extractHTTPMethodFromRequestMapping(ann)
+			method := p.extractHTTPMethodFromRequestMapping(ann, annotations)
 			path := p.extractPathFromMapping(ann)
 			return method, path
 		}
@@ -292,7 +292,7 @@ func (p *Parser) extractPathFromMapping(ann parser.Annotation) string {
 	return ""
 }
 
-func (p *Parser) extractHTTPMethodFromRequestMapping(ann parser.Annotation) HTTPMethod {
+func (p *Parser) extractHTTPMethodFromRequestMapping(ann parser.Annotation, allAnnotations []parser.Annotation) HTTPMethod {
 	if method, ok := ann.Params["method"]; ok {
 		method = strings.TrimPrefix(method, "RequestMethod.")
 		switch method {
@@ -306,6 +306,25 @@ func (p *Parser) extractHTTPMethodFromRequestMapping(ann parser.Annotation) HTTP
 			return DELETE
 		case "PATCH":
 			return PATCH
+		}
+	}
+	// Fallback: check @ApiOperation(httpMethod = "POST") from Swagger 2.
+	for _, a := range allAnnotations {
+		if a.Name == "ApiOperation" {
+			if httpMethod, ok := a.Params["httpMethod"]; ok {
+				switch strings.ToUpper(strings.TrimSpace(httpMethod)) {
+				case "GET":
+					return GET
+				case "POST":
+					return POST
+				case "PUT":
+					return PUT
+				case "DELETE":
+					return DELETE
+				case "PATCH":
+					return PATCH
+				}
+			}
 		}
 	}
 	return GET
@@ -356,16 +375,24 @@ func (p *Parser) extractParameter(param parser.Parameter, methodJavaDocParams ma
 }
 
 func (p *Parser) detectParameterType(annotations []parser.Annotation) string {
+	// Check definitive parameter type annotations first (highest priority).
 	for _, ann := range annotations {
 		switch ann.Name {
 		case "PathVariable":
 			return "path"
-		case "RequestParam":
-			return "query"
 		case "RequestBody":
 			return "body"
 		case "RequestHeader":
 			return "header"
+		case "RequestParam":
+			return "query"
+		}
+	}
+	// @ApiParam as fallback: treat as query parameter when no explicit
+	// Spring binding annotation is present.
+	for _, ann := range annotations {
+		if ann.Name == "ApiParam" {
+			return "query"
 		}
 	}
 	return ""

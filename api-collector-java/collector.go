@@ -110,7 +110,19 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 		}
 	}
 
-	return endpoints, nil
+	// Deduplicate endpoints by (Folder, Path, Method, Name) to avoid
+	// duplicates when a single file is parsed both individually and as
+	// part of directory scanning for type resolution.
+	seen := make(map[string]bool, len(endpoints))
+	deduped := make([]collector.ApiEndpoint, 0, len(endpoints))
+	for _, ep := range endpoints {
+		key := ep.Folder + "|" + ep.Path + "|" + ep.Method + "|" + ep.Name
+		if !seen[key] {
+			seen[key] = true
+			deduped = append(deduped, ep)
+		}
+	}
+	return deduped, nil
 }
 
 // resolveFrameworks returns the set of frameworks to parse.

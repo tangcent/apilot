@@ -606,3 +606,127 @@ func TestCollect_SchemaResolution_InheritedModelFields(t *testing.T) {
 		}
 	}
 }
+
+func TestCollect_Swagger2_ApiParam(t *testing.T) {
+	c := New()
+	testdataDir, _ := filepath.Abs("testdata")
+
+	endpoints, err := c.Collect(collector.CollectContext{
+		SourceDir:  testdataDir,
+		Frameworks: []string{"spring-mvc"},
+	})
+	if err != nil {
+		t.Fatalf("Collect failed: %v", err)
+	}
+
+	// Find Swagger2Controller endpoints
+	var createEp, getByIdEp, searchEp *collector.ApiEndpoint
+	for i := range endpoints {
+		if endpoints[i].Folder != "Swagger2Controller" {
+			continue
+		}
+		switch endpoints[i].Name {
+		case "create":
+			createEp = &endpoints[i]
+		case "getById":
+			getByIdEp = &endpoints[i]
+		case "search":
+			searchEp = &endpoints[i]
+		}
+	}
+
+	// Test 1: @ApiOperation(httpMethod = "POST") with @RequestMapping
+	if createEp == nil {
+		t.Fatal("Expected create endpoint from Swagger2Controller")
+	}
+	if createEp.Method != "POST" {
+		t.Errorf("Expected POST method from @ApiOperation(httpMethod), got %q", createEp.Method)
+	}
+	if createEp.Description != "Create item" {
+		t.Errorf("Expected 'Create item' from @ApiOperation(value), got %q", createEp.Description)
+	}
+
+	// Test 2: @ApiParam description extraction
+	params := make(map[string]collector.ApiParameter)
+	for _, p := range createEp.Parameters {
+		params[p.Name] = p
+	}
+	nameParam := params["name"]
+	if nameParam.Description != "Item name" {
+		t.Errorf("Expected 'Item name' from @ApiParam, got %q", nameParam.Description)
+	}
+	descParam := params["desc"]
+	if descParam.Description != "Item description" {
+		t.Errorf("Expected 'Item description' from @ApiParam(value), got %q", descParam.Description)
+	}
+	if descParam.Required {
+		t.Error("Expected desc to be optional because @ApiParam(required=false)")
+	}
+	if descParam.Default != "N/A" {
+		t.Errorf("Expected 'N/A' default from @ApiParam(defaultValue), got %q", descParam.Default)
+	}
+
+	// Test 3: @ApiParam with @PathVariable still resolves to path type
+	if getByIdEp == nil {
+		t.Fatal("Expected getById endpoint from Swagger2Controller")
+	}
+	pathParams := make(map[string]collector.ApiParameter)
+	for _, p := range getByIdEp.Parameters {
+		pathParams[p.Name] = p
+	}
+	idParam := pathParams["id"]
+	if idParam.In != "path" {
+		t.Errorf("Expected id to be 'path' type, got %q", idParam.In)
+	}
+	if idParam.Description != "Item ID" {
+		t.Errorf("Expected 'Item ID' from @ApiParam, got %q", idParam.Description)
+	}
+	if getByIdEp.Description != "Get item by id\n\nReturns a single item" {
+		t.Errorf("Expected combined @ApiOperation(value, notes), got %q", getByIdEp.Description)
+	}
+
+	// Test 4: @ApiParam without @RequestParam defaults to query
+	if searchEp == nil {
+		t.Fatal("Expected search endpoint from Swagger2Controller")
+	}
+	queryParams := make(map[string]collector.ApiParameter)
+	for _, p := range searchEp.Parameters {
+		queryParams[p.Name] = p
+	}
+	keywordParam := queryParams["keyword"]
+	if keywordParam.In != "query" {
+		t.Errorf("Expected keyword to default to 'query' via @ApiParam, got %q", keywordParam.In)
+	}
+	if keywordParam.Description != "Search keyword" {
+		t.Errorf("Expected 'Search keyword' from @ApiParam, got %q", keywordParam.Description)
+	}
+
+	// Test 5: @RequestMapping without method or @ApiOperation defaults to GET
+	if searchEp.Method != "GET" {
+		t.Errorf("Expected GET as default for @RequestMapping without method, got %q", searchEp.Method)
+	}
+}
+
+func TestCollect_Deduplication(t *testing.T) {
+	c := New()
+	testdataDir, _ := filepath.Abs("testdata")
+
+	// Collect all frameworks — ensures no duplicates from directory scanning
+	endpoints, err := c.Collect(collector.CollectContext{
+		SourceDir: testdataDir,
+	})
+	if err != nil {
+		t.Fatalf("Collect failed: %v", err)
+	}
+
+	seen := make(map[string]int)
+	for _, ep := range endpoints {
+		key := ep.Folder + "|" + ep.Path + "|" + ep.Method + "|" + ep.Name
+		seen[key]++
+	}
+	for key, count := range seen {
+		if count > 1 {
+			t.Errorf("Duplicate endpoint: %s (count=%d)", key, count)
+		}
+	}
+}
