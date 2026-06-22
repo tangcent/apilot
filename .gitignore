@@ -20,6 +20,9 @@ bin/
 .vscode/
 /vscode-plugin/node_modules/
 /vscode-plugin/out/
+*.vsix
+test_err.txt
+test_output.md
 /apilot
 /apilot-darwin-*
 /apilot-cli/apilot

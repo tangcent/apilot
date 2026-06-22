@@ -1,15 +1,11 @@
 import * as cp from 'child_process';
 import * as vscode from 'vscode';
-import { Settings } from './settings';
+import { Settings, ExportOptions } from './settings';
 import { resolveBinary } from './binaryResolver';
 
 const outputChannel = vscode.window.createOutputChannel('APilot');
 
-/**
- * Runs apilot-cli against the given source directory and writes output
- * to the configured destination (VSCode channel or file).
- */
-export async function runExport(sourcePath: string, settings: Settings): Promise<void> {
+export async function runExport(sourcePath: string, settings: Settings, options: ExportOptions): Promise<void> {
   let binary: string;
   try {
     binary = resolveBinary(settings);
@@ -18,15 +14,20 @@ export async function runExport(sourcePath: string, settings: Settings): Promise
     return;
   }
 
+  const params: Record<string, any> = { variant: options.format };
+  if (options.formatter === 'postman' && settings.postmanApiKey) {
+    params.postmanApiKey = settings.postmanApiKey;
+  }
+
   const args = [
     'export',
-    '--formatter', settings.formatter,
-    '--params', JSON.stringify({ variant: settings.format }),
+    '--formatter', options.formatter,
+    '--params', JSON.stringify(params),
     sourcePath,
   ];
 
-  if (settings.outputDestination === 'file' && settings.outputFile) {
-    args.push('--output', settings.outputFile);
+  if (options.outputDestination === 'file' && options.outputFile) {
+    args.push('--output', options.outputFile);
   }
 
   return new Promise((resolve) => {
@@ -45,12 +46,12 @@ export async function runExport(sourcePath: string, settings: Settings): Promise
     proc.on('close', (code) => {
       if (code !== 0) {
         vscode.window.showErrorMessage(`APilot failed:\n${stderr}`);
-      } else if (settings.outputDestination === 'channel') {
+      } else if (options.outputDestination === 'channel') {
         outputChannel.clear();
         outputChannel.append(stdout);
         outputChannel.show();
-      } else if (settings.outputDestination === 'file' && settings.outputFile) {
-        vscode.window.showInformationMessage(`APilot: output written to ${settings.outputFile}`);
+      } else if (options.outputDestination === 'file' && options.outputFile) {
+        vscode.window.showInformationMessage(`APilot: output written to ${options.outputFile}`);
       }
       resolve();
     });

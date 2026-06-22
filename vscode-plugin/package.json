@@ -75,6 +75,11 @@
           "type": "string",
           "default": "",
           "description": "Custom path to apilot-cli binary (overrides bundled binary)"
+        },
+        "apilot.postmanApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Postman API key (used when formatter is 'postman')"
         }
       }
     }

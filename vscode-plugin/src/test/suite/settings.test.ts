@@ -9,11 +9,13 @@ suite('settings', () => {
     const outputDestination = cfg.get<string>('outputDestination', 'channel');
     const outputFile = cfg.get<string>('outputFile', '');
     const binaryPath = cfg.get<string>('binaryPath', '');
+    const postmanApiKey = cfg.get<string>('postmanApiKey', '');
 
     assert.strictEqual(formatter, 'markdown');
     assert.strictEqual(format, 'simple');
     assert.strictEqual(outputDestination, 'channel');
     assert.strictEqual(outputFile, '');
     assert.strictEqual(binaryPath, '');
+    assert.strictEqual(postmanApiKey, '');
   });
 });
