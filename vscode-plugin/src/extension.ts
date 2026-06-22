@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { getSettings } from './settings';
 import { runExport } from './runner';
+import { showExportDialog } from './exportDialog';
 
 export function activate(context: vscode.ExtensionContext): void {
   const cmd = vscode.commands.registerCommand('apilot.export', async (uri?: vscode.Uri) => {
@@ -17,7 +18,19 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     const settings = getSettings();
-    await runExport(sourcePath, settings);
+
+    const exportOptions = await showExportDialog({
+      formatter: settings.formatter,
+      format: settings.format,
+      outputDestination: settings.outputDestination,
+      outputFile: settings.outputFile,
+    });
+
+    if (!exportOptions) {
+      return;
+    }
+
+    await runExport(sourcePath, settings, exportOptions);
   });
 
   context.subscriptions.push(cmd);

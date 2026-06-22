@@ -11,6 +11,7 @@ suite('binaryResolver', () => {
       outputDestination: 'channel',
       outputFile: '',
       binaryPath: '/usr/local/bin/custom-apilot',
+      postmanApiKey: '',
     };
     assert.strictEqual(resolveBinary(settings), '/usr/local/bin/custom-apilot');
   });
@@ -22,6 +23,7 @@ suite('binaryResolver', () => {
       outputDestination: 'channel',
       outputFile: '',
       binaryPath: '',
+      postmanApiKey: '',
     };
 
     let thrownError: Error | null = null;
