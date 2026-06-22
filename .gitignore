@@ -26,3 +26,4 @@ test_output.md
 /apilot
 /apilot-darwin-*
 /apilot-cli/apilot
+.verify/
