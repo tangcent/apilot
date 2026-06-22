@@ -1,3 +1,32 @@
+## [0.1.3] - 2026-06-23
+
+### Added
+-  enhance samples with 10+ controllers, generic bases, and complex DTOs
+-  add export dialog for per-export formatter and destination
+-  export spring mvc documentation comments
+-  add pip dependency resolver for Python site-packages model resolution (#123) (#128)
+-  resolve dependency structs from Go module cache (#122) (#127)
+-  resolve types from node_modules .d.ts files for complete API schemas (#126)
+-  add DependencyResolver (#125)
+- feat(java): wire maven-indexer-cli into TypeResolver for dependency class resolution (#124)
+-  support file-level and method-level API export (#118)
+-  per-project Postman workspace/collection binding with smart mode detection (#116)
+
+### Fixed
+-  support swagger2 api params
+-  correct archive arch/platform naming in plugin-package.sh (#129)
+
+### Improved
+- chore: normalize archived java doc spec
+- chore: archive java doc export change
+- chore: mark java doc export verified
+- chore: record java doc export verification
+- ci: fix fork-PR workflow permissions (#131)
+- doc: remove outdated research, POC results, and completed spec docs
+- chore: correct changelog line number comparison
+
+---
+
 ## [0.1.2] - 2026-04-26
 
 ### Added
