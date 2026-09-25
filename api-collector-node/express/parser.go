@@ -25,71 +25,16 @@ var httpMethods = map[string]bool{
 }
 
 func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
-	allFiles, err := discoverSourceFiles(sourceDir)
-	if err != nil || len(allFiles) == 0 {
-		return nil, nil
-	}
-
-	var tsFiles []string
-	var jsFiles []string
-	for _, f := range allFiles {
-		if strings.HasSuffix(f, ".ts") || strings.HasSuffix(f, ".tsx") {
-			tsFiles = append(tsFiles, f)
-		} else {
-			jsFiles = append(jsFiles, f)
-		}
-	}
-
-	typeRegistry := NewTSTypeRegistry()
-	if len(tsFiles) > 0 {
-		reg, err := ParseTSTypes(sourceDir)
-		if err == nil && reg != nil {
-			typeRegistry = reg
-		}
-	}
-
-	ch := make(chan fileResult, len(allFiles))
-	var wg sync.WaitGroup
-
-	for _, path := range jsFiles {
-		wg.Add(1)
-		go func(filePath string) {
-			defer wg.Done()
-			res := processJSFile(filePath, typeRegistry)
-			ch <- res
-		}(path)
-	}
-
-	for _, path := range tsFiles {
-		wg.Add(1)
-		go func(filePath string) {
-			defer wg.Done()
-			res := processTSFile(filePath, typeRegistry)
-			ch <- res
-		}(path)
-	}
-
-	go func() {
-		wg.Wait()
-		close(ch)
-	}()
-
-	var allEndpoints []collector.ApiEndpoint
-	for res := range ch {
-		if res.err != nil {
-			continue
-		}
-		allEndpoints = append(allEndpoints, res.endpoints...)
-	}
-
-	if len(allEndpoints) == 0 {
-		return nil, nil
-	}
-
-	return allEndpoints, nil
+	return ParseWithUnresolved(sourceDir, nil, nil)
 }
 
 func ParseWithDependencyResolver(sourceDir string, depResolver collector.DependencyResolver) ([]collector.ApiEndpoint, error) {
+	return ParseWithUnresolved(sourceDir, depResolver, nil)
+}
+
+// ParseWithUnresolved is Parse plus an optional sink that records type names the
+// resolver could not expand. depResolver and unresolved may both be nil.
+func ParseWithUnresolved(sourceDir string, depResolver collector.DependencyResolver, unresolved *collector.UnresolvedSet) ([]collector.ApiEndpoint, error) {
 	allFiles, err := discoverSourceFiles(sourceDir)
 	if err != nil || len(allFiles) == 0 {
 		return nil, nil
@@ -114,8 +59,9 @@ func ParseWithDependencyResolver(sourceDir string, depResolver collector.Depende
 	}
 
 	ctx := &parseContext{
-		typeRegistry:    typeRegistry,
+		typeRegistry:       typeRegistry,
 		dependencyResolver: depResolver,
+		unresolved:         unresolved,
 	}
 
 	ch := make(chan fileResult, len(allFiles))
@@ -162,6 +108,7 @@ func ParseWithDependencyResolver(sourceDir string, depResolver collector.Depende
 type parseContext struct {
 	typeRegistry       *TSTypeRegistry
 	dependencyResolver collector.DependencyResolver
+	unresolved         *collector.UnresolvedSet
 }
 
 func (ctx *parseContext) processJSFile(filePath string) fileResult {
@@ -295,7 +242,7 @@ func (ctx *parseContext) extractFromCallExpression(callNode *tree_sitter.Node, s
 	if ctx.typeRegistry != nil {
 		handlerInfo := AnalyzeExpressHandler(callNode, source)
 		if handlerInfo != nil {
-			reqBody, resBody := ResolveHandlerTypesWithDepResolver(handlerInfo, ctx.typeRegistry, ctx.dependencyResolver)
+			reqBody, resBody := ResolveHandlerTypesWithUnresolved(handlerInfo, ctx.typeRegistry, ctx.dependencyResolver, ctx.unresolved)
 			if reqBody != nil && !reqBody.IsNull() {
 				ep.RequestBody = &collector.ApiBody{
 					MediaType: "application/json",

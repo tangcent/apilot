@@ -345,10 +345,12 @@ func TestCollect_SchemaResolution_OrderController(t *testing.T) {
 		}
 	}
 
+	// `Map<String, Object>`: the value is java.lang.Object, which carries no
+	// fields, so an empty object is its true shape rather than an opaque scalar.
 	attrsField := resp.Fields["attributes"]
 	if attrsField != nil && attrsField.Model != nil && attrsField.Model.ValueModel != nil {
-		if !attrsField.Model.ValueModel.IsSingle() {
-			t.Errorf("Expected attributes value model to be single, got kind=%s", attrsField.Model.ValueModel.Kind)
+		if !attrsField.Model.ValueModel.IsObject() {
+			t.Errorf("Expected attributes value model to be an empty object, got kind=%s", attrsField.Model.ValueModel.Kind)
 		}
 	}
 }
@@ -584,8 +586,10 @@ func TestCollect_SchemaResolution_InheritedModelFields(t *testing.T) {
 		typeName string
 	}{
 		{"id", model.KindSingle, model.JsonTypeLong},
-		{"createdAt", model.KindSingle, "LocalDateTime"},
-		{"updatedAt", model.KindSingle, "LocalDateTime"},
+		// java.time.LocalDateTime is a scalar on the wire (easy-yapi declares
+		// the same `json.rule.convert[java.time.LocalDateTime]=java.lang.String`).
+		{"createdAt", model.KindSingle, model.JsonTypeString},
+		{"updatedAt", model.KindSingle, model.JsonTypeString},
 	}
 
 	for _, ef := range expectedInheritedFields {

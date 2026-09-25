@@ -452,7 +452,7 @@ func TestMapJSONSchemaType(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := mapJSONSchemaType(tt.input)
+		result := mapJSONSchemaType(tt.input, nil)
 		if string(result.Kind) != tt.kind {
 			t.Errorf("mapJSONSchemaType(%q).Kind = %q, want %q", tt.input, result.Kind, tt.kind)
 		}

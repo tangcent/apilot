@@ -55,6 +55,7 @@ type TSTypeResolver struct {
 	registry           *TSTypeRegistry
 	resolving          map[string]bool
 	dependencyResolver collector.DependencyResolver
+	unresolved         *collector.UnresolvedSet
 }
 
 func NewTSTypeResolver(registry *TSTypeRegistry) *TSTypeResolver {
@@ -66,6 +67,24 @@ func NewTSTypeResolver(registry *TSTypeRegistry) *TSTypeResolver {
 
 func (r *TSTypeResolver) SetDependencyResolver(dr collector.DependencyResolver) {
 	r.dependencyResolver = dr
+}
+
+// SetUnresolved attaches a shared sink that records type names this resolver
+// could not expand. It is optional; without it Resolve behaves as before.
+func (r *TSTypeResolver) SetUnresolved(u *collector.UnresolvedSet) {
+	r.unresolved = u
+}
+
+// Unresolved returns the type names this resolver failed to resolve, mapped to
+// their occurrence counts.
+func (r *TSTypeResolver) Unresolved() map[string]int {
+	return r.unresolved.Counts()
+}
+
+// recordUnresolved notes that typeName could not be expanded into fields and
+// was rendered as an opaque single value.
+func (r *TSTypeResolver) recordUnresolved(typeName string) {
+	r.unresolved.Record(typeName)
 }
 
 func (r *TSTypeResolver) Resolve(rawType string, typeBindings map[string]string) *model.ObjectModel {
@@ -147,6 +166,7 @@ func (r *TSTypeResolver) Resolve(rawType string, typeBindings map[string]string)
 		}
 	}
 
+	r.recordUnresolved(rawType)
 	return model.SingleModel(rawType)
 }
 
@@ -167,6 +187,7 @@ func (r *TSTypeResolver) resolveUnionType(rawType string, typeBindings map[strin
 		return result
 	}
 
+	r.recordUnresolved(rawType)
 	return model.SingleModel(rawType)
 }
 
@@ -194,6 +215,7 @@ func (r *TSTypeResolver) resolveIntersectionType(rawType string, typeBindings ma
 		}
 	}
 
+	r.recordUnresolved(rawType)
 	return model.SingleModel("object")
 }
 
@@ -285,6 +307,7 @@ func (r *TSTypeResolver) resolveGenericType(baseName string, typeArgs []string, 
 		return r.resolveTypeAlias(alias, typeArgs, typeBindings)
 	}
 
+	r.recordUnresolved(baseName)
 	return model.SingleModel(baseName)
 }
 
@@ -392,10 +415,17 @@ func ResolveHandlerTypes(handlerInfo *ExpressHandlerInfo, registry *TSTypeRegist
 }
 
 func ResolveHandlerTypesWithDepResolver(handlerInfo *ExpressHandlerInfo, registry *TSTypeRegistry, depResolver collector.DependencyResolver) (reqBody *model.ObjectModel, resBody *model.ObjectModel) {
+	return ResolveHandlerTypesWithUnresolved(handlerInfo, registry, depResolver, nil)
+}
+
+// ResolveHandlerTypesWithUnresolved resolves handler request/response types,
+// recording into unresolved (may be nil) every type name it cannot expand.
+func ResolveHandlerTypesWithUnresolved(handlerInfo *ExpressHandlerInfo, registry *TSTypeRegistry, depResolver collector.DependencyResolver, unresolved *collector.UnresolvedSet) (reqBody *model.ObjectModel, resBody *model.ObjectModel) {
 	resolver := NewTSTypeResolver(registry)
 	if depResolver != nil {
 		resolver.SetDependencyResolver(depResolver)
 	}
+	resolver.SetUnresolved(unresolved)
 
 	if handlerInfo.ReqBodyType != "" {
 		reqBody = resolver.Resolve(handlerInfo.ReqBodyType, nil)

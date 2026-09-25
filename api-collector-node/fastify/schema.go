@@ -3,6 +3,7 @@ package fastify
 import (
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 
+	collector "github.com/tangcent/apilot/api-collector"
 	model "github.com/tangcent/apilot/api-model"
 )
 
@@ -74,7 +75,7 @@ func extractSchemaFromRouteObject(objNode *tree_sitter.Node, source []byte) *tre
 	return nil
 }
 
-func extractSchemaBody(schemaNode *tree_sitter.Node, source []byte) *model.ObjectModel {
+func extractSchemaBody(schemaNode *tree_sitter.Node, source []byte, unresolved *collector.UnresolvedSet) *model.ObjectModel {
 	for i := uint(0); i < schemaNode.ChildCount(); i++ {
 		child := schemaNode.Child(i)
 		if child.Kind() != "pair" {
@@ -83,14 +84,14 @@ func extractSchemaBody(schemaNode *tree_sitter.Node, source []byte) *model.Objec
 
 		key := extractPairKey(child, source)
 		if key == "body" {
-			return extractSchemaValue(child, source)
+			return extractSchemaValue(child, source, unresolved)
 		}
 	}
 
 	return nil
 }
 
-func extractSchemaQuery(schemaNode *tree_sitter.Node, source []byte) *model.ObjectModel {
+func extractSchemaQuery(schemaNode *tree_sitter.Node, source []byte, unresolved *collector.UnresolvedSet) *model.ObjectModel {
 	for i := uint(0); i < schemaNode.ChildCount(); i++ {
 		child := schemaNode.Child(i)
 		if child.Kind() != "pair" {
@@ -99,14 +100,14 @@ func extractSchemaQuery(schemaNode *tree_sitter.Node, source []byte) *model.Obje
 
 		key := extractPairKey(child, source)
 		if key == "querystring" || key == "query" {
-			return extractSchemaValue(child, source)
+			return extractSchemaValue(child, source, unresolved)
 		}
 	}
 
 	return nil
 }
 
-func extractSchemaParams(schemaNode *tree_sitter.Node, source []byte) *model.ObjectModel {
+func extractSchemaParams(schemaNode *tree_sitter.Node, source []byte, unresolved *collector.UnresolvedSet) *model.ObjectModel {
 	for i := uint(0); i < schemaNode.ChildCount(); i++ {
 		child := schemaNode.Child(i)
 		if child.Kind() != "pair" {
@@ -115,14 +116,14 @@ func extractSchemaParams(schemaNode *tree_sitter.Node, source []byte) *model.Obj
 
 		key := extractPairKey(child, source)
 		if key == "params" {
-			return extractSchemaValue(child, source)
+			return extractSchemaValue(child, source, unresolved)
 		}
 	}
 
 	return nil
 }
 
-func extractSchemaResponse(schemaNode *tree_sitter.Node, source []byte) *model.ObjectModel {
+func extractSchemaResponse(schemaNode *tree_sitter.Node, source []byte, unresolved *collector.UnresolvedSet) *model.ObjectModel {
 	for i := uint(0); i < schemaNode.ChildCount(); i++ {
 		child := schemaNode.Child(i)
 		if child.Kind() != "pair" {
@@ -134,7 +135,7 @@ func extractSchemaResponse(schemaNode *tree_sitter.Node, source []byte) *model.O
 			for j := uint(0); j < child.ChildCount(); j++ {
 				pairChild := child.Child(j)
 				if pairChild.Kind() == "object" {
-					return extractFirstResponseSchema(pairChild, source)
+					return extractFirstResponseSchema(pairChild, source, unresolved)
 				}
 			}
 		}
@@ -143,7 +144,7 @@ func extractSchemaResponse(schemaNode *tree_sitter.Node, source []byte) *model.O
 	return nil
 }
 
-func extractFirstResponseSchema(responseNode *tree_sitter.Node, source []byte) *model.ObjectModel {
+func extractFirstResponseSchema(responseNode *tree_sitter.Node, source []byte, unresolved *collector.UnresolvedSet) *model.ObjectModel {
 	for i := uint(0); i < responseNode.ChildCount(); i++ {
 		child := responseNode.Child(i)
 		if child.Kind() != "pair" {
@@ -152,7 +153,7 @@ func extractFirstResponseSchema(responseNode *tree_sitter.Node, source []byte) *
 
 		key := extractPairKey(child, source)
 		if key == "200" || key == "201" || key == "default" {
-			schema := extractSchemaValue(child, source)
+			schema := extractSchemaValue(child, source, unresolved)
 			if schema != nil {
 				return schema
 			}
@@ -165,7 +166,7 @@ func extractFirstResponseSchema(responseNode *tree_sitter.Node, source []byte) *
 			continue
 		}
 
-		schema := extractSchemaValue(child, source)
+		schema := extractSchemaValue(child, source, unresolved)
 		if schema != nil {
 			return schema
 		}
@@ -174,11 +175,11 @@ func extractFirstResponseSchema(responseNode *tree_sitter.Node, source []byte) *
 	return nil
 }
 
-func extractSchemaValue(pairNode *tree_sitter.Node, source []byte) *model.ObjectModel {
+func extractSchemaValue(pairNode *tree_sitter.Node, source []byte, unresolved *collector.UnresolvedSet) *model.ObjectModel {
 	for i := uint(0); i < pairNode.ChildCount(); i++ {
 		child := pairNode.Child(i)
 		if child.Kind() == "object" {
-			return parseJSONSchemaObject(child, source)
+			return parseJSONSchemaObject(child, source, unresolved)
 		}
 		if child.Kind() == "identifier" {
 			return model.SingleModel(child.Utf8Text(source))
@@ -188,7 +189,7 @@ func extractSchemaValue(pairNode *tree_sitter.Node, source []byte) *model.Object
 	return nil
 }
 
-func parseJSONSchemaObject(node *tree_sitter.Node, source []byte) *model.ObjectModel {
+func parseJSONSchemaObject(node *tree_sitter.Node, source []byte, unresolved *collector.UnresolvedSet) *model.ObjectModel {
 	schemaType := ""
 	var propertiesNode *tree_sitter.Node
 	var itemsNode *tree_sitter.Node
@@ -237,24 +238,24 @@ func parseJSONSchemaObject(node *tree_sitter.Node, source []byte) *model.ObjectM
 		return model.SingleModel(model.JsonTypeNull)
 	case "array":
 		if itemsNode != nil {
-			itemModel := parseJSONSchemaObject(itemsNode, source)
+			itemModel := parseJSONSchemaObject(itemsNode, source, unresolved)
 			return model.ArrayModel(itemModel)
 		}
 		return model.ArrayModel(model.NullModel())
 	case "object":
 		if propertiesNode != nil {
-			return parseJSONSchemaProperties(propertiesNode, source, requiredFields)
+			return parseJSONSchemaProperties(propertiesNode, source, requiredFields, unresolved)
 		}
 		return model.EmptyObject()
 	default:
 		if propertiesNode != nil {
-			return parseJSONSchemaProperties(propertiesNode, source, requiredFields)
+			return parseJSONSchemaProperties(propertiesNode, source, requiredFields, unresolved)
 		}
 		return model.EmptyObject()
 	}
 }
 
-func parseJSONSchemaProperties(propsNode *tree_sitter.Node, source []byte, requiredFields map[string]bool) *model.ObjectModel {
+func parseJSONSchemaProperties(propsNode *tree_sitter.Node, source []byte, requiredFields map[string]bool, unresolved *collector.UnresolvedSet) *model.ObjectModel {
 	fields := make(map[string]*model.FieldModel)
 
 	for i := uint(0); i < propsNode.ChildCount(); i++ {
@@ -272,7 +273,7 @@ func parseJSONSchemaProperties(propsNode *tree_sitter.Node, source []byte, requi
 		for j := uint(0); j < child.ChildCount(); j++ {
 			pairChild := child.Child(j)
 			if pairChild.Kind() == "object" {
-				propModel = parseJSONSchemaObject(pairChild, source)
+				propModel = parseJSONSchemaObject(pairChild, source, unresolved)
 				break
 			}
 		}
@@ -280,7 +281,7 @@ func parseJSONSchemaProperties(propsNode *tree_sitter.Node, source []byte, requi
 		if propModel == nil {
 			propType := extractPairStringValue(child, source)
 			if propType != "" {
-				propModel = mapJSONSchemaType(propType)
+				propModel = mapJSONSchemaType(propType, unresolved)
 			} else {
 				propModel = model.SingleModel(model.JsonTypeString)
 			}
@@ -319,7 +320,7 @@ func extractRequiredArray(pairNode *tree_sitter.Node, source []byte) map[string]
 	return required
 }
 
-func mapJSONSchemaType(schemaType string) *model.ObjectModel {
+func mapJSONSchemaType(schemaType string, unresolved *collector.UnresolvedSet) *model.ObjectModel {
 	switch schemaType {
 	case "string":
 		return model.SingleModel(model.JsonTypeString)
@@ -336,6 +337,7 @@ func mapJSONSchemaType(schemaType string) *model.ObjectModel {
 	case "object":
 		return model.EmptyObject()
 	default:
+		unresolved.Record(schemaType)
 		return model.SingleModel(schemaType)
 	}
 }

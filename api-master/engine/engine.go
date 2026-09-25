@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	collector "github.com/tangcent/apilot/api-collector"
@@ -68,6 +70,13 @@ func Run(cfg Config) error {
 		return fmt.Errorf("collection failed: %w", err)
 	}
 
+	// A resolver that cannot expand a type returns an opaque single-value model
+	// that looks exactly like a resolved primitive. Report those types so a
+	// "missing fields" export can be triaged instead of guessed at.
+	if reporter, ok := c.(collector.UnresolvedReporter); ok {
+		reportUnresolved(os.Stderr, reporter.Unresolved())
+	}
+
 	if sourceFile != "" {
 		endpoints = filterEndpointsByFile(endpoints, sourceFile)
 	}
@@ -123,6 +132,35 @@ func Run(cfg Config) error {
 	}
 
 	return writeOutput(cfg.OutputPath, output)
+}
+
+// reportUnresolved writes a summary of types the collector could not resolve.
+// Output goes to a side channel (stderr) so exported documents stay byte-stable,
+// and it never affects the exit code.
+func reportUnresolved(w io.Writer, counts map[string]int) {
+	if len(counts) == 0 {
+		return
+	}
+
+	names := make([]string, 0, len(counts))
+	for name := range counts {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if counts[names[i]] != counts[names[j]] {
+			return counts[names[i]] > counts[names[j]]
+		}
+		return names[i] < names[j]
+	})
+
+	fmt.Fprintf(w, "warning: %d types could not be resolved\n", len(counts))
+	for _, name := range names {
+		unit := "occurrences"
+		if counts[name] == 1 {
+			unit = "occurrence"
+		}
+		fmt.Fprintf(w, "  %-20s %d %s\n", name, counts[name], unit)
+	}
 }
 
 func checkRequiredSettings(f formatter.Formatter, settings formatter.Settings) error {

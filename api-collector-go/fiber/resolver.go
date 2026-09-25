@@ -192,6 +192,7 @@ type TypeResolver struct {
 	resolving         map[string]bool
 	dependencyResolver collector.DependencyResolver
 	importMaps        map[string]string
+	unresolved         *collector.UnresolvedSet
 }
 
 func NewTypeResolver(structs map[string]StructDef) *TypeResolver {
@@ -207,6 +208,24 @@ func (r *TypeResolver) SetDependencyResolver(dr collector.DependencyResolver) {
 
 func (r *TypeResolver) SetImportMaps(importMaps map[string]string) {
 	r.importMaps = importMaps
+}
+
+// SetUnresolved attaches a shared sink that records type names this resolver
+// could not expand. It is optional; without it Resolve behaves as before.
+func (r *TypeResolver) SetUnresolved(u *collector.UnresolvedSet) {
+	r.unresolved = u
+}
+
+// Unresolved returns the type names this resolver failed to resolve, mapped to
+// their occurrence counts.
+func (r *TypeResolver) Unresolved() map[string]int {
+	return r.unresolved.Counts()
+}
+
+// recordUnresolved notes that typeName could not be expanded into fields and
+// was rendered as an opaque single value.
+func (r *TypeResolver) recordUnresolved(typeName string) {
+	r.unresolved.Record(typeName)
 }
 
 var goPrimitives = map[string]string{
@@ -281,8 +300,9 @@ func (r *TypeResolver) Resolve(typeName string) *model.ObjectModel {
 				return r.Resolve(typeName)
 			}
 		}
-		return model.SingleModel(typeName)
-	}
+	r.recordUnresolved(typeName)
+	return model.SingleModel(typeName)
+}
 
 	if r.resolving[typeName] {
 		return model.RefModel(typeName)

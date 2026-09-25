@@ -60,6 +60,12 @@ var fiberMethods = map[string]bool{
 //   - Returns nil, nil (not an error) when no endpoints are found.
 //   - Skips unparseable files silently.
 func Parse(sourceDir string, depResolver ...collector.DependencyResolver) ([]collector.ApiEndpoint, error) {
+	return ParseWithUnresolved(sourceDir, nil, depResolver...)
+}
+
+// ParseWithUnresolved is Parse plus an optional sink that records type names
+// the resolver could not expand. unresolved may be nil.
+func ParseWithUnresolved(sourceDir string, unresolved *collector.UnresolvedSet, depResolver ...collector.DependencyResolver) ([]collector.ApiEndpoint, error) {
 	goFiles, err := discoverGoFiles(sourceDir)
 	if err != nil || len(goFiles) == 0 {
 		return nil, nil
@@ -121,6 +127,7 @@ func Parse(sourceDir string, depResolver ...collector.DependencyResolver) ([]col
 		typeResolver.SetDependencyResolver(depResolver[0])
 		typeResolver.SetImportMaps(importMaps)
 	}
+	typeResolver.SetUnresolved(unresolved)
 
 	endpoints := make([]collector.ApiEndpoint, 0, len(allRaw))
 	for _, raw := range allRaw {

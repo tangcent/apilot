@@ -5,6 +5,7 @@ package javacollector
 import (
 	"fmt"
 	"log"
+	"sync"
 
 	collector "github.com/tangcent/apilot/api-collector"
 	"github.com/tangcent/apilot/api-collector-java/feign"
@@ -15,7 +16,10 @@ import (
 )
 
 // JavaCollector parses Java/Kotlin source trees for API endpoints.
-type JavaCollector struct{}
+type JavaCollector struct {
+	mu         sync.Mutex
+	unresolved map[string]int
+}
 
 // New returns a new JavaCollector.
 func New() collector.Collector { return &JavaCollector{} }
@@ -23,6 +27,18 @@ func New() collector.Collector { return &JavaCollector{} }
 func (c *JavaCollector) Name() string { return "java" }
 
 func (c *JavaCollector) SupportedLanguages() []string { return []string{"java", "kotlin"} }
+
+// Unresolved reports type names the Java type resolver could not expand during
+// the last Collect call, mapped to occurrence counts.
+func (c *JavaCollector) Unresolved() map[string]int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]int, len(c.unresolved))
+	for name, n := range c.unresolved {
+		out[name] = n
+	}
+	return out
+}
 
 // Collect walks the source directory and extracts endpoints from Spring MVC, JAX-RS, and Feign sources.
 // When maven-indexer-cli is available and a build file (pom.xml/build.gradle) is present,
@@ -74,11 +90,16 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 	frameworks := resolveFrameworks(ctx)
 	var endpoints []collector.ApiEndpoint
 
+	// Shared across framework parsers: a type may be referenced by endpoints
+	// from more than one framework.
+	unresolved := collector.NewUnresolvedSet()
+
 	if frameworks["spring-mvc"] {
 		sm := springmvc.NewParser()
 		if depResolver != nil {
 			sm.SetDependencyResolver(depResolver)
 		}
+		sm.SetUnresolved(unresolved)
 		for _, ctrl := range sm.ExtractControllers(results) {
 			for _, ep := range ctrl.Endpoints {
 				endpoints = append(endpoints, springmvcEndpointToAPI(ep, ctrl.Name))
@@ -91,6 +112,7 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 		if depResolver != nil {
 			jr.SetDependencyResolver(depResolver)
 		}
+		jr.SetUnresolved(unresolved)
 		for _, res := range jr.ExtractResources(results) {
 			for _, ep := range res.Endpoints {
 				endpoints = append(endpoints, jaxrsEndpointToAPI(ep, res.Name))
@@ -103,12 +125,17 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 		if depResolver != nil {
 			fg.SetDependencyResolver(depResolver)
 		}
+		fg.SetUnresolved(unresolved)
 		for _, client := range fg.ExtractClients(results) {
 			for _, ep := range client.Endpoints {
 				endpoints = append(endpoints, feignEndpointToAPI(ep, client.Name))
 			}
 		}
 	}
+
+	c.mu.Lock()
+	c.unresolved = unresolved.Counts()
+	c.mu.Unlock()
 
 	// Deduplicate endpoints by (Folder, Path, Method, Name) to avoid
 	// duplicates when a single file is parsed both individually and as
