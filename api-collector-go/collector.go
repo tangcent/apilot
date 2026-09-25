@@ -15,6 +15,8 @@ import (
 // GoCollector parses Go source trees for API route registrations.
 type GoCollector struct {
 	dependencyResolver collector.DependencyResolver
+	mu                 sync.Mutex
+	unresolved         map[string]int
 }
 
 func New() collector.Collector { return &GoCollector{} }
@@ -25,6 +27,18 @@ func (c *GoCollector) SupportedLanguages() []string { return []string{"go"} }
 
 func (c *GoCollector) SetDependencyResolver(dr collector.DependencyResolver) {
 	c.dependencyResolver = dr
+}
+
+// Unresolved reports type names the framework resolvers could not expand during
+// the last Collect call, mapped to occurrence counts.
+func (c *GoCollector) Unresolved() map[string]int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]int, len(c.unresolved))
+	for name, n := range c.unresolved {
+		out[name] = n
+	}
+	return out
 }
 
 // Collect walks the source directory and extracts endpoints from Gin, Echo,
@@ -48,13 +62,17 @@ func (c *GoCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEndp
 		depResolver = NewGoDependencyResolver(ctx.SourceDir)
 	}
 
+	// Shared across framework parsers: a type may be referenced by handlers
+	// written for more than one framework.
+	unresolved := collector.NewUnresolvedSet()
+
 	parsers := []struct {
 		name  string
-		parse func(string, ...collector.DependencyResolver) ([]collector.ApiEndpoint, error)
+		parse func(string, *collector.UnresolvedSet, ...collector.DependencyResolver) ([]collector.ApiEndpoint, error)
 	}{
-		{"gin", gin.Parse},
-		{"echo", echo.Parse},
-		{"fiber", fiber.Parse},
+		{"gin", gin.ParseWithUnresolved},
+		{"echo", echo.ParseWithUnresolved},
+		{"fiber", fiber.ParseWithUnresolved},
 	}
 
 	ch := make(chan parseResult, len(parsers))
@@ -62,9 +80,9 @@ func (c *GoCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEndp
 
 	for _, p := range parsers {
 		wg.Add(1)
-		go func(name string, fn func(string, ...collector.DependencyResolver) ([]collector.ApiEndpoint, error)) {
+		go func(name string, fn func(string, *collector.UnresolvedSet, ...collector.DependencyResolver) ([]collector.ApiEndpoint, error)) {
 			defer wg.Done()
-			endpoints, err := fn(ctx.SourceDir, depResolver)
+			endpoints, err := fn(ctx.SourceDir, unresolved, depResolver)
 			ch <- parseResult{endpoints: endpoints, err: err, framework: name}
 		}(p.name, p.parse)
 	}
@@ -82,6 +100,10 @@ func (c *GoCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEndp
 		}
 		all = append(all, res.endpoints...)
 	}
+
+	c.mu.Lock()
+	c.unresolved = unresolved.Counts()
+	c.mu.Unlock()
 
 	if len(all) == 0 {
 		return nil, nil

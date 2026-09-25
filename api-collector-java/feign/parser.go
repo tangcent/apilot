@@ -13,6 +13,7 @@ import (
 type Parser struct {
 	dependencyResolver resolver.DependencyResolver
 	collectorDepResolver collector.DependencyResolver
+	unresolved           *collector.UnresolvedSet
 }
 
 // NewParser creates a new Feign client parser.
@@ -28,6 +29,12 @@ func (p *Parser) SetCollectorDependencyResolver(cdr collector.DependencyResolver
 	p.collectorDepResolver = cdr
 }
 
+// SetUnresolved attaches a shared sink collecting types the resolver could not
+// expand. Optional; type resolution behaviour is unchanged without it.
+func (p *Parser) SetUnresolved(u *collector.UnresolvedSet) {
+	p.unresolved = u
+}
+
 // ExtractClients extracts Feign clients from parse results.
 // It supports both Spring Cloud OpenFeign (Spring MVC annotations) and
 // Netflix Feign (@RequestLine annotations).
@@ -39,6 +46,7 @@ func (p *Parser) ExtractClients(results []parser.ParseResult) []FeignClient {
 	} else if p.collectorDepResolver != nil {
 		typeResolver.SetCollectorDependencyResolver(p.collectorDepResolver)
 	}
+	typeResolver.SetUnresolved(p.unresolved)
 
 	var clients []FeignClient
 	for _, result := range results {

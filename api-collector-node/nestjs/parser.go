@@ -36,10 +36,16 @@ var paramDecorators = map[string]string{
 }
 
 func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
-	return ParseWithDependencyResolver(sourceDir, nil)
+	return ParseWithUnresolved(sourceDir, nil, nil)
 }
 
 func ParseWithDependencyResolver(sourceDir string, depResolver collector.DependencyResolver) ([]collector.ApiEndpoint, error) {
+	return ParseWithUnresolved(sourceDir, depResolver, nil)
+}
+
+// ParseWithUnresolved is Parse plus an optional sink that records type names the
+// resolver could not expand. depResolver and unresolved may both be nil.
+func ParseWithUnresolved(sourceDir string, depResolver collector.DependencyResolver, unresolved *collector.UnresolvedSet) ([]collector.ApiEndpoint, error) {
 	tsFiles, err := discoverTSFiles(sourceDir)
 	if err != nil || len(tsFiles) == 0 {
 		return nil, nil
@@ -54,6 +60,7 @@ func ParseWithDependencyResolver(sourceDir string, depResolver collector.Depende
 	ctx := &parseContext{
 		typeRegistry:       typeRegistry,
 		dependencyResolver: depResolver,
+		unresolved:         unresolved,
 	}
 
 	ch := make(chan fileResult, len(tsFiles))
@@ -91,6 +98,7 @@ func ParseWithDependencyResolver(sourceDir string, depResolver collector.Depende
 type parseContext struct {
 	typeRegistry       *express.TSTypeRegistry
 	dependencyResolver collector.DependencyResolver
+	unresolved         *collector.UnresolvedSet
 }
 
 type fileResult struct {
@@ -305,7 +313,7 @@ func (ctx *parseContext) buildEndpoint(methodDecorator *decoratorInfo, methodNod
 	if ctx.typeRegistry != nil {
 		handlerInfo := AnalyzeNestJSHandler(methodNode, source)
 		if handlerInfo != nil {
-			reqBody, resBody := ResolveNestJSHandlerTypesWithDepResolver(handlerInfo, ctx.typeRegistry, ctx.dependencyResolver)
+			reqBody, resBody := ResolveNestJSHandlerTypesWithUnresolved(handlerInfo, ctx.typeRegistry, ctx.dependencyResolver, ctx.unresolved)
 			if reqBody != nil && !reqBody.IsNull() {
 				ep.RequestBody = &collector.ApiBody{
 					MediaType: "application/json",

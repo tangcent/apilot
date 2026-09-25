@@ -3,6 +3,7 @@ package flask
 import (
 	"strings"
 
+	collector "github.com/tangcent/apilot/api-collector"
 	model "github.com/tangcent/apilot/api-model"
 
 	"github.com/tangcent/apilot/api-collector-python/fastapi"
@@ -12,6 +13,7 @@ type FlaskTypeResolver struct {
 	pythonResolver      *fastapi.PythonTypeResolver
 	marshmallowRegistry map[string]MarshmallowModel
 	resolving           map[string]bool
+	unresolved          *collector.UnresolvedSet
 }
 
 func NewFlaskTypeResolver(pydanticModels map[string]fastapi.PydanticModel, marshmallowSchemas map[string]MarshmallowModel) *FlaskTypeResolver {
@@ -20,6 +22,27 @@ func NewFlaskTypeResolver(pydanticModels map[string]fastapi.PydanticModel, marsh
 		marshmallowRegistry: marshmallowSchemas,
 		resolving:           make(map[string]bool),
 	}
+}
+
+// SetUnresolved attaches a shared sink that records type names this resolver
+// could not expand. It is optional; without it Resolve behaves as before.
+// It is forwarded to the wrapped FastAPI resolver, which resolves the
+// Pydantic half of the type space.
+func (r *FlaskTypeResolver) SetUnresolved(u *collector.UnresolvedSet) {
+	r.unresolved = u
+	r.pythonResolver.SetUnresolved(u)
+}
+
+// Unresolved returns the type names this resolver failed to resolve, mapped to
+// their occurrence counts.
+func (r *FlaskTypeResolver) Unresolved() map[string]int {
+	return r.unresolved.Counts()
+}
+
+// recordUnresolved notes that typeName could not be expanded into fields and
+// was rendered as an opaque single value.
+func (r *FlaskTypeResolver) recordUnresolved(typeName string) {
+	r.unresolved.Record(typeName)
 }
 
 func (r *FlaskTypeResolver) Resolve(typeText string) *model.ObjectModel {
@@ -53,7 +76,9 @@ func (r *FlaskTypeResolver) resolveUnionSyntax(typeText string) *model.ObjectMod
 		return r.Resolve(nonNoneParts[0])
 	}
 	if len(nonNoneParts) > 1 {
-		return model.SingleModel(strings.Join(nonNoneParts, " | "))
+		joined := strings.Join(nonNoneParts, " | ")
+		r.recordUnresolved(joined)
+		return model.SingleModel(joined)
 	}
 	return model.NullModel()
 }
@@ -124,6 +149,8 @@ func (r *FlaskTypeResolver) resolveMarshmallowFieldType(fieldType string) *model
 		return model.SingleModel(jsonType)
 	}
 
+	// Resolve records fieldType itself when the type is unknown, so it is not
+	// recorded twice here.
 	nestedModel := r.Resolve(fieldType)
 	if nestedModel != nil && (nestedModel.IsObject() || nestedModel.IsRef()) {
 		return nestedModel

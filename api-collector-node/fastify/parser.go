@@ -24,10 +24,16 @@ var httpMethods = map[string]bool{
 }
 
 func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
-	return ParseWithDependencyResolver(sourceDir, nil)
+	return ParseWithUnresolved(sourceDir, nil, nil)
 }
 
 func ParseWithDependencyResolver(sourceDir string, depResolver collector.DependencyResolver) ([]collector.ApiEndpoint, error) {
+	return ParseWithUnresolved(sourceDir, depResolver, nil)
+}
+
+// ParseWithUnresolved is Parse plus an optional sink that records type names the
+// resolver could not expand. depResolver and unresolved may both be nil.
+func ParseWithUnresolved(sourceDir string, depResolver collector.DependencyResolver, unresolved *collector.UnresolvedSet) ([]collector.ApiEndpoint, error) {
 	allFiles, err := discoverSourceFiles(sourceDir)
 	if err != nil || len(allFiles) == 0 {
 		return nil, nil
@@ -54,6 +60,7 @@ func ParseWithDependencyResolver(sourceDir string, depResolver collector.Depende
 	ctx := &parseContext{
 		typeRegistry:       typeRegistry,
 		dependencyResolver: depResolver,
+		unresolved:         unresolved,
 	}
 
 	ch := make(chan fileResult, len(allFiles))
@@ -100,6 +107,7 @@ func ParseWithDependencyResolver(sourceDir string, depResolver collector.Depende
 type parseContext struct {
 	typeRegistry       *express.TSTypeRegistry
 	dependencyResolver collector.DependencyResolver
+	unresolved         *collector.UnresolvedSet
 }
 
 type fileResult struct {
@@ -397,13 +405,14 @@ func (ctx *parseContext) extractShorthandRoute(callNode *tree_sitter.Node, sourc
 }
 
 func (ctx *parseContext) populateSchemaBody(schemaNode *tree_sitter.Node, source []byte, ep *collector.ApiEndpoint) {
-	bodySchema := extractSchemaBody(schemaNode, source)
+	bodySchema := extractSchemaBody(schemaNode, source, ctx.unresolved)
 	if bodySchema != nil && !bodySchema.IsNull() {
 		if bodySchema.IsSingle() && bodySchema.TypeName != "" && ctx.typeRegistry != nil {
 			resolver := express.NewTSTypeResolver(ctx.typeRegistry)
 			if ctx.dependencyResolver != nil {
 				resolver.SetDependencyResolver(ctx.dependencyResolver)
 			}
+			resolver.SetUnresolved(ctx.unresolved)
 			resolved := resolver.Resolve(bodySchema.TypeName, nil)
 			if resolved != nil && !resolved.IsNull() {
 				bodySchema = resolved
@@ -415,13 +424,14 @@ func (ctx *parseContext) populateSchemaBody(schemaNode *tree_sitter.Node, source
 		}
 	}
 
-	responseSchema := extractSchemaResponse(schemaNode, source)
+	responseSchema := extractSchemaResponse(schemaNode, source, ctx.unresolved)
 	if responseSchema != nil && !responseSchema.IsNull() {
 		if responseSchema.IsSingle() && responseSchema.TypeName != "" && ctx.typeRegistry != nil {
 			resolver := express.NewTSTypeResolver(ctx.typeRegistry)
 			if ctx.dependencyResolver != nil {
 				resolver.SetDependencyResolver(ctx.dependencyResolver)
 			}
+			resolver.SetUnresolved(ctx.unresolved)
 			resolved := resolver.Resolve(responseSchema.TypeName, nil)
 			if resolved != nil && !resolved.IsNull() {
 				responseSchema = resolved

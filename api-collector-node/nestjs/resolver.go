@@ -195,10 +195,17 @@ func ResolveNestJSHandlerTypes(handlerInfo *NestJSHandlerInfo, registry *express
 }
 
 func ResolveNestJSHandlerTypesWithDepResolver(handlerInfo *NestJSHandlerInfo, registry *express.TSTypeRegistry, depResolver collector.DependencyResolver) (reqBody *model.ObjectModel, resBody *model.ObjectModel) {
+	return ResolveNestJSHandlerTypesWithUnresolved(handlerInfo, registry, depResolver, nil)
+}
+
+// ResolveNestJSHandlerTypesWithUnresolved resolves handler request/response
+// types, recording into unresolved (may be nil) every type name it cannot expand.
+func ResolveNestJSHandlerTypesWithUnresolved(handlerInfo *NestJSHandlerInfo, registry *express.TSTypeRegistry, depResolver collector.DependencyResolver, unresolved *collector.UnresolvedSet) (reqBody *model.ObjectModel, resBody *model.ObjectModel) {
 	resolver := express.NewTSTypeResolver(registry)
 	if depResolver != nil {
 		resolver.SetDependencyResolver(depResolver)
 	}
+	resolver.SetUnresolved(unresolved)
 
 	if handlerInfo.BodyType != "" {
 		bodyType := unwrapPromise(handlerInfo.BodyType)

@@ -13,6 +13,7 @@ import (
 type Parser struct {
 	dependencyResolver   resolver.DependencyResolver
 	collectorDepResolver collector.DependencyResolver
+	unresolved           *collector.UnresolvedSet
 }
 
 func NewParser() *Parser {
@@ -27,6 +28,12 @@ func (p *Parser) SetCollectorDependencyResolver(cdr collector.DependencyResolver
 	p.collectorDepResolver = cdr
 }
 
+// SetUnresolved attaches a shared sink collecting types the resolver could not
+// expand. Optional; type resolution behaviour is unchanged without it.
+func (p *Parser) SetUnresolved(u *collector.UnresolvedSet) {
+	p.unresolved = u
+}
+
 func (p *Parser) ExtractControllers(results []parser.ParseResult) []Controller {
 	classRegistry := buildClassRegistry(results)
 	typeResolver := resolver.NewTypeResolver(flattenClasses(results))
@@ -35,6 +42,7 @@ func (p *Parser) ExtractControllers(results []parser.ParseResult) []Controller {
 	} else if p.collectorDepResolver != nil {
 		typeResolver.SetCollectorDependencyResolver(p.collectorDepResolver)
 	}
+	typeResolver.SetUnresolved(p.unresolved)
 
 	var controllers []Controller
 

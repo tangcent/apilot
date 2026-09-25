@@ -15,6 +15,8 @@ import (
 // NodeCollector parses TypeScript/JavaScript source trees for API route definitions.
 type NodeCollector struct {
 	dependencyResolver collector.DependencyResolver
+	mu                 sync.Mutex
+	unresolved         map[string]int
 }
 
 func New() collector.Collector { return &NodeCollector{} }
@@ -25,6 +27,18 @@ func (c *NodeCollector) SupportedLanguages() []string { return []string{"typescr
 
 func (c *NodeCollector) SetDependencyResolver(dr collector.DependencyResolver) {
 	c.dependencyResolver = dr
+}
+
+// Unresolved reports type names the framework resolvers could not expand during
+// the last Collect call, mapped to occurrence counts.
+func (c *NodeCollector) Unresolved() map[string]int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]int, len(c.unresolved))
+	for name, n := range c.unresolved {
+		out[name] = n
+	}
+	return out
 }
 
 // Collect walks the source directory and extracts endpoints from Express, Fastify, and NestJS sources.
@@ -38,27 +52,22 @@ func (c *NodeCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 		framework string
 	}
 
+	// Shared across framework parsers: a type may be referenced by handlers
+	// written for more than one framework.
+	unresolved := collector.NewUnresolvedSet()
+
 	parsers := []struct {
 		name  string
 		parse func(string) ([]collector.ApiEndpoint, error)
 	}{
 		{"express", func(dir string) ([]collector.ApiEndpoint, error) {
-			if c.dependencyResolver != nil {
-				return express.ParseWithDependencyResolver(dir, c.dependencyResolver)
-			}
-			return express.Parse(dir)
+			return express.ParseWithUnresolved(dir, c.dependencyResolver, unresolved)
 		}},
 		{"fastify", func(dir string) ([]collector.ApiEndpoint, error) {
-			if c.dependencyResolver != nil {
-				return fastify.ParseWithDependencyResolver(dir, c.dependencyResolver)
-			}
-			return fastify.Parse(dir)
+			return fastify.ParseWithUnresolved(dir, c.dependencyResolver, unresolved)
 		}},
 		{"nestjs", func(dir string) ([]collector.ApiEndpoint, error) {
-			if c.dependencyResolver != nil {
-				return nestjs.ParseWithDependencyResolver(dir, c.dependencyResolver)
-			}
-			return nestjs.Parse(dir)
+			return nestjs.ParseWithUnresolved(dir, c.dependencyResolver, unresolved)
 		}},
 	}
 
@@ -87,6 +96,10 @@ func (c *NodeCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 		}
 		all = append(all, res.endpoints...)
 	}
+
+	c.mu.Lock()
+	c.unresolved = unresolved.Counts()
+	c.mu.Unlock()
 
 	if len(all) == 0 {
 		return nil, nil

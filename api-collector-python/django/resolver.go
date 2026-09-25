@@ -3,12 +3,14 @@ package django
 import (
 	"strings"
 
+	collector "github.com/tangcent/apilot/api-collector"
 	model "github.com/tangcent/apilot/api-model"
 )
 
 type DRFTypeResolver struct {
 	serializerRegistry map[string]SerializerModel
 	resolving          map[string]bool
+	unresolved         *collector.UnresolvedSet
 }
 
 func NewDRFTypeResolver(serializers map[string]SerializerModel) *DRFTypeResolver {
@@ -18,9 +20,28 @@ func NewDRFTypeResolver(serializers map[string]SerializerModel) *DRFTypeResolver
 	}
 }
 
+// SetUnresolved attaches a shared sink that records type names this resolver
+// could not expand. It is optional; without it Resolve behaves as before.
+func (r *DRFTypeResolver) SetUnresolved(u *collector.UnresolvedSet) {
+	r.unresolved = u
+}
+
+// Unresolved returns the type names this resolver failed to resolve, mapped to
+// their occurrence counts.
+func (r *DRFTypeResolver) Unresolved() map[string]int {
+	return r.unresolved.Counts()
+}
+
+// recordUnresolved notes that typeName could not be expanded into fields and
+// was rendered as an opaque single value.
+func (r *DRFTypeResolver) recordUnresolved(typeName string) {
+	r.unresolved.Record(typeName)
+}
+
 func (r *DRFTypeResolver) ResolveSerializer(serializerName string) *model.ObjectModel {
 	md, found := r.serializerRegistry[serializerName]
 	if !found {
+		r.recordUnresolved(serializerName)
 		return model.SingleModel(serializerName)
 	}
 
@@ -82,6 +103,8 @@ func (r *DRFTypeResolver) resolveDRFFieldType(drfType string) *model.ObjectModel
 		return model.SingleModel(jsonType)
 	}
 
+	// ResolveSerializer records drfType itself when the serializer is unknown,
+	// so it is not recorded twice here.
 	nestedModel := r.ResolveSerializer(drfType)
 	if nestedModel != nil && (nestedModel.IsObject() || nestedModel.IsRef()) {
 		return nestedModel

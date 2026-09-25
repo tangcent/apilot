@@ -348,6 +348,7 @@ type PythonTypeResolver struct {
 	modelRegistry     map[string]PydanticModel
 	resolving         map[string]bool
 	dependencyResolver collector.DependencyResolver
+	unresolved         *collector.UnresolvedSet
 }
 
 func NewPythonTypeResolver(models map[string]PydanticModel) *PythonTypeResolver {
@@ -359,6 +360,24 @@ func NewPythonTypeResolver(models map[string]PydanticModel) *PythonTypeResolver 
 
 func (r *PythonTypeResolver) SetDependencyResolver(dr collector.DependencyResolver) {
 	r.dependencyResolver = dr
+}
+
+// SetUnresolved attaches a shared sink that records type names this resolver
+// could not expand. It is optional; without it Resolve behaves as before.
+func (r *PythonTypeResolver) SetUnresolved(u *collector.UnresolvedSet) {
+	r.unresolved = u
+}
+
+// Unresolved returns the type names this resolver failed to resolve, mapped to
+// their occurrence counts.
+func (r *PythonTypeResolver) Unresolved() map[string]int {
+	return r.unresolved.Counts()
+}
+
+// recordUnresolved notes that typeName could not be expanded into fields and
+// was rendered as an opaque single value.
+func (r *PythonTypeResolver) recordUnresolved(typeName string) {
+	r.unresolved.Record(typeName)
 }
 
 func (r *PythonTypeResolver) Resolve(typeText string) *model.ObjectModel {
@@ -377,6 +396,13 @@ func (r *PythonTypeResolver) Resolve(typeText string) *model.ObjectModel {
 	}
 
 	baseName, typeArgs := ParsePythonGenericType(typeText)
+
+	// `Generic[T]` is a typing declaration used as a base class
+	// (`class PageResult(BaseModel, Generic[T])`), not a field type. It carries
+	// no fields of its own, so it is neither expandable nor a failure.
+	if baseName == "Generic" {
+		return model.NullModel()
+	}
 
 	if baseName == "Optional" {
 		if len(typeArgs) > 0 {
@@ -397,7 +423,9 @@ func (r *PythonTypeResolver) Resolve(typeText string) *model.ObjectModel {
 			return r.Resolve(nonNoneArgs[0])
 		}
 		if len(nonNoneArgs) > 1 {
-			return model.SingleModel(strings.Join(nonNoneArgs, " | "))
+			joined := strings.Join(nonNoneArgs, " | ")
+			r.recordUnresolved(joined)
+			return model.SingleModel(joined)
 		}
 		return model.NullModel()
 	}
@@ -488,6 +516,7 @@ func (r *PythonTypeResolver) Resolve(typeText string) *model.ObjectModel {
 		}
 	}
 
+	r.recordUnresolved(typeText)
 	return model.SingleModel(typeText)
 }
 

@@ -15,6 +15,8 @@ import (
 // PythonCollector parses Python source trees for API route definitions.
 type PythonCollector struct {
 	dependencyResolver collector.DependencyResolver
+	mu                 sync.Mutex
+	unresolved         map[string]int
 }
 
 func New() collector.Collector { return &PythonCollector{} }
@@ -25,6 +27,18 @@ func (c *PythonCollector) SupportedLanguages() []string { return []string{"pytho
 
 func (c *PythonCollector) SetDependencyResolver(dr collector.DependencyResolver) {
 	c.dependencyResolver = dr
+}
+
+// Unresolved reports type names the framework resolvers could not expand during
+// the last Collect call, mapped to occurrence counts.
+func (c *PythonCollector) Unresolved() map[string]int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]int, len(c.unresolved))
+	for name, n := range c.unresolved {
+		out[name] = n
+	}
+	return out
 }
 
 // Collect walks the source directory and extracts endpoints from FastAPI, Django REST, and Flask sources.
@@ -38,13 +52,17 @@ func (c *PythonCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 		framework string
 	}
 
+	// Shared across framework parsers: a type may be referenced by endpoints
+	// written for more than one framework.
+	unresolved := collector.NewUnresolvedSet()
+
 	parsers := []struct {
 		name  string
-		parse func(string) ([]collector.ApiEndpoint, error)
+		parse func(string, *collector.UnresolvedSet) ([]collector.ApiEndpoint, error)
 	}{
-		{"fastapi", fastapi.Parse},
-		{"django", django.Parse},
-		{"flask", flask.Parse},
+		{"fastapi", fastapi.ParseWithUnresolved},
+		{"django", django.ParseWithUnresolved},
+		{"flask", flask.ParseWithUnresolved},
 	}
 
 	ch := make(chan parseResult, len(parsers))
@@ -52,9 +70,9 @@ func (c *PythonCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 
 	for _, p := range parsers {
 		wg.Add(1)
-		go func(name string, fn func(string) ([]collector.ApiEndpoint, error)) {
+		go func(name string, fn func(string, *collector.UnresolvedSet) ([]collector.ApiEndpoint, error)) {
 			defer wg.Done()
-			endpoints, err := fn(ctx.SourceDir)
+			endpoints, err := fn(ctx.SourceDir, unresolved)
 			ch <- parseResult{endpoints: endpoints, err: err, framework: name}
 		}(p.name, p.parse)
 	}
@@ -72,6 +90,10 @@ func (c *PythonCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 		}
 		all = append(all, res.endpoints...)
 	}
+
+	c.mu.Lock()
+	c.unresolved = unresolved.Counts()
+	c.mu.Unlock()
 
 	if len(all) == 0 {
 		return nil, nil

@@ -25,6 +25,79 @@ var primitiveTypes = map[string]string{
 	"Boolean": model.JsonTypeBoolean,
 }
 
+// jdkQualifiedScalars maps a fully qualified JDK value type to the JSON scalar
+// it serialises to.
+//
+// Names here are matched exactly, so short spellings that could belong to a
+// project class (`Time`, `URL`) stay resolvable by the class registry. This is
+// easy-yapi's `json.rule.convert[<fqn>]` layer.
+var jdkQualifiedScalars = map[string]string{
+	"java.sql.Time":         model.JsonTypeString,
+	"java.sql.Timestamp":    model.JsonTypeString,
+	"java.net.URL":          model.JsonTypeString,
+	"java.net.URI":          model.JsonTypeString,
+	"java.util.Date":        model.JsonTypeString,
+	"java.util.Calendar":    model.JsonTypeString,
+	"java.util.UUID":        model.JsonTypeString,
+	"java.math.BigDecimal":  model.JsonTypeDouble,
+	"java.math.BigInteger":  model.JsonTypeLong,
+	"org.bson.types.ObjectId": model.JsonTypeString,
+}
+
+// jdkScalarTypes maps the simple name of an unambiguous JDK value type to the
+// JSON scalar it serialises to.
+//
+// Matching is package-insensitive on purpose: `java.time.LocalDateTime` and the
+// imported bare `LocalDateTime` must give the same answer. This is easy-yapi's
+// IrType.fromJavaType layer, which strips the package and reads the simple name.
+var jdkScalarTypes = map[string]string{
+	// java.lang
+	"string":     model.JsonTypeString,
+	"char":       model.JsonTypeString,
+	"character":  model.JsonTypeString,
+	"byte":       model.JsonTypeInt,
+	"biginteger": model.JsonTypeLong,
+	"bigdecimal": model.JsonTypeDouble,
+	// java.time
+	"instant":       model.JsonTypeString,
+	"localdate":     model.JsonTypeString,
+	"localtime":     model.JsonTypeString,
+	"localdatetime": model.JsonTypeString,
+	"offsettime":    model.JsonTypeString,
+	"offsetdatetime": model.JsonTypeString,
+	"zoneddatetime": model.JsonTypeString,
+	"duration":      model.JsonTypeString,
+	"period":        model.JsonTypeString,
+	"year":          model.JsonTypeString,
+	"yearmonth":     model.JsonTypeString,
+	"monthday":      model.JsonTypeString,
+	"zoneid":        model.JsonTypeString,
+	"zoneoffset":    model.JsonTypeString,
+	// java.util
+	"date":             model.JsonTypeString,
+	"calendar":         model.JsonTypeString,
+	"gregoriancalendar": model.JsonTypeString,
+	"uuid":             model.JsonTypeString,
+	// java.util.concurrent.atomic
+	"atomicboolean": model.JsonTypeBoolean,
+	"atomicinteger": model.JsonTypeInt,
+	"atomiclong":    model.JsonTypeLong,
+}
+
+// simpleTypeName reduces a type spelling to its lower-cased simple name:
+// `java.time.LocalDateTime` and `LocalDateTime` both become `localdatetime`,
+// and the head of `List<Order>` becomes `list`.
+func simpleTypeName(rawType string) string {
+	name := rawType
+	if i := strings.Index(name, "<"); i >= 0 {
+		name = name[:i]
+	}
+	if i := strings.LastIndex(name, "."); i >= 0 {
+		name = name[i+1:]
+	}
+	return strings.ToLower(name)
+}
+
 var collectionTypes = map[string]bool{
 	"List":       true,
 	"ArrayList":  true,
@@ -50,6 +123,7 @@ type TypeResolver struct {
 	allTypeParams      map[string]bool
 	resolving          map[string]bool
 	dependencyResolver DependencyResolver
+	unresolved         *collector.UnresolvedSet
 }
 
 func NewTypeResolver(classes []parser.Class) *TypeResolver {
@@ -74,6 +148,24 @@ func (r *TypeResolver) SetDependencyResolver(dr DependencyResolver) {
 
 func (r *TypeResolver) SetCollectorDependencyResolver(cdr collector.DependencyResolver) {
 	r.dependencyResolver = &collectorDependencyAdapter{resolver: cdr}
+}
+
+// SetUnresolved attaches a shared sink that records type names this resolver
+// could not expand. It is optional; without it Resolve behaves as before.
+func (r *TypeResolver) SetUnresolved(u *collector.UnresolvedSet) {
+	r.unresolved = u
+}
+
+// Unresolved returns the type names this resolver failed to resolve, mapped to
+// their occurrence counts.
+func (r *TypeResolver) Unresolved() map[string]int {
+	return r.unresolved.Counts()
+}
+
+// recordUnresolved notes that typeName could not be expanded into fields and
+// was rendered as an opaque single value.
+func (r *TypeResolver) recordUnresolved(typeName string) {
+	r.unresolved.Record(typeName)
 }
 
 type collectorDependencyAdapter struct {
@@ -138,6 +230,20 @@ func (r *TypeResolver) Resolve(rawType string, typeBindings map[string]string) *
 				if resolvedModel != nil {
 					resolvedArgs[i] = resolvedModel.TypeName
 					if resolvedModel.Kind == model.KindSingle && resolvedModel.TypeName != arg {
+						resolvedArgs[i] = arg
+					}
+					// A composite model (array/map/object) keeps its structure in
+					// the model, not in TypeName: `array` and `map` are synthetic
+					// placeholders. Binding a type parameter to one of them feeds
+					// a placeholder back into Resolve and destroys the argument.
+					//
+					// easy-yapi avoids this structurally: its generic context maps
+					// a parameter to a ResolvedType, so `List<Foo>` is bound as the
+					// structure ClassType(List, [Foo]) and never re-parsed as a
+					// name. This resolver carries type arguments as strings, so the
+					// equivalent rule is to keep the source spelling for composites
+					// and only substitute names.
+					if resolvedModel.IsArray() || resolvedModel.IsMap() {
 						resolvedArgs[i] = arg
 					}
 				} else {
@@ -231,6 +337,23 @@ func (r *TypeResolver) Resolve(rawType string, typeBindings map[string]string) *
 		}
 	}
 
+	// No class body is available. Well-known JDK value types are still scalars
+	// on the wire, so answer for them instead of reporting a failure.
+	// easy-yapi reaches the same answer with `json.rule.convert` rules over the
+	// qualified name plus an IrType lookup over the simple name.
+	if jsonType, ok := jdkQualifiedScalars[rawType]; ok {
+		return model.SingleModel(jsonType)
+	}
+	if jsonType, ok := jdkScalarTypes[simpleTypeName(rawType)]; ok {
+		return model.SingleModel(jsonType)
+	}
+	// `java.lang.Object` carries no fields, so an empty object is its true
+	// shape rather than an opaque scalar.
+	if simpleTypeName(rawType) == "object" {
+		return model.EmptyObject()
+	}
+
+	r.recordUnresolved(rawType)
 	return model.SingleModel(rawType)
 }
 
