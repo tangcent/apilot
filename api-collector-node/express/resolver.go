@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	collector "github.com/tangcent/apilot/api-collector"
+	jsdoc "github.com/tangcent/apilot/api-collector-node/jsdoc"
 	model "github.com/tangcent/apilot/api-model"
 )
 
@@ -355,8 +356,8 @@ func (r *TSTypeResolver) resolveInterface(iface *TSInterface, typeArgs []string,
 		fm := &model.FieldModel{
 			Model:    fieldModel,
 			Required: f.Required,
-			Comment:  f.Comment,
 		}
+		jsdoc.Extract(f.Comment).ApplyTo(fm)
 		fields[f.Name] = fm
 	}
 

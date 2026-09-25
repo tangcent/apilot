@@ -508,3 +508,43 @@ func assertParams(t *testing.T, got, want []collector.ApiParameter) {
 		}
 	}
 }
+
+func TestParse_SchemaFieldDocumentation(t *testing.T) {
+	endpoints, err := Parse(filepath.Join("testdata", "schemadocs"))
+	if err != nil {
+		t.Fatalf("schema docs should not error: %v", err)
+	}
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(endpoints))
+	}
+
+	body := endpoints[0].RequestBody.Body
+	if body == nil || !body.IsObject() {
+		t.Fatalf("expected object request body")
+	}
+
+	name := body.Fields["name"]
+	if name == nil {
+		t.Fatal("expected 'name' field")
+	}
+	if name.Comment != "display name" {
+		t.Errorf("name.Comment = %q, want %q", name.Comment, "display name")
+	}
+	if name.Demo != "John" {
+		t.Errorf("name.Demo = %q, want %q", name.Demo, "John")
+	}
+
+	role := body.Fields["role"]
+	if role == nil {
+		t.Fatal("expected 'role' field")
+	}
+	if role.Comment != "user role" {
+		t.Errorf("role.Comment = %q, want %q", role.Comment, "user role")
+	}
+	if role.DefaultValue != "viewer" {
+		t.Errorf("role.DefaultValue = %q, want %q", role.DefaultValue, "viewer")
+	}
+	if len(role.Options) != 3 || role.Options[0].Value != "admin" || role.Options[2].Value != "viewer" {
+		t.Errorf("role.Options = %+v, want admin,editor,viewer", role.Options)
+	}
+}

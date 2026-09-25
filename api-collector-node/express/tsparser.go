@@ -263,7 +263,7 @@ func extractClassPropertyDefinition(node *tree_sitter.Node, source []byte) *TSFi
 			}
 		case "comment":
 			if comment == "" {
-				comment = cleanComment(child.Utf8Text(source))
+				comment = child.Utf8Text(source)
 			}
 		}
 	}
@@ -535,7 +535,7 @@ func extractPropertySignature(node *tree_sitter.Node, source []byte) *TSField {
 		case "?":
 			required = false
 		case "comment":
-			comment = cleanComment(child.Utf8Text(source))
+			comment = child.Utf8Text(source)
 		}
 	}
 

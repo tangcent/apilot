@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	collector "github.com/tangcent/apilot/api-collector"
+	godoc "github.com/tangcent/apilot/api-collector-go/godoc"
 	model "github.com/tangcent/apilot/api-model"
 )
 
@@ -25,6 +26,7 @@ type StructField struct {
 	JsonTag    string
 	BindingTag string
 	Comment    string
+	Tag        string
 }
 
 // extractStructs walks the AST and extracts all struct type definitions.
@@ -74,6 +76,7 @@ func extractStructs(f *ast.File) map[string]StructDef {
 						if field.Tag != nil {
 							tag := strings.Trim(field.Tag.Value, "`")
 							structTag := reflect.StructTag(tag)
+							sf.Tag = tag
 
 							if jsonTag, ok := structTag.Lookup("json"); ok {
 								parts := strings.SplitN(jsonTag, ",", 2)
@@ -87,7 +90,9 @@ func extractStructs(f *ast.File) map[string]StructDef {
 							}
 						}
 
-						if field.Comment != nil {
+						if field.Doc != nil {
+							sf.Comment = strings.TrimSpace(field.Doc.Text())
+						} else if field.Comment != nil {
 							sf.Comment = strings.TrimSpace(field.Comment.Text())
 						}
 
@@ -331,10 +336,12 @@ func (r *TypeResolver) Resolve(typeName string) *model.ObjectModel {
 
 		required := strings.Contains(f.BindingTag, "required")
 
-		fields[fieldName] = &model.FieldModel{
+		fm := &model.FieldModel{
 			Model:    r.Resolve(f.Type),
 			Required: required,
 		}
+		godoc.Extract(f.Comment, reflect.StructTag(f.Tag)).ApplyTo(fm)
+		fields[fieldName] = fm
 	}
 
 	for _, embedded := range structDef.EmbeddedTypes {

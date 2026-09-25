@@ -332,3 +332,45 @@ func TestResolve_DependencyResolverFallback(t *testing.T) {
 		}
 	})
 }
+
+func TestResolveFieldDocumentation(t *testing.T) {
+	src := `package main
+
+type CreateUserReq struct {
+	// Name is the display name.
+	Name string ` + "`json:\"name\" example:\"John\" default:\"anon\" enums:\"a,b,c\"`" + `
+	Note string
+}
+`
+	structs := extractStructs(parseSource(t, src))
+	resolver := NewTypeResolver(structs)
+	obj := resolver.Resolve("CreateUserReq")
+	if !obj.IsObject() {
+		t.Fatalf("Expected object model, got kind=%s", obj.Kind)
+	}
+
+	fm := obj.Fields["name"]
+	if fm == nil {
+		t.Fatal("Expected field 'name'")
+	}
+	if fm.Comment != "Name is the display name." {
+		t.Errorf("Comment = %q, want doc comment", fm.Comment)
+	}
+	if fm.Demo != "John" {
+		t.Errorf("Demo = %q, want %q", fm.Demo, "John")
+	}
+	if fm.DefaultValue != "anon" {
+		t.Errorf("DefaultValue = %q, want %q", fm.DefaultValue, "anon")
+	}
+	if len(fm.Options) != 3 {
+		t.Errorf("Options = %+v, want 3 entries", fm.Options)
+	}
+
+	note := obj.Fields["note"]
+	if note == nil {
+		t.Fatal("Expected field 'note'")
+	}
+	if note.Comment != "" {
+		t.Errorf("Comment = %q, want empty for undocumented field", note.Comment)
+	}
+}

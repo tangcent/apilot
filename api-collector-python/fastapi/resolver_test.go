@@ -1,6 +1,8 @@
 package fastapi
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
@@ -500,4 +502,66 @@ func TestPythonTypeResolver_DependencyResolverFallback(t *testing.T) {
 			t.Errorf("Expected single for unknown type, got %s", result.Kind)
 		}
 	})
+}
+
+func TestPydanticFieldDocumentation(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "models.py")
+	src := "from pydantic import BaseModel, Field\n\n" +
+		"class UserCreate(BaseModel):\n" +
+		"    name: str = Field(default=\"x\", description=\"user name\", example=\"John\")\n" +
+		"    note: str = \"plain\"\n"
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	models, err := ExtractPydanticModelsFromFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	userCreate, ok := models["UserCreate"]
+	if !ok {
+		t.Fatalf("expected UserCreate model, got %v", models)
+	}
+	if len(userCreate.Fields) != 2 {
+		t.Fatalf("expected 2 fields, got %d", len(userCreate.Fields))
+	}
+
+	name := userCreate.Fields[0]
+	if name.Type != "str" {
+		t.Errorf("name.Type = %q, want %q (Field(...) must not become the type)", name.Type, "str")
+	}
+	if name.Description != "user name" {
+		t.Errorf("name.Description = %q, want %q", name.Description, "user name")
+	}
+	if name.Example != "John" {
+		t.Errorf("name.Example = %q, want %q", name.Example, "John")
+	}
+
+	resolver := NewPythonTypeResolver(models)
+	obj := resolver.Resolve("UserCreate")
+	if !obj.IsObject() {
+		t.Fatalf("expected object model, got kind=%s", obj.Kind)
+	}
+	fm := obj.Fields["name"]
+	if fm == nil {
+		t.Fatal("expected field 'name'")
+	}
+	if fm.Comment != "user name" {
+		t.Errorf("Comment = %q, want %q", fm.Comment, "user name")
+	}
+	if fm.Demo != "John" {
+		t.Errorf("Demo = %q, want %q", fm.Demo, "John")
+	}
+	if fm.Model.TypeName != model.JsonTypeString {
+		t.Errorf("type = %q, want string", fm.Model.TypeName)
+	}
+
+	noteFm := obj.Fields["note"]
+	if noteFm == nil {
+		t.Fatal("expected field 'note'")
+	}
+	if noteFm.Comment != "" {
+		t.Errorf("note.Comment = %q, want empty", noteFm.Comment)
+	}
 }

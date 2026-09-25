@@ -8,6 +8,8 @@ require github.com/tangcent/apilot/api-collector v0.0.0
 
 require github.com/tangcent/apilot/api-model v0.0.0 // indirect
 
+require github.com/tangcent/apilot/api-docmeta v0.0.0
+
 require (
 	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/tree-sitter/go-tree-sitter v0.25.0
@@ -17,5 +19,6 @@ require (
 
 replace (
 	github.com/tangcent/apilot/api-collector => ../api-collector
+	github.com/tangcent/apilot/api-docmeta => ../api-docmeta
 	github.com/tangcent/apilot/api-model => ../api-model
 )
