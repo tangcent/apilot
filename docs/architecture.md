@@ -31,6 +31,7 @@ APilot is a multi-module monorepo that parses API source code and exports docume
 | Module | Language | Role |
 |--------|----------|------|
 | `api-model` | Go | Canonical data types: ApiEndpoint, ApiParameter, ApiHeader, ApiBody |
+| `api-docmeta` | Go | Shared documentation-metadata contract: normalized Comment/Demo/DefaultValue/Required/Options applied to FieldModel |
 | `api-collector` | Go | Collector interface + CollectContext |
 | `api-formatter` | Go | Formatter interface + FormatOptions |
 | `api-master` | Go | Core engine: CLI, registry, plugin loader, orchestration |
@@ -67,11 +68,15 @@ api-master
 api-collector
   └── api-model
 
+api-docmeta
+  └── api-model
+
 api-formatter
   └── api-model
 
 api-collector-{java,go,node,python}
-  └── api-collector
+  ├── api-collector
+  └── api-docmeta   (shared documentation-metadata contract)
 
 api-formatter-{markdown,curl,postman}
   ├── api-model     (for ApiEndpoint type)

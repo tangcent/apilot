@@ -368,25 +368,7 @@ func (r *TypeResolver) resolveField(f parser.Field, localBindings map[string]str
 			fm.Required = false
 		}
 	}
-	doc := javadoc.FieldDocumentationFor(f.Annotations, f.JavaDoc)
-	if doc.Description != "" {
-		fm.Comment = doc.Description
-	}
-	if doc.Example != "" {
-		fm.Demo = doc.Example
-	}
-	if doc.Default != "" {
-		fm.DefaultValue = doc.Default
-	}
-	if doc.Required != nil {
-		fm.Required = *doc.Required
-	}
-	if len(doc.Enum) > 0 {
-		fm.Options = make([]model.FieldOption, 0, len(doc.Enum))
-		for _, value := range doc.Enum {
-			fm.Options = append(fm.Options, model.FieldOption{Value: value})
-		}
-	}
+	javadoc.FieldDocumentationFor(f.Annotations, f.JavaDoc).Normalize().ApplyTo(fm)
 	if r.isUnboundTypeParam(f.Type, localBindings, typeParamSet) {
 		fm.Generic = true
 	} else if fieldModel != nil && fieldModel.Kind == model.KindSingle && r.allTypeParams[fieldModel.TypeName] {

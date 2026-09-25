@@ -5,6 +5,7 @@ set -euo pipefail
 MODULES=(
   api-collector
   api-formatter
+  api-docmeta
   api-collector-go
   api-collector-java
   api-collector-node

@@ -1,6 +1,8 @@
 package express
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	collector "github.com/tangcent/apilot/api-collector"
@@ -552,5 +554,114 @@ func TestResolveHandlerTypesWithDepResolver(t *testing.T) {
 		if _, ok := resBody.Fields["id"]; !ok {
 			t.Error("resBody should have 'id' field from dependency resolver")
 		}
+	}
+}
+
+func TestTSTypeResolver_FieldDocumentation(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "types.ts")
+	src := "interface CreateUserRequest {\n" +
+		"    /**\n" +
+		"     * display name\n" +
+		"     * spans two lines\n" +
+		"     * @example John\n" +
+		"     */\n" +
+		"    name: string;\n" +
+		"\n" +
+		"    /**\n" +
+		"     * user role\n" +
+		"     * @default viewer\n" +
+		"     */\n" +
+		"    role: string;\n" +
+		"\n" +
+		"    // plain line note\n" +
+		"    note: string;\n" +
+		"\n" +
+		"    plain: string;\n" +
+		"}\n"
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	registry, err := ExtractTypesFromFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj := NewTSTypeResolver(registry).Resolve("CreateUserRequest", nil)
+	if !obj.IsObject() {
+		t.Fatalf("Expected object model, got kind=%s", obj.Kind)
+	}
+
+	name := obj.Fields["name"]
+	if name == nil {
+		t.Fatal("Expected 'name' field")
+	}
+	if name.Comment != "display name spans two lines" {
+		t.Errorf("name.Comment = %q, want %q", name.Comment, "display name spans two lines")
+	}
+	if name.Demo != "John" {
+		t.Errorf("name.Demo = %q, want %q", name.Demo, "John")
+	}
+
+	role := obj.Fields["role"]
+	if role == nil {
+		t.Fatal("Expected 'role' field")
+	}
+	if role.Comment != "user role" {
+		t.Errorf("role.Comment = %q, want %q", role.Comment, "user role")
+	}
+	if role.DefaultValue != "viewer" {
+		t.Errorf("role.DefaultValue = %q, want %q", role.DefaultValue, "viewer")
+	}
+
+	if note := obj.Fields["note"]; note == nil {
+		t.Fatal("Expected 'note' field")
+	} else if note.Comment != "plain line note" {
+		t.Errorf("note.Comment = %q, want %q", note.Comment, "plain line note")
+	}
+
+	if plain := obj.Fields["plain"]; plain == nil {
+		t.Fatal("Expected 'plain' field")
+	} else if plain.Comment != "" {
+		t.Errorf("plain.Comment = %q, want empty for an undocumented field", plain.Comment)
+	}
+}
+
+func TestTSTypeResolver_ClassFieldDocumentation(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dtos.ts")
+	src := "class CreateUserDto {\n" +
+		"    /**\n" +
+		"     * display name\n" +
+		"     */\n" +
+		"    name: string;\n" +
+		"\n" +
+		"    age: number;\n" +
+		"}\n"
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	registry, err := ExtractTypesFromFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj := NewTSTypeResolver(registry).Resolve("CreateUserDto", nil)
+	if !obj.IsObject() {
+		t.Fatalf("Expected object model, got kind=%s", obj.Kind)
+	}
+
+	name := obj.Fields["name"]
+	if name == nil {
+		t.Fatal("Expected 'name' field")
+	}
+	if name.Comment != "display name" {
+		t.Errorf("name.Comment = %q, want %q", name.Comment, "display name")
+	}
+
+	if age := obj.Fields["age"]; age == nil {
+		t.Fatal("Expected 'age' field")
+	} else if age.Comment != "" {
+		t.Errorf("age.Comment = %q, want empty", age.Comment)
 	}
 }

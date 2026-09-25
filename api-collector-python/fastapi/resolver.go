@@ -9,6 +9,7 @@ import (
 	python "github.com/tree-sitter/tree-sitter-python/bindings/go"
 
 	collector "github.com/tangcent/apilot/api-collector"
+	docmeta "github.com/tangcent/apilot/api-docmeta"
 	model "github.com/tangcent/apilot/api-model"
 )
 
@@ -19,10 +20,12 @@ type PydanticModel struct {
 }
 
 type PydanticField struct {
-	Name     string
-	Type     string
-	Required bool
-	Default  string
+	Name        string
+	Type        string
+	Required    bool
+	Default     string
+	Description string
+	Example     string
 }
 
 var pythonPrimitives = map[string]string{
@@ -225,6 +228,8 @@ func extractFieldFromAssignment(node *tree_sitter.Node, source []byte) *Pydantic
 	var typeText string
 	var required bool = true
 	var defaultVal string
+	var description string
+	var example string
 
 	leftFound := false
 	for i := uint(0); i < node.ChildCount(); i++ {
@@ -239,7 +244,13 @@ func extractFieldFromAssignment(node *tree_sitter.Node, source []byte) *Pydantic
 			required = false
 		case "call":
 			if leftFound {
-				typeText, defaultVal = extractFieldTypeFromCall(child, source)
+				info := extractFieldTypeFromCall(child, source)
+				if info.typeName != "" {
+					typeText = info.typeName
+				}
+				defaultVal = info.defaultVal
+				description = info.description
+				example = info.example
 			}
 		case "type":
 			typeText = child.Utf8Text(source)
@@ -255,10 +266,12 @@ func extractFieldFromAssignment(node *tree_sitter.Node, source []byte) *Pydantic
 	}
 
 	return &PydanticField{
-		Name:     name,
-		Type:     typeText,
-		Required: required,
-		Default:  defaultVal,
+		Name:        name,
+		Type:        typeText,
+		Required:    required,
+		Default:     defaultVal,
+		Description: description,
+		Example:     example,
 	}
 }
 
@@ -267,6 +280,8 @@ func extractFieldFromAnnotatedAssignment(node *tree_sitter.Node, source []byte) 
 	var typeText string
 	var required bool = true
 	var defaultVal string
+	var description string
+	var example string
 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -277,6 +292,15 @@ func extractFieldFromAnnotatedAssignment(node *tree_sitter.Node, source []byte) 
 			typeText = child.Utf8Text(source)
 		case "=":
 			required = false
+		case "call":
+			info := extractFieldTypeFromCall(child, source)
+			if info.typeName == "" {
+				defaultVal = info.defaultVal
+				description = info.description
+				example = info.example
+			} else if name != "" && typeText != "" {
+				defaultVal = child.Utf8Text(source)
+			}
 		default:
 			if child.Kind() != ":" && name != "" && typeText != "" {
 				defaultVal = child.Utf8Text(source)
@@ -289,28 +313,54 @@ func extractFieldFromAnnotatedAssignment(node *tree_sitter.Node, source []byte) 
 	}
 
 	return &PydanticField{
-		Name:     name,
-		Type:     typeText,
-		Required: required,
-		Default:  defaultVal,
+		Name:        name,
+		Type:        typeText,
+		Required:    required,
+		Default:     defaultVal,
+		Description: description,
+		Example:     example,
 	}
 }
 
-func extractFieldTypeFromCall(callNode *tree_sitter.Node, source []byte) (typeName string, defaultVal string) {
+// fieldCallInfo carries the metadata found in a field's right-hand-side call
+// expression, e.g. `Field(default="x", description="user name")`.
+type fieldCallInfo struct {
+	// typeName is the callee when it doubles as the field type. It is empty
+	// for descriptor calls such as Field(...), whose type comes from the
+	// annotation instead.
+	typeName    string
+	defaultVal  string
+	description string
+	example     string
+}
+
+// isPydanticFieldCall reports whether a callee names the pydantic Field
+// descriptor rather than a type constructor. Any qualified form is accepted,
+// so `Field`, `pydantic.Field` and `pydantic.v1.Field` all match.
+func isPydanticFieldCall(callee string) bool {
+	return callee == "Field" || strings.HasSuffix(callee, ".Field")
+}
+
+func extractFieldTypeFromCall(callNode *tree_sitter.Node, source []byte) fieldCallInfo {
+	var info fieldCallInfo
 	for i := uint(0); i < callNode.ChildCount(); i++ {
 		child := callNode.Child(i)
 		if child.Kind() == "identifier" || child.Kind() == "attribute" {
-			typeName = child.Utf8Text(source)
+			info.typeName = child.Utf8Text(source)
 		}
 		if child.Kind() == "argument_list" {
-			typeName, defaultVal = extractFieldTypeInfoFromArgs(child, source, typeName)
+			info = extractFieldTypeInfoFromArgs(child, source, info)
 		}
 	}
-	return typeName, defaultVal
+	return info
 }
 
-func extractFieldTypeInfoFromArgs(argList *tree_sitter.Node, source []byte, callName string) (typeName string, defaultVal string) {
-	typeName = callName
+func extractFieldTypeInfoFromArgs(argList *tree_sitter.Node, source []byte, info fieldCallInfo) fieldCallInfo {
+	callee := info.typeName
+	if isPydanticFieldCall(callee) {
+		// Field(...) is a descriptor, not the field's type.
+		info.typeName = ""
+	}
 	for i := uint(0); i < argList.ChildCount(); i++ {
 		child := argList.Child(i)
 		if child.Kind() == "(" || child.Kind() == ")" || child.Kind() == "," {
@@ -320,28 +370,58 @@ func extractFieldTypeInfoFromArgs(argList *tree_sitter.Node, source []byte, call
 			continue
 		}
 		if child.Kind() == "keyword_argument" {
-			for j := uint(0); j < child.ChildCount(); j++ {
-				kwChild := child.Child(j)
-				if kwChild.Kind() == "=" {
-					continue
-				}
-				if kwChild.Kind() == "identifier" {
-					text := kwChild.Utf8Text(source)
-					if text == "default" || text == "default_factory" {
-						defaultVal = "has_default"
-					}
-				}
+			key, value := keywordArgumentParts(child, source)
+			switch key {
+			case "default", "default_factory":
+				info.defaultVal = "has_default"
+			case "description":
+				info.description = unquoteStringLiteral(value)
+			case "example":
+				info.example = unquoteStringLiteral(value)
 			}
 			continue
 		}
-		if typeName == "Field" || typeName == "pydantic.Field" {
+		if isPydanticFieldCall(callee) {
 			text := child.Utf8Text(source)
 			if strings.HasPrefix(text, `"`) || strings.HasPrefix(text, `'`) {
-				defaultVal = text
+				info.defaultVal = text
 			}
 		}
 	}
-	return typeName, defaultVal
+	return info
+}
+
+// keywordArgumentParts splits a keyword_argument node into the keyword name
+// and the raw text of its value.
+func keywordArgumentParts(node *tree_sitter.Node, source []byte) (key string, value string) {
+	isValue := false
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		switch {
+		case child.Kind() == "identifier" && !isValue:
+			key = child.Utf8Text(source)
+		case child.Kind() == "=":
+			isValue = true
+		case isValue:
+			value = strings.TrimSpace(child.Utf8Text(source))
+		}
+	}
+	return key, value
+}
+
+// unquoteStringLiteral strips the quotes around a Python string literal.
+// Non-literal text is returned unchanged.
+func unquoteStringLiteral(text string) string {
+	text = strings.TrimSpace(text)
+	if len(text) >= 6 &&
+		((strings.HasPrefix(text, `"""`) && strings.HasSuffix(text, `"""`)) ||
+			(strings.HasPrefix(text, "'''") && strings.HasSuffix(text, "'''"))) {
+		return text[3 : len(text)-3]
+	}
+	if len(text) >= 2 && (text[0] == '"' || text[0] == '\'') && text[len(text)-1] == text[0] {
+		return text[1 : len(text)-1]
+	}
+	return text
 }
 
 type PythonTypeResolver struct {
@@ -545,11 +625,13 @@ func (r *PythonTypeResolver) resolveFieldModel(f PydanticField) *model.FieldMode
 		fieldModel = model.SingleModel(model.JsonTypeString)
 	}
 
-	return &model.FieldModel{
+	fm := &model.FieldModel{
 		Model:        fieldModel,
 		Required:     f.Required,
 		DefaultValue: f.Default,
 	}
+	docmeta.Documentation{Comment: f.Description, Demo: f.Example}.ApplyTo(fm)
+	return fm
 }
 
 func ParsePythonGenericType(typeText string) (string, []string) {

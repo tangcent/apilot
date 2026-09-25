@@ -6,6 +6,7 @@ use (
 	./api-collector-java
 	./api-collector-node
 	./api-collector-python
+	./api-docmeta
 	./api-formatter
 	./api-formatter-curl
 	./api-formatter-markdown
