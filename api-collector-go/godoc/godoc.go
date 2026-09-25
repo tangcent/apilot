@@ -17,6 +17,10 @@ import (
 //   - example:"..."     — example value
 //   - default:"..."     — documented default
 //   - enums:"a,b,c"     — comma-separated allowed values
+//
+// Required is never set here: whether a field is required is decided by the
+// binding/validate tag handling in each framework resolver, and validation
+// keywords such as `validate:"required"` or `oneof=` are not parsed.
 func Extract(comment string, tag reflect.StructTag) docmeta.Documentation {
 	d := docmeta.Documentation{Comment: strings.TrimSpace(comment)}
 	if v := tag.Get("description"); v != "" {

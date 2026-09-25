@@ -565,3 +565,33 @@ func TestPydanticFieldDocumentation(t *testing.T) {
 		t.Errorf("note.Comment = %q, want empty", noteFm.Comment)
 	}
 }
+
+func TestPydanticQualifiedFieldDescriptor(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "models.py")
+	src := "from pydantic import BaseModel\nimport pydantic.v1\n\n" +
+		"class UserCreate(BaseModel):\n" +
+		"    name: str = pydantic.v1.Field(default=\"x\", description=\"user name\")\n"
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	models, err := ExtractPydanticModelsFromFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	userCreate, ok := models["UserCreate"]
+	if !ok {
+		t.Fatalf("expected UserCreate model, got %v", models)
+	}
+	if len(userCreate.Fields) != 1 {
+		t.Fatalf("expected 1 field, got %d", len(userCreate.Fields))
+	}
+	name := userCreate.Fields[0]
+	if name.Type != "str" {
+		t.Errorf("name.Type = %q, want %q", name.Type, "str")
+	}
+	if name.Description != "user name" {
+		t.Errorf("name.Description = %q, want %q", name.Description, "user name")
+	}
+}

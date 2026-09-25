@@ -335,9 +335,10 @@ type fieldCallInfo struct {
 }
 
 // isPydanticFieldCall reports whether a callee names the pydantic Field
-// descriptor rather than a type constructor.
+// descriptor rather than a type constructor. Any qualified form is accepted,
+// so `Field`, `pydantic.Field` and `pydantic.v1.Field` all match.
 func isPydanticFieldCall(callee string) bool {
-	return callee == "Field" || callee == "pydantic.Field"
+	return callee == "Field" || strings.HasSuffix(callee, ".Field")
 }
 
 func extractFieldTypeFromCall(callNode *tree_sitter.Node, source []byte) fieldCallInfo {
