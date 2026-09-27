@@ -16,10 +16,14 @@ const (
 
 // EndpointParameter describes a single parameter of a Feign endpoint.
 type EndpointParameter struct {
-	Name      string
-	Type      string
-	ParamType string // path, query, body, header, form
-	Required  bool
+	Name         string
+	Type         string
+	ParamType    string // path, query, body, header, form
+	Required     bool
+	DefaultValue string
+	Description  string
+	Example      string
+	Enum         []string
 }
 
 // Endpoint represents a Feign client endpoint.
@@ -27,6 +31,7 @@ type Endpoint struct {
 	Path              string
 	Method            HTTPMethod
 	MethodName        string
+	Description       string
 	Parameters        []EndpointParameter
 	ReturnType        string
 	ClassName         string

@@ -794,3 +794,172 @@ func TestParser_ResponseEntityUnwrapping(t *testing.T) {
 		t.Errorf("Expected unwrapped String type, got '%s'", ep.ResponseSchema.TypeName)
 	}
 }
+
+func TestParser_DocumentationMetadata(t *testing.T) {
+	results := []parser.ParseResult{
+		{
+			Classes: []parser.Class{
+				{
+					Name:        "DocumentedClient",
+					Package:     "com.example.client",
+					IsInterface: true,
+					Annotations: []parser.Annotation{
+						{Name: "FeignClient", Params: map[string]string{"name": "documented-service"}},
+					},
+					Methods: []parser.Method{
+						{
+							Name:    "getDocumented",
+							JavaDoc: "Fetch documented item.",
+							JavaDocParams: map[string]string{
+								"id":     "documented item id",
+								"status": "fallback status",
+							},
+							Annotations: []parser.Annotation{
+								{Name: "GetMapping", Params: map[string]string{"value": "/api/docs/{id}"}},
+							},
+							Parameters: []parser.Parameter{
+								{
+									Name: "id",
+									Type: "Long",
+									Annotations: []parser.Annotation{
+										{Name: "PathVariable"},
+									},
+								},
+								{
+									Name: "status",
+									Type: "String",
+									Annotations: []parser.Annotation{
+										{Name: "RequestParam", Params: map[string]string{"defaultValue": "active"}},
+									},
+								},
+								{
+									Name: "role",
+									Type: "String",
+									Annotations: []parser.Annotation{
+										{Name: "Parameter", Params: map[string]string{
+											"description": "User role",
+											"example":     "admin",
+										}},
+										{Name: "RequestHeader"},
+									},
+								},
+							},
+							ReturnType: "DocumentedResponse",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	p := NewParser()
+	clients := p.ExtractClients(results)
+	if len(clients) != 1 || len(clients[0].Endpoints) != 1 {
+		t.Fatalf("Expected one documented endpoint, got %#v", clients)
+	}
+
+	endpoint := clients[0].Endpoints[0]
+	if endpoint.Description != "Fetch documented item." {
+		t.Fatalf("Expected endpoint description, got %q", endpoint.Description)
+	}
+	if len(endpoint.Parameters) != 3 {
+		t.Fatalf("Expected 3 parameters, got %d", len(endpoint.Parameters))
+	}
+
+	id := endpoint.Parameters[0]
+	if id.Description != "documented item id" {
+		t.Errorf("Expected id description, got %q", id.Description)
+	}
+	if !id.Required {
+		t.Error("Expected @PathVariable to be required")
+	}
+
+	status := endpoint.Parameters[1]
+	if status.Description != "fallback status" {
+		t.Errorf("Expected status JavaDoc param fallback, got %q", status.Description)
+	}
+	if status.DefaultValue != "active" {
+		t.Errorf("Expected status default, got %q", status.DefaultValue)
+	}
+	if status.Required {
+		t.Error("Expected a defaulted parameter to be optional")
+	}
+
+	role := endpoint.Parameters[2]
+	if role.Description != "User role" {
+		t.Errorf("Expected role description, got %q", role.Description)
+	}
+	if role.Example != "admin" {
+		t.Errorf("Expected role example, got %q", role.Example)
+	}
+}
+
+func TestParser_RequestLineDocumentation(t *testing.T) {
+	results := []parser.ParseResult{
+		{
+			Classes: []parser.Class{
+				{
+					Name:        "DocumentedLegacyClient",
+					Package:     "com.example.client",
+					IsInterface: true,
+					Methods: []parser.Method{
+						{
+							Name:    "searchDocumented",
+							JavaDoc: "Search documented items.",
+							JavaDocParams: map[string]string{
+								"keyword": "search keyword",
+							},
+							Annotations: []parser.Annotation{
+								{Name: "RequestLine", Params: map[string]string{
+									"value": "GET /api/docs/search?keyword={keyword}",
+								}},
+							},
+							Parameters: []parser.Parameter{
+								{
+									Name: "keyword",
+									Type: "String",
+									Annotations: []parser.Annotation{
+										{Name: "Param", Params: map[string]string{"value": "keyword"}},
+									},
+								},
+								{
+									Name: "id",
+									Type: "Long",
+									Annotations: []parser.Annotation{
+										{Name: "Param", Params: map[string]string{"value": "id"}},
+									},
+								},
+							},
+							ReturnType: "DocumentedResponse",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	p := NewParser()
+	clients := p.ExtractClients(results)
+	if len(clients) != 1 || len(clients[0].Endpoints) != 1 {
+		t.Fatalf("Expected one documented endpoint, got %#v", clients)
+	}
+
+	endpoint := clients[0].Endpoints[0]
+	if endpoint.Description != "Search documented items." {
+		t.Fatalf("Expected endpoint description, got %q", endpoint.Description)
+	}
+	if len(endpoint.Parameters) != 2 {
+		t.Fatalf("Expected 2 parameters, got %d", len(endpoint.Parameters))
+	}
+
+	keyword := endpoint.Parameters[0]
+	if keyword.Name != "keyword" {
+		t.Errorf("Expected @Param alias as parameter name, got %q", keyword.Name)
+	}
+	if keyword.Description != "search keyword" {
+		t.Errorf("Expected keyword JavaDoc param fallback, got %q", keyword.Description)
+	}
+	if keyword.ParamType != "query" {
+		t.Errorf("Expected keyword to be a query parameter, got %q", keyword.ParamType)
+	}
+}

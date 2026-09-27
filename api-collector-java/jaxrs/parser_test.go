@@ -658,3 +658,168 @@ func TestParser_ContextParamIgnored(t *testing.T) {
 		t.Errorf("Expected 0 parameters (@Context should be ignored), got %d", len(resources[0].Endpoints[0].Parameters))
 	}
 }
+
+func TestParser_DocumentationMetadata(t *testing.T) {
+	results := []parser.ParseResult{
+		{
+			Classes: []parser.Class{
+				{
+					Name:    "DocumentedResource",
+					Package: "com.example.api",
+					Annotations: []parser.Annotation{
+						{Name: "Path", Params: map[string]string{"value": "/users"}},
+					},
+					Methods: []parser.Method{
+						{
+							Name:    "getUser",
+							JavaDoc: "JavaDoc fallback",
+							JavaDocParams: map[string]string{
+								"status": "fallback status",
+							},
+							Annotations: []parser.Annotation{
+								{Name: "Operation", Params: map[string]string{
+									"summary":     "Fetch user",
+									"description": "Fetch user by id",
+								}},
+								{Name: "GET"},
+								{Name: "Path", Params: map[string]string{"value": "/{id}"}},
+							},
+							Parameters: []parser.Parameter{
+								{
+									Name:    "id",
+									Type:    "Long",
+									JavaDoc: "parameter fallback",
+									Annotations: []parser.Annotation{
+										{Name: "Parameter", Params: map[string]string{
+											"description": "User id",
+											"example":     "42",
+										}},
+										{Name: "PathParam", Params: map[string]string{"value": "id"}},
+									},
+								},
+								{
+									Name: "status",
+									Type: "String",
+									Annotations: []parser.Annotation{
+										{Name: "DefaultValue", Params: map[string]string{"value": "active"}},
+										{Name: "QueryParam", Params: map[string]string{"value": "status"}},
+									},
+								},
+								{
+									Name: "role",
+									Type: "String",
+									Annotations: []parser.Annotation{
+										{Name: "ApiParam", Params: map[string]string{
+											"value":           "User role",
+											"allowableValues": "admin,user",
+										}},
+										{Name: "QueryParam", Params: map[string]string{"value": "role"}},
+									},
+								},
+							},
+							ReturnType: "User",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	p := NewParser()
+	resources := p.ExtractResources(results)
+	if len(resources) != 1 || len(resources[0].Endpoints) != 1 {
+		t.Fatalf("Expected one documented endpoint, got %#v", resources)
+	}
+
+	endpoint := resources[0].Endpoints[0]
+	if endpoint.Description != "Fetch user\n\nFetch user by id" {
+		t.Fatalf("Expected annotation endpoint description, got %q", endpoint.Description)
+	}
+	if len(endpoint.Parameters) != 3 {
+		t.Fatalf("Expected 3 parameters, got %d", len(endpoint.Parameters))
+	}
+
+	id := endpoint.Parameters[0]
+	if id.Description != "User id" {
+		t.Errorf("Expected id description, got %q", id.Description)
+	}
+	if id.Example != "42" {
+		t.Errorf("Expected id example, got %q", id.Example)
+	}
+	if !id.Required {
+		t.Error("Expected @PathParam to be required")
+	}
+
+	status := endpoint.Parameters[1]
+	if status.Description != "fallback status" {
+		t.Errorf("Expected status JavaDoc param fallback, got %q", status.Description)
+	}
+	if status.DefaultValue != "active" {
+		t.Errorf("Expected status default from @DefaultValue, got %q", status.DefaultValue)
+	}
+	if status.Required {
+		t.Error("Expected @DefaultValue to make the parameter optional")
+	}
+
+	role := endpoint.Parameters[2]
+	if role.Description != "User role" {
+		t.Errorf("Expected role description, got %q", role.Description)
+	}
+	if len(role.Enum) != 2 || role.Enum[0] != "admin" || role.Enum[1] != "user" {
+		t.Errorf("Expected role enum values, got %#v", role.Enum)
+	}
+}
+
+func TestParser_JavaDocDocumentationFallback(t *testing.T) {
+	results := []parser.ParseResult{
+		{
+			Classes: []parser.Class{
+				{
+					Name: "DocumentedResource",
+					Annotations: []parser.Annotation{
+						{Name: "Path", Params: map[string]string{"value": "/users"}},
+					},
+					Methods: []parser.Method{
+						{
+							Name:    "search",
+							JavaDoc: "Search users.",
+							JavaDocParams: map[string]string{
+								"keyword": "search keyword",
+							},
+							Annotations: []parser.Annotation{
+								{Name: "GET"},
+							},
+							Parameters: []parser.Parameter{
+								{
+									Name: "keyword",
+									Type: "String",
+									Annotations: []parser.Annotation{
+										{Name: "QueryParam", Params: map[string]string{"value": "keyword"}},
+									},
+								},
+							},
+							ReturnType: "List<User>",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	p := NewParser()
+	resources := p.ExtractResources(results)
+	if len(resources) != 1 || len(resources[0].Endpoints) != 1 {
+		t.Fatalf("Expected one endpoint, got %#v", resources)
+	}
+
+	endpoint := resources[0].Endpoints[0]
+	if endpoint.Description != "Search users." {
+		t.Fatalf("Expected JavaDoc endpoint description, got %q", endpoint.Description)
+	}
+	if len(endpoint.Parameters) != 1 {
+		t.Fatalf("Expected one parameter, got %d", len(endpoint.Parameters))
+	}
+	if endpoint.Parameters[0].Description != "search keyword" {
+		t.Errorf("Expected JavaDoc param fallback, got %q", endpoint.Parameters[0].Description)
+	}
+}

@@ -244,6 +244,129 @@ func TestCollect_SpringMVCDocumentation(t *testing.T) {
 	}
 }
 
+func TestCollect_JAXRSDocumentation(t *testing.T) {
+	c := New()
+	testdataDir, _ := filepath.Abs("testdata")
+
+	endpoints, err := c.Collect(collector.CollectContext{
+		SourceDir:  testdataDir,
+		Frameworks: []string{"jaxrs"},
+	})
+	if err != nil {
+		t.Fatalf("Collect failed: %v", err)
+	}
+
+	documented := findEndpoint(t, endpoints, "getDocumented")
+	if documented.Description != "Fetch documented item\n\nReturns a documented item by id" {
+		t.Fatalf("Expected endpoint description, got %q", documented.Description)
+	}
+
+	id := findParameter(t, documented, "id")
+	if id.Description != "Documented item id" {
+		t.Errorf("Expected id description, got %q", id.Description)
+	}
+	if id.Example != "42" {
+		t.Errorf("Expected id example, got %q", id.Example)
+	}
+	if !id.Required {
+		t.Error("Expected id to be required")
+	}
+
+	status := findParameter(t, documented, "status")
+	if status.Description != "fallback status" {
+		t.Errorf("Expected status JavaDoc fallback, got %q", status.Description)
+	}
+	if status.Default != "active" {
+		t.Errorf("Expected status default from @DefaultValue, got %q", status.Default)
+	}
+	if status.Required {
+		t.Error("Expected status to be optional because it has a default")
+	}
+
+	// JavaDoc-only endpoint: description and param docs both fall back to JavaDoc.
+	search := findEndpoint(t, endpoints, "searchDocumented")
+	if search.Description != "Search documented items." {
+		t.Errorf("Expected JavaDoc endpoint description, got %q", search.Description)
+	}
+	keyword := findParameter(t, search, "keyword")
+	if keyword.Description != "search keyword" {
+		t.Errorf("Expected keyword JavaDoc param fallback, got %q", keyword.Description)
+	}
+	limit := findParameter(t, search, "limit")
+	if limit.Default != "10" {
+		t.Errorf("Expected limit default from @DefaultValue, got %q", limit.Default)
+	}
+}
+
+func TestCollect_FeignDocumentation(t *testing.T) {
+	c := New()
+	testdataDir, _ := filepath.Abs("testdata")
+
+	endpoints, err := c.Collect(collector.CollectContext{
+		SourceDir:  testdataDir,
+		Frameworks: []string{"feign"},
+	})
+	if err != nil {
+		t.Fatalf("Collect failed: %v", err)
+	}
+
+	documented := findEndpoint(t, endpoints, "getDocumented")
+	if documented.Description != "Fetch documented item." {
+		t.Fatalf("Expected endpoint description, got %q", documented.Description)
+	}
+
+	id := findParameter(t, documented, "id")
+	if id.Description != "documented item id" {
+		t.Errorf("Expected id description from JavaDoc, got %q", id.Description)
+	}
+	if !id.Required {
+		t.Error("Expected id to be required")
+	}
+
+	status := findParameter(t, documented, "status")
+	if status.Description != "fallback status" {
+		t.Errorf("Expected status JavaDoc fallback, got %q", status.Description)
+	}
+	if status.Default != "active" {
+		t.Errorf("Expected status default from @RequestParam, got %q", status.Default)
+	}
+
+	// Netflix @RequestLine style uses @Param for binding and JavaDoc for docs.
+	search := findEndpoint(t, endpoints, "searchDocumented")
+	if search.Description != "Search documented items." {
+		t.Errorf("Expected JavaDoc endpoint description, got %q", search.Description)
+	}
+	keyword := findParameter(t, search, "keyword")
+	if keyword.Name != "keyword" {
+		t.Errorf("Expected @Param alias to name the parameter, got %q", keyword.Name)
+	}
+	if keyword.Description != "search keyword" {
+		t.Errorf("Expected keyword JavaDoc param fallback, got %q", keyword.Description)
+	}
+}
+
+func findEndpoint(t *testing.T, endpoints []collector.ApiEndpoint, name string) *collector.ApiEndpoint {
+	t.Helper()
+	for i := range endpoints {
+		if endpoints[i].Name == name {
+			return &endpoints[i]
+		}
+	}
+	t.Fatalf("Expected endpoint %q", name)
+	return nil
+}
+
+func findParameter(t *testing.T, endpoint *collector.ApiEndpoint, name string) collector.ApiParameter {
+	t.Helper()
+	for _, p := range endpoint.Parameters {
+		if p.Name == name {
+			return p
+		}
+	}
+	t.Fatalf("Expected parameter %q on endpoint %q", name, endpoint.Name)
+	return collector.ApiParameter{}
+}
+
 func TestCollect_SchemaResolution_SimpleController(t *testing.T) {
 	c := New()
 	testdataDir, _ := filepath.Abs("testdata")
