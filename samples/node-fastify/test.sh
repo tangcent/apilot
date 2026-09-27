@@ -17,32 +17,71 @@ fi
 OUTPUT_DIR="$SCRIPT_DIR/.output"
 mkdir -p "$OUTPUT_DIR"
 
-# Run apilot
+# Run apilot. The detailed variant is required: the simple one prints routes
+# only, so a request body that silently lost its fields would still pass.
 echo "Running apilot on $SAMPLE_NAME..."
-if ! apilot --formatter markdown --output "$(cd "$OUTPUT_DIR" && pwd)/api.md" "$SCRIPT_DIR" 2>&1; then
+if ! apilot --formatter markdown --format detailed --output "$(cd "$OUTPUT_DIR" && pwd)/api.md" "$SCRIPT_DIR" 2>&1; then
     echo "Error: apilot command failed"
     exit 1
 fi
 
 echo "apilot command completed successfully"
 
+OUTPUT_FILE="$OUTPUT_DIR/api.md"
+
 # Verify output
-if [ ! -f "$OUTPUT_DIR/api.md" ]; then
+if [ ! -f "$OUTPUT_FILE" ]; then
     echo "Error: Output file not created"
     exit 1
 fi
 
-# Check if output contains expected endpoints
-if grep -q "GET /users" "$OUTPUT_DIR/api.md" && \
-   grep -q "POST /users" "$OUTPUT_DIR/api.md" && \
-   grep -q "GET /users/{id}" "$OUTPUT_DIR/api.md" || grep -q "GET /users/:id" "$OUTPUT_DIR/api.md"; then
-    echo "✓ $SAMPLE_NAME test passed"
-    echo "  - Found expected endpoints in output"
-    exit 0
-else
+# Expectations. Routes prove the endpoints were discovered; the field rows
+# prove the exported schema survived. Keep these in sync with the sample
+# source: a field that disappears from the export must fail here.
+MIN_ENDPOINTS=200
+
+EXPECTED_ROUTES=(
+    "/users"
+    "/users/{id}"
+)
+
+EXPECTED_FIELDS=(
+    "| id |  | YES |"
+    "listUsers returns all users."
+    "createUser creates a new user."
+    "getUser returns a single user by ID."
+)
+
+failures=()
+
+endpoint_count=$(grep -c '^\*\*Path:\*\*' "$OUTPUT_FILE" || true)
+if [ "$endpoint_count" -lt "$MIN_ENDPOINTS" ]; then
+    failures+=("expected at least $MIN_ENDPOINTS endpoints, found $endpoint_count")
+fi
+
+for route in "${EXPECTED_ROUTES[@]}"; do
+    if ! grep -q "^\*\*Path:\*\* ${route}$" "$OUTPUT_FILE"; then
+        failures+=("route not exported: $route")
+    fi
+done
+
+for field in "${EXPECTED_FIELDS[@]}"; do
+    if ! grep -qF -- "$field" "$OUTPUT_FILE"; then
+        failures+=("field not exported: $field")
+    fi
+done
+
+if [ ${#failures[@]} -gt 0 ]; then
     echo "✗ $SAMPLE_NAME test failed"
-    echo "  - Expected endpoints not found in output"
+    for failure in "${failures[@]}"; do
+        echo "  - $failure"
+    done
     echo "  - Output content:"
-    cat "$OUTPUT_DIR/api.md"
+    head -60 "$OUTPUT_FILE"
     exit 1
 fi
+
+echo "✓ $SAMPLE_NAME test passed"
+echo "  - $endpoint_count endpoints exported"
+echo "  - ${#EXPECTED_ROUTES[@]} routes and ${#EXPECTED_FIELDS[@]} fields verified"
+exit 0
