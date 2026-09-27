@@ -210,14 +210,23 @@ func extractClassAsInterface(node *tree_sitter.Node, source []byte) *TSInterface
 
 func extractClassFields(classBody *tree_sitter.Node, source []byte) []TSField {
 	var fields []TSField
+	// As in interfaces, comments precede their property as siblings.
+	pending := ""
 
 	for i := uint(0); i < classBody.ChildCount(); i++ {
 		child := classBody.Child(i)
-		if child.Kind() == "public_field_definition" || nodeKindMatchesClassProperty(child) {
+		switch {
+		case child.Kind() == "comment":
+			pending = appendPendingComment(pending, child.Utf8Text(source))
+		case child.Kind() == "public_field_definition" || nodeKindMatchesClassProperty(child):
 			field := extractClassPropertyDefinition(child, source)
 			if field != nil {
+				field.Comment = documentedComment(field.Comment, pending)
 				fields = append(fields, *field)
 			}
+			pending = ""
+		default:
+			pending = ""
 		}
 	}
 
@@ -263,7 +272,7 @@ func extractClassPropertyDefinition(node *tree_sitter.Node, source []byte) *TSFi
 			}
 		case "comment":
 			if comment == "" {
-				comment = cleanComment(child.Utf8Text(source))
+				comment = child.Utf8Text(source)
 			}
 		}
 	}
@@ -505,18 +514,49 @@ func extractTypeParameterNames(node *tree_sitter.Node, source []byte) []string {
 
 func extractInterfaceFields(objectType *tree_sitter.Node, source []byte) []TSField {
 	var fields []TSField
+	// Comments are siblings of the property they document, not children of it,
+	// so they are collected here and handed to the next property.
+	pending := ""
 
 	for i := uint(0); i < objectType.ChildCount(); i++ {
 		child := objectType.Child(i)
-		if child.Kind() == "property_signature" {
+		switch child.Kind() {
+		case "comment":
+			pending = appendPendingComment(pending, child.Utf8Text(source))
+		case "property_signature":
 			field := extractPropertySignature(child, source)
 			if field != nil {
+				field.Comment = documentedComment(field.Comment, pending)
 				fields = append(fields, *field)
 			}
+			pending = ""
+		default:
+			pending = ""
 		}
 	}
 
 	return fields
+}
+
+// appendPendingComment accumulates consecutive comment lines into one block.
+func appendPendingComment(pending, comment string) string {
+	comment = strings.TrimSpace(comment)
+	if comment == "" {
+		return pending
+	}
+	if pending == "" {
+		return comment
+	}
+	return pending + "\n" + comment
+}
+
+// documentedComment prefers documentation carried by the property itself
+// (e.g. a decorator description) over the preceding comment block.
+func documentedComment(own, pending string) string {
+	if own != "" {
+		return own
+	}
+	return pending
 }
 
 func extractPropertySignature(node *tree_sitter.Node, source []byte) *TSField {
@@ -535,7 +575,7 @@ func extractPropertySignature(node *tree_sitter.Node, source []byte) *TSField {
 		case "?":
 			required = false
 		case "comment":
-			comment = cleanComment(child.Utf8Text(source))
+			comment = child.Utf8Text(source)
 		}
 	}
 

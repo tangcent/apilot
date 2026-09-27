@@ -4,8 +4,66 @@ import (
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 
 	collector "github.com/tangcent/apilot/api-collector"
+	docmeta "github.com/tangcent/apilot/api-docmeta"
 	model "github.com/tangcent/apilot/api-model"
 )
+
+// extractSchemaFieldDoc reads documentation keywords (description, default,
+// enum, example) from a JSON Schema property object.
+func extractSchemaFieldDoc(objNode *tree_sitter.Node, source []byte) docmeta.Documentation {
+	var d docmeta.Documentation
+	for i := uint(0); i < objNode.ChildCount(); i++ {
+		child := objNode.Child(i)
+		if child.Kind() != "pair" {
+			continue
+		}
+		switch extractPairKey(child, source) {
+		case "description":
+			d.Comment = extractPairStringValue(child, source)
+		case "default":
+			d.DefaultValue = extractPairValueText(child, source)
+		case "example":
+			d.Demo = extractPairValueText(child, source)
+		case "enum":
+			d.Options = docmeta.OptionsFromValues(extractSchemaStringArray(child, source))
+		}
+	}
+	return d
+}
+
+// extractPairValueText returns the value of a pair as literal text, with
+// string quotes stripped.
+func extractPairValueText(pairNode *tree_sitter.Node, source []byte) string {
+	for i := uint(0); i < pairNode.ChildCount(); i++ {
+		child := pairNode.Child(i)
+		switch child.Kind() {
+		case "string":
+			return unquoteJSString(child.Utf8Text(source))
+		case "number", "true", "false", "null", "identifier":
+			return child.Utf8Text(source)
+		}
+	}
+	return ""
+}
+
+// extractSchemaStringArray collects the string elements of an array-valued
+// pair, e.g. the members of an `enum` keyword.
+func extractSchemaStringArray(pairNode *tree_sitter.Node, source []byte) []string {
+	var values []string
+	for i := uint(0); i < pairNode.ChildCount(); i++ {
+		child := pairNode.Child(i)
+		if child.Kind() != "array" {
+			continue
+		}
+		for j := uint(0); j < child.ChildCount(); j++ {
+			item := child.Child(j)
+			if item.Kind() == "string" {
+				values = append(values, unquoteJSString(item.Utf8Text(source)))
+			}
+		}
+	}
+	return values
+}
 
 func findOptionsObject(argsNode *tree_sitter.Node, source []byte) *tree_sitter.Node {
 	pathFound := false
@@ -270,9 +328,11 @@ func parseJSONSchemaProperties(propsNode *tree_sitter.Node, source []byte, requi
 		}
 
 		var propModel *model.ObjectModel
+		var propSchema *tree_sitter.Node
 		for j := uint(0); j < child.ChildCount(); j++ {
 			pairChild := child.Child(j)
 			if pairChild.Kind() == "object" {
+				propSchema = pairChild
 				propModel = parseJSONSchemaObject(pairChild, source, unresolved)
 				break
 			}
@@ -288,10 +348,14 @@ func parseJSONSchemaProperties(propsNode *tree_sitter.Node, source []byte, requi
 		}
 
 		_, required := requiredFields[propName]
-		fields[propName] = &model.FieldModel{
+		fm := &model.FieldModel{
 			Model:    propModel,
 			Required: required,
 		}
+		if propSchema != nil {
+			extractSchemaFieldDoc(propSchema, source).ApplyTo(fm)
+		}
+		fields[propName] = fm
 	}
 
 	if len(fields) == 0 {

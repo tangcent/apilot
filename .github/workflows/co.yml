@@ -40,7 +40,7 @@ jobs:
 
       - name: Generate coverage
         run: |
-          for mod in api-collector api-formatter api-collector-go api-collector-java api-collector-node api-collector-python api-formatter-curl api-formatter-markdown api-formatter-postman api-master apilot-cli; do
+          for mod in api-collector api-formatter api-docmeta api-collector-go api-collector-java api-collector-node api-collector-python api-formatter-curl api-formatter-markdown api-formatter-postman api-master apilot-cli; do
             if [ -f "$mod/go.mod" ]; then
               echo "==> Coverage for $mod"
               (cd "$mod" && go test -coverprofile=coverage.out ./... || true)

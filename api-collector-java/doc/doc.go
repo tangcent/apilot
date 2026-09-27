@@ -3,6 +3,7 @@ package doc
 import (
 	"strings"
 
+	docmeta "github.com/tangcent/apilot/api-docmeta"
 	"github.com/tangcent/apilot/api-collector-java/parser"
 )
 
@@ -12,6 +13,18 @@ type FieldDocumentation struct {
 	Required    *bool
 	Default     string
 	Enum        []string
+}
+
+// Normalize converts the Java-specific documentation into the shared
+// docmeta contract consumed by every collector.
+func (d FieldDocumentation) Normalize() docmeta.Documentation {
+	return docmeta.Documentation{
+		Comment:      d.Description,
+		Demo:         d.Example,
+		DefaultValue: d.Default,
+		Required:     d.Required,
+		Options:      docmeta.OptionsFromValues(d.Enum),
+	}
 }
 
 func CleanJavaDoc(raw string) string {
