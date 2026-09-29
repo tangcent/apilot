@@ -22,3 +22,9 @@ func (r *PythonDependencyResolver) DetectDependencies(sourceDir string) ([]colle
 func (r *PythonDependencyResolver) ResolveType(typeName string) *collector.ResolvedType {
 	return r.delegate.ResolveType(typeName)
 }
+
+// ResolvedCount reports how many distinct requested types were answered from
+// dependency packages so far.
+func (r *PythonDependencyResolver) ResolvedCount() int {
+	return r.delegate.ResolvedCount()
+}

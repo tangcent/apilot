@@ -21,15 +21,20 @@ type NpmTypeResolver struct {
 	deps       []string
 	loadedPkgs map[string]bool
 	depsParsed bool
+	// resolvedFromDeps records the distinct type names that were requested
+	// and successfully answered from dependency declarations, as opposed to
+	// the cache, which preloads every exported type of every dependency.
+	resolvedFromDeps map[string]bool
 }
 
 func NewNpmTypeResolver(sourceDir string) *NpmTypeResolver {
 	return &NpmTypeResolver{
-		sourceDir:  sourceDir,
-		registry:   express.NewTSTypeRegistry(),
-		cache:      make(map[string]*collector.ResolvedType),
-		misses:     make(map[string]bool),
-		loadedPkgs: make(map[string]bool),
+		sourceDir:        sourceDir,
+		registry:         express.NewTSTypeRegistry(),
+		cache:            make(map[string]*collector.ResolvedType),
+		misses:           make(map[string]bool),
+		loadedPkgs:       make(map[string]bool),
+		resolvedFromDeps: make(map[string]bool),
 	}
 }
 
@@ -37,11 +42,21 @@ func (r *NpmTypeResolver) DetectDependencies(sourceDir string) ([]collector.Depe
 	return DetectNpmDependencies(sourceDir)
 }
 
+// ResolvedCount reports how many distinct requested types were answered from
+// dependency declarations so far. It is read after Collect finishes, once all
+// framework parsers are done querying.
+func (r *NpmTypeResolver) ResolvedCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.resolvedFromDeps)
+}
+
 func (r *NpmTypeResolver) ResolveType(typeName string) *collector.ResolvedType {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if cached, ok := r.cache[typeName]; ok {
+		r.resolvedFromDeps[typeName] = true
 		return cached
 	}
 
@@ -59,6 +74,7 @@ func (r *NpmTypeResolver) ResolveType(typeName string) *collector.ResolvedType {
 	rt := r.resolveFromRegistry(typeName)
 	if rt != nil {
 		r.cache[typeName] = rt
+		r.resolvedFromDeps[typeName] = true
 		return rt
 	}
 

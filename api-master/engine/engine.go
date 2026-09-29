@@ -27,6 +27,7 @@ type Config struct {
 	FormatParams   string
 	OutputPath     string
 	PluginRegistry string
+	NoDeps         bool
 }
 
 func Run(cfg Config) error {
@@ -64,10 +65,18 @@ func Run(cfg Config) error {
 	ctx := collector.CollectContext{
 		SourceDir:  sourceDir,
 		SourceFile: sourceFile,
+		NoDeps:     cfg.NoDeps,
 	}
 	endpoints, err := c.Collect(ctx)
 	if err != nil {
 		return fmt.Errorf("collection failed: %w", err)
+	}
+
+	// Dependency-based type resolution silently does nothing when its
+	// prerequisites are missing; surface whether it ran so an export full of
+	// opaque types can be triaged.
+	if reporter, ok := c.(collector.DependencyResolutionReporter); ok {
+		reportDependencyResolution(os.Stderr, reporter.DependencyResolution())
 	}
 
 	// A resolver that cannot expand a type returns an opaque single-value model
@@ -160,6 +169,28 @@ func reportUnresolved(w io.Writer, counts map[string]int) {
 			unit = "occurrence"
 		}
 		fmt.Fprintf(w, "  %-20s %d %s\n", name, counts[name], unit)
+	}
+}
+
+// reportDependencyResolution prints one diagnostic line telling the user
+// whether dependency-based type resolution ran. Output goes to a side channel
+// (stderr) so exported documents stay byte-stable, and it never affects the
+// exit code. A no-deps outcome stays silent: nothing was skipped, so there is
+// nothing to act on.
+func reportDependencyResolution(w io.Writer, dr collector.DependencyResolution) {
+	switch dr.State {
+	case collector.DependencyResolutionActive:
+		if dr.ResolvedTypes > 0 {
+			unit := "types"
+			if dr.ResolvedTypes == 1 {
+				unit = "type"
+			}
+			fmt.Fprintf(w, "info: resolved %d %s from dependencies\n", dr.ResolvedTypes, unit)
+		}
+	case collector.DependencyResolutionToolMissing:
+		fmt.Fprintf(w, "warning: dependency type resolution skipped: %s\n", dr.Detail)
+	case collector.DependencyResolutionDisabled:
+		fmt.Fprintf(w, "info: dependency type resolution disabled (--no-deps)\n")
 	}
 }
 
@@ -450,6 +481,7 @@ func handleExport(args []string) {
 		pluginRegistry string
 		methodFilter   string
 		projectRoot    string
+		noDeps         bool
 		listCollectors bool
 		listFormatters bool
 		showHelp       bool
@@ -464,6 +496,7 @@ func handleExport(args []string) {
 	fs.StringVar(&pluginRegistry, "plugin-registry", "", "path to plugins.json")
 	fs.StringVar(&methodFilter, "method", "", "filter to a specific method name (used with file-level export)")
 	fs.StringVar(&projectRoot, "project-root", "", "override auto-detected project root directory")
+	fs.BoolVar(&noDeps, "no-deps", false, "disable resolving request/response types from dependencies")
 	fs.BoolVar(&listCollectors, "list-collectors", false, "print registered collectors and exit")
 	fs.BoolVar(&listFormatters, "list-formatters", false, "print registered formatters and exit")
 	fs.BoolVar(&showHelp, "help", false, "print help and exit")
@@ -525,6 +558,7 @@ func handleExport(args []string) {
 		PluginRegistry: pluginRegistry,
 		MethodFilter:   methodFilter,
 		ProjectRoot:    projectRoot,
+		NoDeps:         noDeps,
 	}
 
 	if err := Run(cfg); err != nil {
@@ -581,6 +615,8 @@ func printExportHelp() {
 	fmt.Println("        filter to a specific method name (used with file-level export)")
 	fmt.Println("  --project-root string")
 	fmt.Println("        override auto-detected project root directory")
+	fmt.Println("  --no-deps")
+	fmt.Println("        disable resolving request/response types from dependencies")
 	fmt.Println("  --params string")
 	fmt.Println("        formatter params as JSON (e.g. '{\"variant\":\"detailed\"}')")
 	fmt.Println("  --output string")

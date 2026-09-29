@@ -15,6 +15,11 @@ import (
 
 const cliName = "maven-indexer-cli"
 
+// ToolName is the external CLI the maven integration depends on. Collectors
+// use it to tell the user what to install when dependency resolution is
+// skipped because the tool is absent.
+const ToolName = cliName
+
 // Dependency represents a Maven/Gradle dependency coordinate.
 type Dependency struct {
 	GroupID    string
@@ -56,6 +61,14 @@ func Resolve(sourceDir string) ([]string, error) {
 func isCLIAvailable() bool {
 	_, err := exec.LookPath(cliName)
 	return err == nil
+}
+
+// DetectDependencies detects dependencies from pom.xml or build.gradle in
+// sourceDir. It reads only local build files, so callers can use it to decide
+// whether dependency resolution would have work to do before checking whether
+// the tooling for it is available.
+func DetectDependencies(sourceDir string) ([]Dependency, error) {
+	return detectDependencies(sourceDir)
 }
 
 // detectDependencies detects dependencies from pom.xml or build.gradle in sourceDir.

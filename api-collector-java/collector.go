@@ -4,7 +4,6 @@ package javacollector
 
 import (
 	"fmt"
-	"log"
 	"sync"
 
 	collector "github.com/tangcent/apilot/api-collector"
@@ -17,9 +16,14 @@ import (
 
 // JavaCollector parses Java/Kotlin source trees for API endpoints.
 type JavaCollector struct {
-	mu         sync.Mutex
-	unresolved map[string]int
+	mu            sync.Mutex
+	unresolved    map[string]int
+	depResolution collector.DependencyResolution
 }
+
+// mavenAvailable is a variable so tests can force the tool-missing branch
+// without uninstalling maven-indexer-cli from the machine.
+var mavenAvailable = maven.IsAvailable
 
 // New returns a new JavaCollector.
 func New() collector.Collector { return &JavaCollector{} }
@@ -40,26 +44,26 @@ func (c *JavaCollector) Unresolved() map[string]int {
 	return out
 }
 
-// Collect walks the source directory and extracts endpoints from Spring MVC, JAX-RS, and Feign sources.
-// When maven-indexer-cli is available and a build file (pom.xml/build.gradle) is present,
-// it attempts to resolve dependency JARs for improved type analysis.
-func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEndpoint, error) {
-	var depResolver *maven.MavenDependencyResolver
-	if maven.HasBuildFile(ctx.SourceDir) && maven.IsAvailable() {
-		jarPaths, err := maven.Resolve(ctx.SourceDir)
-		if err != nil {
-			log.Printf("[maven] dependency resolution skipped: %v", err)
-		} else if len(jarPaths) > 0 {
-			log.Printf("[maven] resolved %d dependency JARs", len(jarPaths))
-		}
+// DependencyResolution reports whether dependency-based type resolution ran
+// during the last Collect call, and why not when it did not.
+func (c *JavaCollector) DependencyResolution() collector.DependencyResolution {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.depResolution
+}
 
-		dr, err := maven.NewMavenDependencyResolver()
-		if err != nil {
-			log.Printf("[maven] dependency class resolver unavailable: %v", err)
-		} else {
-			depResolver = dr
-			defer depResolver.Close()
-		}
+// Collect walks the source directory and extracts endpoints from Spring MVC, JAX-RS, and Feign sources.
+// When maven-indexer-cli is available and a build file (pom.xml/build.gradle)
+// declares dependencies, it resolves types that live in dependency sources via
+// the indexer CLI; when that is not possible the outcome is reported through
+// DependencyResolution.
+func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEndpoint, error) {
+	depResolution, depResolver := setupDependencyResolution(ctx.SourceDir, ctx.NoDeps)
+	c.mu.Lock()
+	c.depResolution = depResolution
+	c.mu.Unlock()
+	if depResolver != nil {
+		defer depResolver.Close()
 	}
 
 	p, err := parser.NewParser(parser.ParserOptions{})
@@ -135,6 +139,8 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 
 	c.mu.Lock()
 	c.unresolved = unresolved.Counts()
+	depResolution.ResolvedTypes = depResolverCount(depResolver)
+	c.depResolution = depResolution
 	c.mu.Unlock()
 
 	// Deduplicate endpoints by (Folder, Path, Method, Name) to avoid
@@ -150,6 +156,55 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 		}
 	}
 	return deduped, nil
+}
+
+// setupDependencyResolution decides whether dependency-based type resolution
+// runs for this Collect call, and why not when it does not.
+//
+// The build file is read before the tool check so that a project with no
+// dependencies reports no-deps instead of blaming a missing tool.
+func setupDependencyResolution(sourceDir string, noDeps bool) (collector.DependencyResolution, *maven.MavenDependencyResolver) {
+	if noDeps {
+		return collector.DependencyResolution{State: collector.DependencyResolutionDisabled}, nil
+	}
+
+	if !maven.HasBuildFile(sourceDir) {
+		return collector.DependencyResolution{State: collector.DependencyResolutionNoDeps}, nil
+	}
+
+	deps, err := maven.DetectDependencies(sourceDir)
+	if err != nil || len(deps) == 0 {
+		return collector.DependencyResolution{State: collector.DependencyResolutionNoDeps}, nil
+	}
+
+	if !mavenAvailable() {
+		return collector.DependencyResolution{
+			State: collector.DependencyResolutionToolMissing,
+			Detail: fmt.Sprintf("%s not found on PATH — request and response types from the %d declared dependencies cannot be resolved. "+
+				"Install it (https://github.com/tangcent/maven-indexer-cli) and make sure it is on PATH",
+				maven.ToolName, len(deps)),
+		}, nil
+	}
+
+	dr, err := maven.NewMavenDependencyResolver()
+	if err != nil {
+		return collector.DependencyResolution{
+			State: collector.DependencyResolutionToolMissing,
+			Detail: fmt.Sprintf("%s found but the dependency class resolver failed to start: %v",
+				maven.ToolName, err),
+		}, nil
+	}
+
+	return collector.DependencyResolution{State: collector.DependencyResolutionActive}, dr
+}
+
+// depResolverCount reports how many distinct types the resolver expanded from
+// dependencies, or 0 when no resolver ran.
+func depResolverCount(depResolver *maven.MavenDependencyResolver) int {
+	if depResolver == nil {
+		return 0
+	}
+	return depResolver.ResolvedCount()
 }
 
 // resolveFrameworks returns the set of frameworks to parse.
