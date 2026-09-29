@@ -60,6 +60,17 @@ GOOS=windows GOARCH=amd64 go build -o bin/apilot-windows-amd64.exe ./apilot-cli
 go test ./...
 ```
 
+### Golden Files
+
+`apilot-cli` diffs its exported output against the golden files in
+`apilot-cli/testdata/goproject/`, so a field that vanishes from an export fails
+the test instead of passing silently. When an export change is intended, refresh
+the baseline deliberately and review the diff:
+
+```bash
+cd apilot-cli && go test ./... -update
+```
+
 ## Architecture Guidelines
 
 See [docs/architecture.md](docs/architecture.md) for the full breakdown.

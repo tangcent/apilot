@@ -1,0 +1,18 @@
+curl -X GET \
+  'http://localhost/users?keyword=&page='
+
+curl -X POST \
+  'http://localhost/users' \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+
+curl -X GET \
+  'http://localhost/users/:id'
+
+curl -X PUT \
+  'http://localhost/users/:id' \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+
+curl -X DELETE \
+  'http://localhost/users/:id'

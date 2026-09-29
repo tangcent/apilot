@@ -1,0 +1,250 @@
+# API
+
+
+---
+
+### listUsers
+
+> BASIC
+
+
+**Path:** /users
+
+**Method:** GET
+
+**Desc:**
+
+listUsers returns a filtered page of users.
+
+> REQUEST
+
+**Query:**
+
+| name | value | required | desc |
+| ------------ | ------------ | ------------ | ------------ |
+| keyword |  | YES |  |
+| page | 1 | NO |  |
+
+
+> RESPONSE
+
+**Body:**
+
+| name | type | desc |
+| ------------ | ------------ | ------------ |
+| key | string |  |
+| value | null |  |
+
+
+**Response Demo:**
+
+```json
+{
+  "key": null
+}
+```
+
+---
+
+### createUser
+
+> BASIC
+
+
+**Path:** /users
+
+**Method:** POST
+
+**Desc:**
+
+createUser registers a new account.
+
+> REQUEST
+
+**Request Body:**
+
+| name | type | desc |
+| ------------ | ------------ | ------------ |
+| email | string |  |
+| name | string |  |
+| password | string |  |
+| tags | string[] |  |
+
+
+**Request Demo:**
+
+```json
+{
+  "email": "",
+  "name": "",
+  "password": "",
+  "tags": [
+    ""
+  ]
+}
+```
+
+> RESPONSE
+
+**Body:**
+
+| name | type | desc |
+| ------------ | ------------ | ------------ |
+| age | int |  |
+| email | string |  |
+| id | long |  |
+| name | string |  |
+
+
+**Response Demo:**
+
+```json
+{
+  "age": 0,
+  "email": "",
+  "id": 0,
+  "name": ""
+}
+```
+
+---
+
+### getUser
+
+> BASIC
+
+
+**Path:** /users/:id
+
+**Method:** GET
+
+**Desc:**
+
+getUser returns a single user by id.
+
+> REQUEST
+
+**Path Params:**
+
+| name | value | required | desc |
+| ------------ | ------------ | ------------ | ------------ |
+| id |  | YES |  |
+
+
+**Headers:**
+
+| name | value | required | desc |
+| ------------ | ------------ | ------------ | ------------ |
+| X-Request-Id |  | NO |  |
+
+
+> RESPONSE
+
+**Body:**
+
+| name | type | desc |
+| ------------ | ------------ | ------------ |
+| age | int |  |
+| email | string |  |
+| id | long |  |
+| name | string |  |
+
+
+**Response Demo:**
+
+```json
+{
+  "age": 0,
+  "email": "",
+  "id": 0,
+  "name": ""
+}
+```
+
+---
+
+### updateUser
+
+> BASIC
+
+
+**Path:** /users/:id
+
+**Method:** PUT
+
+**Desc:**
+
+updateUser updates an existing user.
+
+> REQUEST
+
+**Path Params:**
+
+| name | value | required | desc |
+| ------------ | ------------ | ------------ | ------------ |
+| id |  | YES |  |
+
+
+**Request Body:**
+
+| name | type | desc |
+| ------------ | ------------ | ------------ |
+| email | string |  |
+| name | string |  |
+
+
+**Request Demo:**
+
+```json
+{
+  "email": "",
+  "name": ""
+}
+```
+
+> RESPONSE
+
+**Body:**
+
+| name | type | desc |
+| ------------ | ------------ | ------------ |
+| age | int |  |
+| email | string |  |
+| id | long |  |
+| name | string |  |
+
+
+**Response Demo:**
+
+```json
+{
+  "age": 0,
+  "email": "",
+  "id": 0,
+  "name": ""
+}
+```
+
+---
+
+### deleteUser
+
+> BASIC
+
+
+**Path:** /users/:id
+
+**Method:** DELETE
+
+**Desc:**
+
+deleteUser removes a user by id.
+
+> REQUEST
+
+**Path Params:**
+
+| name | value | required | desc |
+| ------------ | ------------ | ------------ | ------------ |
+| id |  | YES |  |
+

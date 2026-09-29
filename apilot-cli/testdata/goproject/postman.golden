@@ -1,0 +1,346 @@
+{
+  "info": {
+    "name": "APilot Export",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "item": [
+        {
+          "description": "listUsers returns a filtered page of users.",
+          "name": "listUsers",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "http://localhost/users?keyword=\u0026page=1",
+              "host": [
+                "http://localhost"
+              ],
+              "path": [
+                "users"
+              ],
+              "query": [
+                {
+                  "key": "keyword",
+                  "value": "",
+                  "equals": true
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "equals": true
+                }
+              ]
+            },
+            "description": "listUsers returns a filtered page of users."
+          },
+          "response": [
+            {
+              "name": "Example response",
+              "originalRequest": {
+                "method": "GET",
+                "url": {
+                  "raw": "http://localhost/users?keyword=\u0026page=1",
+                  "host": [
+                    "http://localhost"
+                  ],
+                  "path": [
+                    "users"
+                  ],
+                  "query": [
+                    {
+                      "key": "keyword",
+                      "value": "",
+                      "equals": true
+                    },
+                    {
+                      "key": "page",
+                      "value": "1",
+                      "equals": true
+                    }
+                  ]
+                },
+                "description": "listUsers returns a filtered page of users."
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "content-type",
+                  "value": "application/json;charset=UTF-8",
+                  "type": "text",
+                  "description": "The mime type of this content",
+                  "name": "content-type"
+                },
+                {
+                  "key": "server",
+                  "value": "Apache-Coyote/1.1",
+                  "type": "text",
+                  "description": "A name for the server",
+                  "name": "server"
+                }
+              ],
+              "body": "{\n    \"key\": null\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "description": "createUser registers a new account.",
+          "name": "createUser",
+          "request": {
+            "method": "POST",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"email\": \"\",\n    \"name\": \"\",\n    \"password\": \"\",\n    \"tags\": [\n        \"\"\n    ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "http://localhost/users",
+              "host": [
+                "http://localhost"
+              ],
+              "path": [
+                "users"
+              ]
+            },
+            "description": "createUser registers a new account."
+          },
+          "response": [
+            {
+              "name": "Example response",
+              "originalRequest": {
+                "method": "POST",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"email\": \"\",\n    \"name\": \"\",\n    \"password\": \"\",\n    \"tags\": [\n        \"\"\n    ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "http://localhost/users",
+                  "host": [
+                    "http://localhost"
+                  ],
+                  "path": [
+                    "users"
+                  ]
+                },
+                "description": "createUser registers a new account."
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "content-type",
+                  "value": "application/json;charset=UTF-8",
+                  "type": "text",
+                  "description": "The mime type of this content",
+                  "name": "content-type"
+                },
+                {
+                  "key": "server",
+                  "value": "Apache-Coyote/1.1",
+                  "type": "text",
+                  "description": "A name for the server",
+                  "name": "server"
+                }
+              ],
+              "body": "{\n    \"age\": 0,\n    \"email\": \"\",\n    \"id\": 0,\n    \"name\": \"\"\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "description": "getUser returns a single user by id.",
+          "name": "getUser",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "http://localhost/users/:id",
+              "host": [
+                "http://localhost"
+              ],
+              "path": [
+                "users",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "getUser returns a single user by id."
+          },
+          "response": [
+            {
+              "name": "Example response",
+              "originalRequest": {
+                "method": "GET",
+                "url": {
+                  "raw": "http://localhost/users/:id",
+                  "host": [
+                    "http://localhost"
+                  ],
+                  "path": [
+                    "users",
+                    ":id"
+                  ],
+                  "variable": [
+                    {
+                      "key": "id",
+                      "value": ""
+                    }
+                  ]
+                },
+                "description": "getUser returns a single user by id."
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "content-type",
+                  "value": "application/json;charset=UTF-8",
+                  "type": "text",
+                  "description": "The mime type of this content",
+                  "name": "content-type"
+                },
+                {
+                  "key": "server",
+                  "value": "Apache-Coyote/1.1",
+                  "type": "text",
+                  "description": "A name for the server",
+                  "name": "server"
+                }
+              ],
+              "body": "{\n    \"age\": 0,\n    \"email\": \"\",\n    \"id\": 0,\n    \"name\": \"\"\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "description": "updateUser updates an existing user.",
+          "name": "updateUser",
+          "request": {
+            "method": "PUT",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"email\": \"\",\n    \"name\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "http://localhost/users/:id",
+              "host": [
+                "http://localhost"
+              ],
+              "path": [
+                "users",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "updateUser updates an existing user."
+          },
+          "response": [
+            {
+              "name": "Example response",
+              "originalRequest": {
+                "method": "PUT",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"email\": \"\",\n    \"name\": \"\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "http://localhost/users/:id",
+                  "host": [
+                    "http://localhost"
+                  ],
+                  "path": [
+                    "users",
+                    ":id"
+                  ],
+                  "variable": [
+                    {
+                      "key": "id",
+                      "value": ""
+                    }
+                  ]
+                },
+                "description": "updateUser updates an existing user."
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "content-type",
+                  "value": "application/json;charset=UTF-8",
+                  "type": "text",
+                  "description": "The mime type of this content",
+                  "name": "content-type"
+                },
+                {
+                  "key": "server",
+                  "value": "Apache-Coyote/1.1",
+                  "type": "text",
+                  "description": "A name for the server",
+                  "name": "server"
+                }
+              ],
+              "body": "{\n    \"age\": 0,\n    \"email\": \"\",\n    \"id\": 0,\n    \"name\": \"\"\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "description": "deleteUser removes a user by id.",
+          "name": "deleteUser",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "http://localhost/users/:id",
+              "host": [
+                "http://localhost"
+              ],
+              "path": [
+                "users",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "deleteUser removes a user by id."
+          },
+          "response": []
+        }
+      ],
+      "name": "Default"
+    }
+  ]
+}
