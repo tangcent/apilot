@@ -221,21 +221,26 @@ func jaxrsEndpointToAPI(ep jaxrs.Endpoint, folder string) collector.ApiEndpoint 
 	}
 
 	out := collector.ApiEndpoint{
-		Name:     ep.MethodName,
-		Folder:   folder,
-		Path:     ep.Path,
-		Method:   string(ep.Method),
-		Protocol: "http",
+		Name:        ep.MethodName,
+		Folder:      folder,
+		Description: ep.Description,
+		Path:        ep.Path,
+		Method:      string(ep.Method),
+		Protocol:    "http",
 	}
 	for _, p := range ep.Parameters {
 		if p.ParamType == "body" {
 			out.RequestBody = &collector.ApiBody{MediaType: mediaType}
 		} else {
 			out.Parameters = append(out.Parameters, collector.ApiParameter{
-				Name:     p.Name,
-				Type:     "text",
-				In:       p.ParamType,
-				Required: p.Required,
+				Name:        p.Name,
+				Type:        "text",
+				In:          p.ParamType,
+				Required:    p.Required,
+				Default:     p.DefaultValue,
+				Description: p.Description,
+				Example:     p.Example,
+				Enum:        p.Enum,
 			})
 		}
 	}
@@ -257,21 +262,26 @@ func jaxrsEndpointToAPI(ep jaxrs.Endpoint, folder string) collector.ApiEndpoint 
 
 func feignEndpointToAPI(ep feign.Endpoint, folder string) collector.ApiEndpoint {
 	out := collector.ApiEndpoint{
-		Name:     ep.MethodName,
-		Folder:   folder,
-		Path:     ep.Path,
-		Method:   string(ep.Method),
-		Protocol: "http",
+		Name:        ep.MethodName,
+		Folder:      folder,
+		Description: ep.Description,
+		Path:        ep.Path,
+		Method:      string(ep.Method),
+		Protocol:    "http",
 	}
 	for _, p := range ep.Parameters {
 		if p.ParamType == "body" {
 			out.RequestBody = &collector.ApiBody{MediaType: "application/json"}
 		} else {
 			out.Parameters = append(out.Parameters, collector.ApiParameter{
-				Name:     p.Name,
-				Type:     "text",
-				In:       p.ParamType,
-				Required: p.Required,
+				Name:        p.Name,
+				Type:        "text",
+				In:          p.ParamType,
+				Required:    p.Required,
+				Default:     p.DefaultValue,
+				Description: p.Description,
+				Example:     p.Example,
+				Enum:        p.Enum,
 			})
 		}
 	}

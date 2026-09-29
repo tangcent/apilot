@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	collector "github.com/tangcent/apilot/api-collector"
+	javadoc "github.com/tangcent/apilot/api-collector-java/doc"
 	"github.com/tangcent/apilot/api-collector-java/parser"
 	"github.com/tangcent/apilot/api-collector-java/resolver"
 )
@@ -237,7 +238,7 @@ func (p *Parser) extractEndpoint(method parser.Method, basePath string, class pa
 	var params []EndpointParameter
 	var requestBodyType string
 	for _, param := range method.Parameters {
-		if ep := p.extractParameter(param); ep != nil {
+		if ep := p.extractParameter(param, method.JavaDocParams); ep != nil {
 			params = append(params, *ep)
 			if ep.ParamType == "body" {
 				requestBodyType = param.Type
@@ -246,15 +247,16 @@ func (p *Parser) extractEndpoint(method parser.Method, basePath string, class pa
 	}
 
 	endpoint := &Endpoint{
-		Path:       fullPath,
-		Method:     httpMethod,
-		MethodName: method.Name,
-		Parameters: params,
-		ReturnType: method.ReturnType,
-		Produces:   p.extractMediaTypes(method.Annotations, "Produces"),
-		Consumes:   p.extractMediaTypes(method.Annotations, "Consumes"),
-		ClassName:  class.Name,
-		Package:    class.Package,
+		Path:        fullPath,
+		Method:      httpMethod,
+		MethodName:  method.Name,
+		Description: javadoc.EndpointDescription(method.Annotations, method.JavaDoc),
+		Parameters:  params,
+		ReturnType:  method.ReturnType,
+		Produces:    p.extractMediaTypes(method.Annotations, "Produces"),
+		Consumes:    p.extractMediaTypes(method.Annotations, "Consumes"),
+		ClassName:   class.Name,
+		Package:     class.Package,
 	}
 
 	if requestBodyType != "" {
@@ -305,38 +307,91 @@ func (p *Parser) extractHTTPMethod(annotations []parser.Annotation) (HTTPMethod,
 	return "", false
 }
 
-func (p *Parser) extractParameter(param parser.Parameter) *EndpointParameter {
-	for _, ann := range param.Annotations {
-		switch ann.Name {
-		case "PathParam":
-			return &EndpointParameter{Name: param.Name, Type: param.Type, ParamType: "path", Required: true}
-		case "QueryParam":
-			return &EndpointParameter{Name: param.Name, Type: param.Type, ParamType: "query", Required: false}
-		case "FormParam":
-			return &EndpointParameter{Name: param.Name, Type: param.Type, ParamType: "form", Required: false}
-		case "HeaderParam":
-			return &EndpointParameter{Name: param.Name, Type: param.Type, ParamType: "header", Required: false}
-		case "CookieParam":
-			return &EndpointParameter{Name: param.Name, Type: param.Type, ParamType: "cookie", Required: false}
-		case "BeanParam":
-			return &EndpointParameter{Name: param.Name, Type: param.Type, ParamType: "body", Required: true}
-		}
+// extractParameter resolves the JAX-RS binding of a method parameter and
+// layers any documented metadata (JavaDoc, Swagger annotations) on top of it.
+func (p *Parser) extractParameter(param parser.Parameter, methodJavaDocParams map[string]string) *EndpointParameter {
+	paramType, required := detectParameterType(param.Annotations)
+	if paramType == "" {
+		return nil
 	}
-	if !hasJaxrsParamAnnotation(param) {
-		return &EndpointParameter{Name: param.Name, Type: param.Type, ParamType: "body", Required: true}
+
+	paramJavaDoc := param.JavaDoc
+	if paramJavaDoc == "" && methodJavaDocParams != nil {
+		paramJavaDoc = methodJavaDocParams[param.Name]
 	}
-	return nil
+	doc := javadoc.ParameterDocumentation(param.Annotations, paramJavaDoc)
+
+	ep := &EndpointParameter{
+		Name:        param.Name,
+		Type:        param.Type,
+		ParamType:   paramType,
+		Required:    required,
+		Description: doc.Description,
+		Example:     doc.Example,
+		Enum:        doc.Enum,
+	}
+
+	if defaultValue := defaultValueFrom(param.Annotations); defaultValue != "" {
+		ep.DefaultValue = defaultValue
+		ep.Required = false
+	}
+	if doc.Default != "" {
+		ep.DefaultValue = doc.Default
+	}
+	if doc.Required != nil {
+		ep.Required = *doc.Required
+	}
+
+	return ep
 }
 
-func hasJaxrsParamAnnotation(param parser.Parameter) bool {
-	for _, ann := range param.Annotations {
+// detectParameterType maps JAX-RS binding annotations to a canonical location
+// and the required flag that binding implies. An empty location means the
+// parameter is not part of the API surface (e.g. @Context, @Suspended).
+func detectParameterType(annotations []parser.Annotation) (string, bool) {
+	for _, ann := range annotations {
 		switch ann.Name {
-		case "PathParam", "QueryParam", "FormParam", "HeaderParam", "CookieParam",
-			"BeanParam", "MatrixParam", "Context", "Suspended":
+		case "PathParam":
+			return "path", true
+		case "QueryParam":
+			return "query", false
+		case "FormParam":
+			return "form", false
+		case "HeaderParam":
+			return "header", false
+		case "CookieParam":
+			return "cookie", false
+		case "BeanParam":
+			return "body", true
+		}
+	}
+	// A parameter carrying only @MatrixParam/@Context/@Suspended is injected by
+	// the runtime rather than supplied by the caller. Anything without a JAX-RS
+	// binding annotation at all is the request body.
+	if hasJaxrsParamAnnotation(annotations) {
+		return "", false
+	}
+	return "body", true
+}
+
+func hasJaxrsParamAnnotation(annotations []parser.Annotation) bool {
+	for _, ann := range annotations {
+		switch ann.Name {
+		case "MatrixParam", "Context", "Suspended":
 			return true
 		}
 	}
 	return false
+}
+
+// defaultValueFrom reads the JAX-RS @DefaultValue annotation.
+func defaultValueFrom(annotations []parser.Annotation) string {
+	for _, ann := range annotations {
+		if ann.Name == "DefaultValue" {
+			return strings.Trim(ann.Params["value"], "\"'")
+		}
+	}
+	return ""
 }
 
 func (p *Parser) extractMediaTypes(annotations []parser.Annotation, annName string) []string {

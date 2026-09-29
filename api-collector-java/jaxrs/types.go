@@ -18,10 +18,14 @@ const (
 
 // EndpointParameter describes a single parameter of a JAX-RS endpoint.
 type EndpointParameter struct {
-	Name      string
-	Type      string
-	ParamType string // path, query, form, header, cookie, body
-	Required  bool
+	Name         string
+	Type         string
+	ParamType    string // path, query, form, header, cookie, body
+	Required     bool
+	DefaultValue string
+	Description  string
+	Example      string
+	Enum         []string
 }
 
 // Endpoint represents a JAX-RS REST endpoint.
@@ -29,6 +33,7 @@ type Endpoint struct {
 	Path              string
 	Method            HTTPMethod
 	MethodName        string
+	Description       string
 	Parameters        []EndpointParameter
 	ReturnType        string
 	Produces          []string

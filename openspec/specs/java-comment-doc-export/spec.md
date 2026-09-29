@@ -1,6 +1,6 @@
 ## Purpose
 
-Java Spring MVC APIs often carry public-facing documentation in JavaDoc and Swagger/OpenAPI annotations. This capability ensures the Java collector exports that documentation through existing canonical model fields so downstream formatters can render richer API documentation without contract changes.
+Java Spring MVC, JAX-RS and Feign APIs often carry public-facing documentation in JavaDoc and Swagger/OpenAPI annotations. This capability ensures the Java collector exports that documentation through existing canonical model fields so downstream formatters can render richer API documentation without contract changes.
 
 ## Requirements
 
@@ -41,9 +41,43 @@ The Java collector SHALL populate request and response body field documentation 
 - **WHEN** a request or response DTO field has JavaDoc but no supported documentation annotation
 - **THEN** the collected field model comment uses the JavaDoc summary text
 
+### Requirement: JAX-RS endpoint and parameter documentation
+The Java collector SHALL populate JAX-RS endpoint descriptions and parameter documentation using the same rules as Spring MVC.
+
+#### Scenario: JAX-RS operation annotation
+- **WHEN** a JAX-RS resource method has `@Operation(summary = "...", description = "...")`
+- **THEN** the collected endpoint description uses the OpenAPI annotation text before JavaDoc text
+
+#### Scenario: JAX-RS JavaDoc param fallback
+- **WHEN** a JAX-RS resource method has JavaDoc `@param <name> ...` and the parameter has no supported documentation annotation
+- **THEN** the collected API parameter description uses the matching JavaDoc param text
+
+#### Scenario: JAX-RS parameter annotation metadata
+- **WHEN** a JAX-RS resource parameter has `@Parameter(description = "...", example = "...")`, `@ApiParam(...)` or `@Schema(...)`
+- **THEN** the collected API parameter includes the description, example, default, required and enum values from the annotation
+
+#### Scenario: JAX-RS DefaultValue annotation
+- **WHEN** a JAX-RS resource parameter has `@DefaultValue("...")`
+- **THEN** the collected API parameter carries that default and is exported as optional
+
+### Requirement: Feign endpoint and parameter documentation
+The Java collector SHALL populate Feign endpoint descriptions and parameter documentation for both Spring Cloud OpenFeign and Netflix Feign clients using the same rules as Spring MVC.
+
+#### Scenario: Spring Cloud OpenFeign JavaDoc description
+- **WHEN** a `@FeignClient` method carries JavaDoc
+- **THEN** the collected endpoint description uses the JavaDoc summary text
+
+#### Scenario: Spring Cloud OpenFeign parameter metadata
+- **WHEN** a `@FeignClient` method parameter has `@RequestParam(defaultValue = "...")`, `@Parameter(...)` or `@ApiParam(...)`
+- **THEN** the collected API parameter includes the default, description, example, required and enum values from the annotation
+
+#### Scenario: Netflix Feign RequestLine documentation
+- **WHEN** an interface method has `@RequestLine("GET /path?x={x}")` with `@Param("x")` parameters and JavaDoc `@param` tags
+- **THEN** the collected endpoint description uses the JavaDoc summary and each parameter description uses the matching JavaDoc param text, with the `@Param` alias as the exported parameter name
+
 ### Requirement: Non-disruptive behavior
-The Java collector SHALL preserve existing Spring MVC endpoint collection when documentation metadata is absent or unsupported.
+The Java collector SHALL preserve existing endpoint collection for all supported frameworks when documentation metadata is absent or unsupported.
 
 #### Scenario: No documentation metadata
-- **WHEN** a Spring MVC source file has no JavaDoc and no supported documentation annotation
+- **WHEN** a Spring MVC, JAX-RS or Feign source file has no JavaDoc and no supported documentation annotation
 - **THEN** the collector still returns the same endpoint paths, methods, parameters, and schemas as before

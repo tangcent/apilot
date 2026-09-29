@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	collector "github.com/tangcent/apilot/api-collector"
+	javadoc "github.com/tangcent/apilot/api-collector-java/doc"
 	"github.com/tangcent/apilot/api-collector-java/parser"
 	"github.com/tangcent/apilot/api-collector-java/resolver"
 )
@@ -234,7 +235,7 @@ func (p *Parser) extractSpringStyleEndpoint(method parser.Method, class parser.C
 	var params []EndpointParameter
 	var requestBodyType string
 	for _, param := range method.Parameters {
-		if ep := p.extractSpringParameter(param); ep != nil {
+		if ep := p.extractSpringParameter(param, method.JavaDocParams); ep != nil {
 			params = append(params, *ep)
 			if ep.ParamType == "body" {
 				requestBodyType = param.Type
@@ -243,13 +244,14 @@ func (p *Parser) extractSpringStyleEndpoint(method parser.Method, class parser.C
 	}
 
 	endpoint := &Endpoint{
-		Path:       methodPath,
-		Method:     httpMethod,
-		MethodName: method.Name,
-		Parameters: params,
-		ReturnType: method.ReturnType,
-		ClassName:  class.Name,
-		Package:    class.Package,
+		Path:        methodPath,
+		Method:      httpMethod,
+		MethodName:  method.Name,
+		Description: javadoc.EndpointDescription(method.Annotations, method.JavaDoc),
+		Parameters:  params,
+		ReturnType:  method.ReturnType,
+		ClassName:   class.Name,
+		Package:     class.Package,
 	}
 
 	if requestBodyType != "" {
@@ -313,26 +315,84 @@ func extractSpringRequestMappingMethod(ann parser.Annotation) HTTPMethod {
 	return GET
 }
 
-func (p *Parser) extractSpringParameter(param parser.Parameter) *EndpointParameter {
-	for _, ann := range param.Annotations {
+// extractSpringParameter resolves the Spring MVC binding of a Feign method
+// parameter and layers any documented metadata on top of it.
+func (p *Parser) extractSpringParameter(param parser.Parameter, methodJavaDocParams map[string]string) *EndpointParameter {
+	paramType, required := detectSpringParameterType(param.Annotations)
+	if paramType == "" {
+		return nil
+	}
+	return documentedParameter(param, methodJavaDocParams, paramType, required, "RequestParam")
+}
+
+// detectSpringParameterType maps Spring MVC binding annotations to a canonical
+// location and the required flag the annotations imply. An empty location means
+// the parameter has no Spring binding annotation and is not part of the API.
+func detectSpringParameterType(annotations []parser.Annotation) (string, bool) {
+	for _, ann := range annotations {
 		switch ann.Name {
 		case "PathVariable":
-			return &EndpointParameter{Name: param.Name, Type: param.Type, ParamType: "path", Required: true}
+			return "path", true
 		case "RequestParam":
 			required := true
 			if r, ok := ann.Params["required"]; ok {
 				required = r != "false"
 			}
-			return &EndpointParameter{Name: param.Name, Type: param.Type, ParamType: "query", Required: required}
+			return "query", required
 		case "RequestBody":
-			return &EndpointParameter{Name: param.Name, Type: param.Type, ParamType: "body", Required: true}
+			return "body", true
 		case "RequestHeader":
-			return &EndpointParameter{Name: param.Name, Type: param.Type, ParamType: "header", Required: true}
+			return "header", true
 		case "SpringQueryMap":
-			return &EndpointParameter{Name: param.Name, Type: param.Type, ParamType: "body", Required: true}
+			return "body", true
 		}
 	}
-	return nil
+	return "", false
+}
+
+// documentedParameter applies JavaDoc and Swagger metadata to a parameter
+// already resolved to a location. defaultValueAnn names the annotation carrying
+// a native default value, which also relaxes the required flag.
+func documentedParameter(param parser.Parameter, methodJavaDocParams map[string]string, paramType string, required bool, defaultValueAnn string) *EndpointParameter {
+	paramJavaDoc := param.JavaDoc
+	if paramJavaDoc == "" && methodJavaDocParams != nil {
+		paramJavaDoc = methodJavaDocParams[param.Name]
+	}
+	doc := javadoc.ParameterDocumentation(param.Annotations, paramJavaDoc)
+
+	ep := &EndpointParameter{
+		Name:        param.Name,
+		Type:        param.Type,
+		ParamType:   paramType,
+		Required:    required,
+		Description: doc.Description,
+		Example:     doc.Example,
+		Enum:        doc.Enum,
+	}
+
+	if defaultValueAnn != "" {
+		if value := annotationValue(param.Annotations, defaultValueAnn, "defaultValue"); value != "" {
+			ep.DefaultValue = value
+			ep.Required = false
+		}
+	}
+	if doc.Default != "" {
+		ep.DefaultValue = doc.Default
+	}
+	if doc.Required != nil {
+		ep.Required = *doc.Required
+	}
+
+	return ep
+}
+
+func annotationValue(annotations []parser.Annotation, annName, key string) string {
+	for _, ann := range annotations {
+		if ann.Name == annName {
+			return strings.Trim(ann.Params[key], "\"'")
+		}
+	}
+	return ""
 }
 
 func (p *Parser) extractRequestLineEndpoint(method parser.Method, class parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string) *Endpoint {
@@ -346,7 +406,7 @@ func (p *Parser) extractRequestLineEndpoint(method parser.Method, class parser.C
 	var params []EndpointParameter
 	var requestBodyType string
 	for _, param := range method.Parameters {
-		if ep := p.extractFeignParam(param, methodPath); ep != nil {
+		if ep := p.extractFeignParam(param, methodPath, method.JavaDocParams); ep != nil {
 			params = append(params, *ep)
 			if ep.ParamType == "body" {
 				requestBodyType = param.Type
@@ -355,13 +415,14 @@ func (p *Parser) extractRequestLineEndpoint(method parser.Method, class parser.C
 	}
 
 	endpoint := &Endpoint{
-		Path:       methodPath,
-		Method:     httpMethod,
-		MethodName: method.Name,
-		Parameters: params,
-		ReturnType: method.ReturnType,
-		ClassName:  class.Name,
-		Package:    class.Package,
+		Path:        methodPath,
+		Method:      httpMethod,
+		MethodName:  method.Name,
+		Description: javadoc.EndpointDescription(method.Annotations, method.JavaDoc),
+		Parameters:  params,
+		ReturnType:  method.ReturnType,
+		ClassName:   class.Name,
+		Package:     class.Package,
 	}
 
 	if requestBodyType != "" {
@@ -400,11 +461,11 @@ func parseRequestLine(value string) (HTTPMethod, string) {
 	}
 }
 
-func (p *Parser) extractFeignParam(param parser.Parameter, methodPath string) *EndpointParameter {
+func (p *Parser) extractFeignParam(param parser.Parameter, methodPath string, methodJavaDocParams map[string]string) *EndpointParameter {
 	ann := findAnnotation(param.Annotations, "Param")
 	if ann == nil {
 		if param.Type != "" && !isJavaPrimitive(param.Type) {
-			return &EndpointParameter{Name: param.Name, Type: param.Type, ParamType: "body", Required: true}
+			return documentedParameter(param, methodJavaDocParams, "body", true, "")
 		}
 		return nil
 	}
@@ -420,7 +481,11 @@ func (p *Parser) extractFeignParam(param parser.Parameter, methodPath string) *E
 	if strings.Contains(pathPart, "{"+name+"}") {
 		paramType = "path"
 	}
-	return &EndpointParameter{Name: name, Type: param.Type, ParamType: paramType, Required: paramType == "path"}
+	// Documentation sources address the Java identifier, so resolve them with
+	// param.Name and only then expose the @Param alias.
+	ep := documentedParameter(param, methodJavaDocParams, paramType, paramType == "path", "")
+	ep.Name = name
+	return ep
 }
 
 func unwrapResponseType(rawType string) string {
