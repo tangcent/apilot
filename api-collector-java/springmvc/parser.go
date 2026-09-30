@@ -362,7 +362,7 @@ func (p *Parser) extractParameter(param parser.Parameter, methodJavaDocParams ma
 
 	for _, ann := range param.Annotations {
 		switch ann.Name {
-		case "RequestParam":
+		case "RequestParam", "RequestHeader":
 			if required, ok := ann.Params["required"]; ok {
 				ep.Required = required != "false"
 			}
@@ -377,6 +377,15 @@ func (p *Parser) extractParameter(param parser.Parameter, methodJavaDocParams ma
 	}
 	if doc.Required != nil {
 		ep.Required = *doc.Required
+	}
+
+	// The header name on the wire comes from the annotation, not the Java
+	// parameter name: @RequestHeader("Authorization") String auth binds the
+	// Authorization header.
+	if ep.ParamType == "header" {
+		if name := parser.ExplicitAnnotationName(param.Annotations, "RequestHeader"); name != "" {
+			ep.Name = name
+		}
 	}
 
 	return ep

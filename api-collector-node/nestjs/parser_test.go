@@ -46,6 +46,7 @@ func TestParse_BasicRoutes(t *testing.T) {
 
 	assertEndpoint(t, endpoints[0], collector.ApiEndpoint{
 		Name: "deleteUser", Path: "/users/:id", Method: "DELETE", Protocol: "http",
+		Tags:  []string{"UserController"},
 		Description: "deleteUser removes a user by ID.",
 		Parameters: []collector.ApiParameter{
 			{Name: "id", In: "path", Required: true, Type: "text"},
@@ -54,6 +55,7 @@ func TestParse_BasicRoutes(t *testing.T) {
 
 	assertEndpoint(t, endpoints[1], collector.ApiEndpoint{
 		Name: "listUsers", Path: "/users", Method: "GET", Protocol: "http",
+		Tags:  []string{"UserController"},
 		Description: "listUsers returns all users.",
 		Parameters: []collector.ApiParameter{
 			{Name: "page", In: "query", Required: false, Type: "text"},
@@ -63,6 +65,7 @@ func TestParse_BasicRoutes(t *testing.T) {
 
 	assertEndpoint(t, endpoints[2], collector.ApiEndpoint{
 		Name: "getUser", Path: "/users/:id", Method: "GET", Protocol: "http",
+		Tags:  []string{"UserController"},
 		Description: "getUser returns a single user by ID.",
 		Parameters: []collector.ApiParameter{
 			{Name: "id", In: "path", Required: true, Type: "text"},
@@ -72,14 +75,18 @@ func TestParse_BasicRoutes(t *testing.T) {
 	assertEndpoint(t, endpoints[3], collector.ApiEndpoint{
 		Name: "searchUsers", Path: "/users/search", Method: "GET", Protocol: "http",
 		Description: "searchUsers finds users by name.",
+		Tags: []string{"UserController"},
 		Parameters: []collector.ApiParameter{
 			{Name: "name", In: "query", Required: false, Type: "text"},
-			{Name: "x-custom", In: "header", Required: false, Type: "text"},
+		},
+		Headers: []collector.ApiHeader{
+			{Name: "x-custom", Required: false},
 		},
 	})
 
 	assertEndpoint(t, endpoints[4], collector.ApiEndpoint{
 		Name: "patchUser", Path: "/users/:id", Method: "PATCH", Protocol: "http",
+		Tags:  []string{"UserController"},
 		Description: "patchUser partially updates a user.",
 		Parameters: []collector.ApiParameter{
 			{Name: "id", In: "path", Required: true, Type: "text"},
@@ -89,6 +96,7 @@ func TestParse_BasicRoutes(t *testing.T) {
 
 	assertEndpoint(t, endpoints[5], collector.ApiEndpoint{
 		Name: "createUser", Path: "/users", Method: "POST", Protocol: "http",
+		Tags:  []string{"UserController"},
 		Description: "createUser creates a new user.",
 		Parameters: []collector.ApiParameter{
 			{Name: "body", In: "body", Required: true, Type: "text"},
@@ -97,6 +105,7 @@ func TestParse_BasicRoutes(t *testing.T) {
 
 	assertEndpoint(t, endpoints[6], collector.ApiEndpoint{
 		Name: "updateUser", Path: "/users/:id", Method: "PUT", Protocol: "http",
+		Tags:  []string{"UserController"},
 		Description: "updateUser updates an existing user.",
 		Parameters: []collector.ApiParameter{
 			{Name: "id", In: "path", Required: true, Type: "text"},
@@ -300,7 +309,41 @@ func assertEndpoint(t *testing.T, got collector.ApiEndpoint, want collector.ApiE
 		t.Errorf("Description = %q, want %q", got.Description, want.Description)
 	}
 
+	if len(got.Tags) != len(want.Tags) {
+		t.Errorf("Tags: got %v, want %v", got.Tags, want.Tags)
+	} else {
+		for i := range want.Tags {
+			if got.Tags[i] != want.Tags[i] {
+				t.Errorf("Tags[%d] = %q, want %q", i, got.Tags[i], want.Tags[i])
+			}
+		}
+	}
+
+	assertHeaders(t, got.Headers, want.Headers)
+
 	assertParams(t, got.Parameters, want.Parameters)
+}
+
+func assertHeaders(t *testing.T, got, want []collector.ApiHeader) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Errorf("Headers: got %d, want %d", len(got), len(want))
+		return
+	}
+
+	for i, g := range got {
+		w := want[i]
+		if g.Name != w.Name {
+			t.Errorf("Headers[%d].Name = %q, want %q", i, g.Name, w.Name)
+		}
+		if g.Value != w.Value {
+			t.Errorf("Headers[%d].Value = %q, want %q", i, g.Value, w.Value)
+		}
+		if g.Required != w.Required {
+			t.Errorf("Headers[%d].Required = %v, want %v", i, g.Required, w.Required)
+		}
+	}
 }
 
 func assertParams(t *testing.T, got, want []collector.ApiParameter) {

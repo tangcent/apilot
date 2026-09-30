@@ -322,7 +322,16 @@ func (p *Parser) extractSpringParameter(param parser.Parameter, methodJavaDocPar
 	if paramType == "" {
 		return nil
 	}
-	return documentedParameter(param, methodJavaDocParams, paramType, required, "RequestParam")
+	ep := documentedParameter(param, methodJavaDocParams, paramType, required, "RequestParam")
+	// The header name on the wire comes from the annotation, not the Java
+	// parameter name: @RequestHeader("Authorization") String auth binds the
+	// Authorization header.
+	if ep.ParamType == "header" {
+		if name := parser.ExplicitAnnotationName(param.Annotations, "RequestHeader"); name != "" {
+			ep.Name = name
+		}
+	}
+	return ep
 }
 
 // detectSpringParameterType maps Spring MVC binding annotations to a canonical

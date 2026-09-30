@@ -426,3 +426,33 @@ func assertParams(t *testing.T, got, want []collector.ApiParameter) {
 		}
 	}
 }
+
+func TestParse_Tags(t *testing.T) {
+	endpoints, err := Parse(filepath.Join("testdata", "basic"))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	byName := make(map[string]collector.ApiEndpoint, len(endpoints))
+	for _, ep := range endpoints {
+		byName[ep.Name] = ep
+	}
+
+	// Routes on a blueprint are tagged with the blueprint's declared name.
+	listProducts, ok := byName["list_products"]
+	if !ok {
+		t.Fatal("Expected list_products endpoint")
+	}
+	if len(listProducts.Tags) != 1 || listProducts.Tags[0] != "api" {
+		t.Errorf("list_products Tags = %v, want [api]", listProducts.Tags)
+	}
+
+	// Routes on the app fall back to the registering variable.
+	listUsers, ok := byName["list_users"]
+	if !ok {
+		t.Fatal("Expected list_users endpoint")
+	}
+	if len(listUsers.Tags) != 1 || listUsers.Tags[0] != "app" {
+		t.Errorf("list_users Tags = %v, want [app]", listUsers.Tags)
+	}
+}

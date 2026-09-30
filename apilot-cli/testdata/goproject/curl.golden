@@ -7,6 +7,7 @@ curl -X POST \
   -d '{}'
 
 curl -X GET \
+  -H 'X-Request-Id: ' \
   'http://localhost/users/:id'
 
 curl -X PUT \

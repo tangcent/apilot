@@ -40,6 +40,8 @@ func createUser(c *fiber.Ctx) error {
 // getUser returns a single user by ID.
 func getUser(c *fiber.Ctx) error {
 	id := c.Params("id")
+	requestID := c.Get("X-Request-Id")
+	_ = requestID
 	_ = id
 	return c.JSON(map[string]interface{}{"id": id})
 }

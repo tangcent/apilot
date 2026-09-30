@@ -106,6 +106,7 @@ type rawEndpointInfo struct {
 	method             string
 	protocol           string
 	description        string
+	tag                string
 	parameters         []collector.ApiParameter
 	serializerClass    string
 	action             string
@@ -288,6 +289,7 @@ func parsePathCall(callNode *tree_sitter.Node, source []byte) *rawEndpointInfo {
 		path:     pathPattern,
 		method:   method,
 		protocol: "http",
+		tag:      viewGroupName(viewName),
 	}
 
 	pathParams := extractPathParams(pathPattern)
@@ -305,6 +307,18 @@ func parsePathCall(callNode *tree_sitter.Node, source []byte) *rawEndpointInfo {
 	}
 
 	return ep
+}
+
+// viewGroupName derives the grouping name for a view referenced from
+// urlpatterns: the ViewSet/View class for class-based views
+// ("views.UserViewSet.as_view()" → "UserViewSet") or the view function name
+// for function-based ones ("views.user_list" → "user_list").
+func viewGroupName(viewName string) string {
+	name := strings.TrimSuffix(strings.TrimSuffix(viewName, "()"), ".as_view")
+	if idx := strings.LastIndex(name, "."); idx >= 0 {
+		name = name[idx+1:]
+	}
+	return name
 }
 
 func extractCallArguments(argListNode *tree_sitter.Node, source []byte) []string {
@@ -376,6 +390,7 @@ func extractClassBasedViews(rootNode *tree_sitter.Node, source []byte) []rawEndp
 				method:          httpMethod,
 				protocol:        "http",
 				description:     method.docstring,
+				tag:             className,
 				serializerClass: serializerClass,
 				action:          action,
 				isViewSet:       isVS,
@@ -649,6 +664,11 @@ func buildDjangoEndpoint(raw rawEndpointInfo, typeResolver *DRFTypeResolver) *co
 		Method:      raw.method,
 		Protocol:    raw.protocol,
 		Description: raw.description,
+	}
+	// The viewset/view class (or the view function itself) is the framework
+	// grouping a Django REST source tree exposes.
+	if raw.tag != "" {
+		ep.Tags = []string{raw.tag}
 	}
 
 	if len(raw.parameters) > 0 {

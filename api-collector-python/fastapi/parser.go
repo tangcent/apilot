@@ -100,6 +100,7 @@ type rawEndpointInfo struct {
 	path          string
 	funcName      string
 	description   string
+	routerName    string
 	params        []funcParam
 	responseModel string
 	returnType    string
@@ -194,7 +195,7 @@ func extractRawDecoratedDefinition(node *tree_sitter.Node, source []byte) *rawEn
 		return nil
 	}
 
-	method, path := extractDecoratorInfo(decorator, source)
+	method, path, router := extractDecoratorInfo(decorator, source)
 	if method == "" || path == "" {
 		return nil
 	}
@@ -210,6 +211,7 @@ func extractRawDecoratedDefinition(node *tree_sitter.Node, source []byte) *rawEn
 		path:          path,
 		funcName:      funcName,
 		description:   description,
+		routerName:    router,
 		params:        params,
 		responseModel: responseModel,
 		returnType:    returnType,
@@ -223,6 +225,11 @@ func buildEndpoint(raw rawEndpointInfo, typeResolver *PythonTypeResolver) *colle
 		Method:      strings.ToUpper(raw.method),
 		Protocol:    "http",
 		Description: raw.description,
+	}
+	// The router/app variable the route was declared on is the closest
+	// framework-level grouping a FastAPI source tree exposes.
+	if raw.routerName != "" {
+		ep.Tags = []string{raw.routerName}
 	}
 
 	pathParams := extractPathParams(raw.path)
@@ -258,6 +265,16 @@ func buildEndpoint(raw rawEndpointInfo, typeResolver *PythonTypeResolver) *colle
 
 		key := p.name + "|" + p.in
 		if !paramSet[key] {
+			// Header(...) parameters are declared request headers, not
+			// query-style parameters, so they belong in Headers.
+			if p.in == "header" {
+				ep.Headers = append(ep.Headers, collector.ApiHeader{
+					Name:     p.name,
+					Required: p.required,
+				})
+				paramSet[key] = true
+				continue
+			}
 			allParams = append(allParams, collector.ApiParameter{
 				Name:     p.name,
 				In:       p.in,
@@ -320,22 +337,22 @@ func buildEndpoint(raw rawEndpointInfo, typeResolver *PythonTypeResolver) *colle
 	return ep
 }
 
-func extractDecoratorInfo(decorator *tree_sitter.Node, source []byte) (method string, path string) {
+func extractDecoratorInfo(decorator *tree_sitter.Node, source []byte) (method string, path string, router string) {
 	for i := uint(0); i < decorator.ChildCount(); i++ {
 		child := decorator.Child(i)
 		if child.Kind() == "@" {
 			continue
 		}
 
-		method, path = resolveDecoratorCall(child, source)
+		method, path, router = resolveDecoratorCall(child, source)
 		if method != "" {
-			return method, path
+			return method, path, router
 		}
 	}
-	return "", ""
+	return "", "", ""
 }
 
-func resolveDecoratorCall(node *tree_sitter.Node, source []byte) (method string, path string) {
+func resolveDecoratorCall(node *tree_sitter.Node, source []byte) (method string, path string, obj string) {
 	if node.Kind() == "call" {
 		return resolveCallExpression(node, source)
 	}
@@ -343,36 +360,37 @@ func resolveDecoratorCall(node *tree_sitter.Node, source []byte) (method string,
 		return resolveAttribute(node, source)
 	}
 	if node.Kind() == "identifier" {
-		return "", ""
+		return "", "", ""
 	}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
-		m, p := resolveDecoratorCall(child, source)
+		m, p, o := resolveDecoratorCall(child, source)
 		if m != "" {
-			return m, p
+			return m, p, o
 		}
 	}
-	return "", ""
+	return "", "", ""
 }
 
-func resolveCallExpression(callNode *tree_sitter.Node, source []byte) (method string, path string) {
+func resolveCallExpression(callNode *tree_sitter.Node, source []byte) (method string, path string, obj string) {
 	for i := uint(0); i < callNode.ChildCount(); i++ {
 		child := callNode.Child(i)
 		if child.Kind() == "attribute" {
-			m, _ := resolveAttribute(child, source)
+			m, _, o := resolveAttribute(child, source)
 			if m != "" {
 				method = m
+				obj = o
 			}
 		}
 		if child.Kind() == "argument_list" {
 			path = extractFirstStringArgument(child, source)
 		}
 	}
-	return method, path
+	return method, path, obj
 }
 
-func resolveAttribute(attrNode *tree_sitter.Node, source []byte) (method string, path string) {
-	var obj string
+func resolveAttribute(attrNode *tree_sitter.Node, source []byte) (method string, path string, obj string) {
+	var objName string
 	var attr string
 
 	for i := uint(0); i < attrNode.ChildCount(); i++ {
@@ -381,22 +399,22 @@ func resolveAttribute(attrNode *tree_sitter.Node, source []byte) (method string,
 			continue
 		}
 		if child.Kind() == "identifier" {
-			if obj == "" {
-				obj = child.Utf8Text(source)
+			if objName == "" {
+				objName = child.Utf8Text(source)
 			} else {
 				attr = child.Utf8Text(source)
 			}
 		}
 		if child.Kind() == "attribute" {
-			_, _ = resolveAttribute(child, source)
+			_, _, _ = resolveAttribute(child, source)
 		}
 	}
 
 	lowerAttr := strings.ToLower(attr)
 	if httpMethods[lowerAttr] {
-		return lowerAttr, ""
+		return lowerAttr, "", objName
 	}
-	return "", ""
+	return "", "", objName
 }
 
 func extractFirstStringArgument(argListNode *tree_sitter.Node, source []byte) string {

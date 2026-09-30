@@ -149,6 +149,11 @@ func ParseWithUnresolved(sourceDir string, unresolved *collector.UnresolvedSet, 
 			Protocol:    "http",
 			Description: funcDocs[handlerKey],
 		}
+		// The router variable the route was registered on is the closest
+		// framework-level grouping a Gin source tree exposes.
+		if raw.receiverVar != "" {
+			ep.Tags = []string{raw.receiverVar}
+		}
 
 		pathParams := extractPathParams(path)
 
@@ -167,16 +172,26 @@ func ParseWithUnresolved(sourceDir string, unresolved *collector.UnresolvedSet, 
 		analysis := handlerAnalyses[handlerKey]
 		for _, p := range analysis.params {
 			key := p.name + "|" + p.in
-			if !paramSet[key] {
-				params = append(params, collector.ApiParameter{
-					Name:     p.name,
-					In:       p.in,
-					Required: p.required,
-					Type:     p.typ,
-					Default:  p.def,
-				})
-				paramSet[key] = true
+			if paramSet[key] {
+				continue
 			}
+			paramSet[key] = true
+			// Headers read via c.GetHeader are declared request headers, not
+			// query-style parameters, so they belong in Headers.
+			if p.in == "header" {
+				ep.Headers = append(ep.Headers, collector.ApiHeader{
+					Name:     p.name,
+					Required: p.required,
+				})
+				continue
+			}
+			params = append(params, collector.ApiParameter{
+				Name:     p.name,
+				In:       p.in,
+				Required: p.required,
+				Type:     p.typ,
+				Default:  p.def,
+			})
 		}
 
 		if len(params) > 0 {

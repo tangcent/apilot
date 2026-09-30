@@ -70,6 +70,8 @@ func patchUser(c *gin.Context) {
 
 // healthCheck returns service health status.
 func healthCheck(c *gin.Context) {
+	token := c.GetHeader("X-Health-Token")
+	_ = token
 	c.Status(200)
 }
 
