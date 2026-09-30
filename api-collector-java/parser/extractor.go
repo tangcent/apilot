@@ -75,6 +75,60 @@ func extractInterface(node *tree_sitter.Node, source []byte) Class {
 	return class
 }
 
+// extractRecord extracts a record declaration. Its components become fields;
+// the optional body (compact constructors, methods, static members) is ignored.
+func extractRecord(node *tree_sitter.Node, source []byte) Class {
+	rec := Class{JavaDoc: extractLeadingJavaDoc(node, source)}
+
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "identifier" {
+			rec.Name = child.Utf8Text(source)
+			break
+		}
+	}
+
+	rec.Annotations = extractAnnotations(node, source)
+	rec.TypeParameters = extractTypeParameters(node, source)
+	rec.Interfaces = extractInterfaces(node, source)
+
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "formal_parameters" {
+			rec.Fields = extractRecordComponents(child, source)
+			break
+		}
+	}
+
+	return rec
+}
+
+// extractRecordComponents converts formal_parameter record components to
+// fields. IsFinal stays unset even though components are implicitly final:
+// the resolver skips final fields, which would drop every record field.
+func extractRecordComponents(params *tree_sitter.Node, source []byte) []Field {
+	var fields []Field
+
+	for i := uint(0); i < params.ChildCount(); i++ {
+		child := params.Child(i)
+		if child.Kind() != "formal_parameter" {
+			continue
+		}
+		param := extractParameter(child, source)
+		if param.Name == "" || param.Type == "" {
+			continue
+		}
+		fields = append(fields, Field{
+			Name:        param.Name,
+			Type:        param.Type,
+			Annotations: param.Annotations,
+			JavaDoc:     param.JavaDoc,
+		})
+	}
+
+	return fields
+}
+
 // extractAnnotations extracts annotations from a node.
 func extractAnnotations(node *tree_sitter.Node, source []byte) []Annotation {
 	var annotations []Annotation

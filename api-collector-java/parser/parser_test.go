@@ -341,6 +341,126 @@ class DocumentedResponse {
 	}
 }
 
+func TestParser_ParseRecord(t *testing.T) {
+	p, err := NewParser(ParserOptions{LogLevel: LogLevelError})
+	if err != nil {
+		t.Fatalf("Failed to create parser: %v", err)
+	}
+	defer p.Close()
+
+	t.Run("plain record", func(t *testing.T) {
+		result, err := p.ParseFile("../testdata/CreateUserRequest.java")
+		if err != nil {
+			t.Fatalf("Failed to parse file: %v", err)
+		}
+		if result.Error != nil {
+			t.Fatalf("Parse result error: %v", result.Error)
+		}
+		if len(result.Classes) != 1 {
+			t.Fatalf("Expected 1 class, got %d", len(result.Classes))
+		}
+
+		rec := result.Classes[0]
+		if rec.Name != "CreateUserRequest" {
+			t.Errorf("Expected name 'CreateUserRequest', got '%s'", rec.Name)
+		}
+		if rec.Package != "com.example.demo.model" {
+			t.Errorf("Expected package 'com.example.demo.model', got '%s'", rec.Package)
+		}
+		if len(rec.Fields) != 3 {
+			t.Fatalf("Expected 3 fields, got %d", len(rec.Fields))
+		}
+		expectedFields := []struct{ name, typ string }{
+			{"name", "String"},
+			{"email", "String"},
+			{"age", "int"},
+		}
+		for i, want := range expectedFields {
+			if rec.Fields[i].Name != want.name || rec.Fields[i].Type != want.typ {
+				t.Errorf("Expected field %d '%s %s', got '%s %s'",
+					i, want.typ, want.name, rec.Fields[i].Type, rec.Fields[i].Name)
+			}
+		}
+	})
+
+	t.Run("generic record", func(t *testing.T) {
+		result, err := p.ParseFile("../testdata/PageResponseRecord.java")
+		if err != nil {
+			t.Fatalf("Failed to parse file: %v", err)
+		}
+		if result.Error != nil {
+			t.Fatalf("Parse result error: %v", result.Error)
+		}
+		if len(result.Classes) != 1 {
+			t.Fatalf("Expected 1 class, got %d", len(result.Classes))
+		}
+
+		rec := result.Classes[0]
+		if rec.Name != "PageResponseRecord" {
+			t.Errorf("Expected name 'PageResponseRecord', got '%s'", rec.Name)
+		}
+		if len(rec.TypeParameters) != 1 || rec.TypeParameters[0] != "T" {
+			t.Errorf("Expected type parameter 'T', got %v", rec.TypeParameters)
+		}
+		if len(rec.Fields) != 3 {
+			t.Fatalf("Expected 3 fields, got %d", len(rec.Fields))
+		}
+		if rec.Fields[0].Name != "items" || rec.Fields[0].Type != "List<T>" {
+			t.Errorf("Expected field 'List<T> items', got '%s %s'",
+				rec.Fields[0].Type, rec.Fields[0].Name)
+		}
+	})
+
+	t.Run("record with validation annotations and body", func(t *testing.T) {
+		result, err := p.ParseFile("../testdata/ValidatedUserRecord.java")
+		if err != nil {
+			t.Fatalf("Failed to parse file: %v", err)
+		}
+		if result.Error != nil {
+			t.Fatalf("Parse result error: %v", result.Error)
+		}
+		if len(result.Classes) != 1 {
+			t.Fatalf("Expected 1 class, got %d", len(result.Classes))
+		}
+
+		rec := result.Classes[0]
+		if rec.Name != "ValidatedUserRecord" {
+			t.Errorf("Expected name 'ValidatedUserRecord', got '%s'", rec.Name)
+		}
+		if rec.JavaDoc != "A user payload validated through record component annotations." {
+			t.Errorf("Expected record JavaDoc, got %q", rec.JavaDoc)
+		}
+		if len(rec.Fields) != 3 {
+			t.Fatalf("Expected 3 fields, got %d", len(rec.Fields))
+		}
+
+		name := rec.Fields[0]
+		if name.Name != "name" {
+			t.Fatalf("Expected first field 'name', got '%s'", name.Name)
+		}
+		if len(name.Annotations) != 2 {
+			t.Fatalf("Expected 2 annotations on 'name', got %d", len(name.Annotations))
+		}
+		if findAnnotation(name.Annotations, "NotNull") == nil {
+			t.Error("Expected @NotNull on 'name'")
+		}
+		size := findAnnotation(name.Annotations, "Size")
+		if size == nil {
+			t.Fatal("Expected @Size on 'name'")
+		}
+		if size.Params["min"] != "2" || size.Params["max"] != "50" {
+			t.Errorf("Expected Size min=2 max=50, got %v", size.Params)
+		}
+
+		// The compact constructor and body method must not become fields.
+		for _, f := range rec.Fields {
+			if f.Name != "name" && f.Name != "email" && f.Name != "age" {
+				t.Errorf("Unexpected field from record body: '%s'", f.Name)
+			}
+		}
+	})
+}
+
 func findAnnotation(annotations []Annotation, name string) *Annotation {
 	for i := range annotations {
 		if annotations[i].Name == name {
