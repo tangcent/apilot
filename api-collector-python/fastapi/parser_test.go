@@ -125,8 +125,8 @@ func TestParse_RouterRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("router routes should not error: %v", err)
 	}
-	if len(endpoints) != 5 {
-		t.Fatalf("expected 5 endpoints, got %d", len(endpoints))
+	if len(endpoints) != 6 {
+		t.Fatalf("expected 6 endpoints, got %d", len(endpoints))
 	}
 
 	sort.Slice(endpoints, func(i, j int) bool {
@@ -166,6 +166,50 @@ func TestParse_RouterRoutes(t *testing.T) {
 			{Name: "id", In: "path", Required: true, Type: "text"},
 		},
 	})
+}
+
+func TestParse_TagsAndHeaders(t *testing.T) {
+	endpoints, err := Parse(filepath.Join("testdata", "router"))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	byName := make(map[string]collector.ApiEndpoint, len(endpoints))
+	for _, ep := range endpoints {
+		byName[ep.Name] = ep
+	}
+
+	// The router/app variable the route was declared on becomes the tag.
+	listItems, ok := byName["list_items"]
+	if !ok {
+		t.Fatal("Expected list_items endpoint")
+	}
+	if len(listItems.Tags) != 1 || listItems.Tags[0] != "router" {
+		t.Errorf("list_items Tags = %v, want [router]", listItems.Tags)
+	}
+
+	healthCheck, ok := byName["health_check"]
+	if !ok {
+		t.Fatal("Expected health_check endpoint")
+	}
+	if len(healthCheck.Tags) != 1 || healthCheck.Tags[0] != "app" {
+		t.Errorf("health_check Tags = %v, want [app]", healthCheck.Tags)
+	}
+
+	// Header(...) parameters are declared request headers and live in
+	// Headers, not Parameters.
+	whoami, ok := byName["whoami"]
+	if !ok {
+		t.Fatal("Expected whoami endpoint")
+	}
+	if len(whoami.Headers) != 1 || whoami.Headers[0].Name != "x_token" {
+		t.Errorf("whoami Headers = %+v, want [x_token]", whoami.Headers)
+	}
+	for _, p := range whoami.Parameters {
+		if p.In == "header" {
+			t.Errorf("header %q should live in Headers, not Parameters", p.Name)
+		}
+	}
 }
 
 func TestExtractPathParams(t *testing.T) {

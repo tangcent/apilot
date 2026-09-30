@@ -342,6 +342,15 @@ func (p *Parser) extractParameter(param parser.Parameter, methodJavaDocParams ma
 		ep.Required = *doc.Required
 	}
 
+	// The header name on the wire comes from the annotation, not the Java
+	// parameter name: @HeaderParam("Authorization") String auth binds the
+	// Authorization header.
+	if ep.ParamType == "header" {
+		if name := parser.ExplicitAnnotationName(param.Annotations, "HeaderParam"); name != "" {
+			ep.Name = name
+		}
+	}
+
 	return ep
 }
 

@@ -410,3 +410,57 @@ func assertBody(t *testing.T, field string, got, want *collector.ApiBody) {
 		}
 	}
 }
+
+func TestParse_TagsAndHeaders(t *testing.T) {
+	endpoints, err := Parse(filepath.Join("testdata", "basic"))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	byName := make(map[string]collector.ApiEndpoint, len(endpoints))
+	for _, ep := range endpoints {
+		byName[ep.Name] = ep
+	}
+
+	// The router variable the route was registered on becomes the tag.
+	listUsers, ok := byName["listUsers"]
+	if !ok {
+		t.Fatal("Expected listUsers endpoint")
+	}
+	if len(listUsers.Tags) != 1 || listUsers.Tags[0] != "r" {
+		t.Errorf("listUsers Tags = %v, want [r]", listUsers.Tags)
+	}
+
+	// Headers read via c.GetHeader live in Headers, not Parameters.
+	healthCheck, ok := byName["healthCheck"]
+	if !ok {
+		t.Fatal("Expected healthCheck endpoint")
+	}
+	if len(healthCheck.Headers) != 1 || healthCheck.Headers[0].Name != "X-Health-Token" {
+		t.Errorf("healthCheck Headers = %+v, want [X-Health-Token]", healthCheck.Headers)
+	}
+	for _, p := range healthCheck.Parameters {
+		if p.In == "header" {
+			t.Errorf("header %q should live in Headers, not Parameters", p.Name)
+		}
+	}
+
+	// Group sub-routers are tagged with their own variable name.
+	groupEndpoints, err := Parse(filepath.Join("testdata", "groups"))
+	if err != nil {
+		t.Fatalf("Parse groups failed: %v", err)
+	}
+	tagged := false
+	for _, ep := range groupEndpoints {
+		if ep.Name != "listUsers" {
+			continue
+		}
+		tagged = true
+		if len(ep.Tags) != 1 || ep.Tags[0] != "v1" {
+			t.Errorf("grouped listUsers Tags = %v, want [v1]", ep.Tags)
+		}
+	}
+	if !tagged {
+		t.Fatal("Expected grouped listUsers endpoint")
+	}
+}

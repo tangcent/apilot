@@ -147,6 +147,11 @@ func ParseWithUnresolved(sourceDir string, unresolved *collector.UnresolvedSet, 
 			Protocol:    "http",
 			Description: funcDocs[handlerKey],
 		}
+		// The router variable the route was registered on is the closest
+		// framework-level grouping an Echo source tree exposes.
+		if raw.receiverVar != "" {
+			ep.Tags = []string{raw.receiverVar}
+		}
 
 		pathParams := extractPathParams(path)
 
@@ -165,16 +170,26 @@ func ParseWithUnresolved(sourceDir string, unresolved *collector.UnresolvedSet, 
 		analysis := handlerAnalyses[handlerKey]
 		for _, p := range analysis.params {
 			key := p.name + "|" + p.in
-			if !paramSet[key] {
-				params = append(params, collector.ApiParameter{
-					Name:     p.name,
-					In:       p.in,
-					Required: p.required,
-					Type:     p.typ,
-					Default:  p.def,
-				})
-				paramSet[key] = true
+			if paramSet[key] {
+				continue
 			}
+			paramSet[key] = true
+			// Headers read via c.Request().Header.Get are declared request
+			// headers, not query-style parameters, so they belong in Headers.
+			if p.in == "header" {
+				ep.Headers = append(ep.Headers, collector.ApiHeader{
+					Name:     p.name,
+					Required: p.required,
+				})
+				continue
+			}
+			params = append(params, collector.ApiParameter{
+				Name:     p.name,
+				In:       p.in,
+				Required: p.required,
+				Type:     p.typ,
+				Default:  p.def,
+			})
 		}
 
 		if len(params) > 0 {
@@ -427,6 +442,13 @@ func analyzeHandlerBody(fn *ast.FuncDecl) ([]rawParam, *rawBody, *rawBody) {
 			return true
 		}
 
+		// c.Request().Header.Get("X") is a nested call chain, not a direct
+		// ctxVar method call, so match it before the ctxVar check below.
+		if name := matchHeaderGet(callExpr, ctxVar); name != "" {
+			params = append(params, rawParam{name: name, in: "header", typ: "text"})
+			return true
+		}
+
 		ident, ok := selExpr.X.(*ast.Ident)
 		if !ok || ident.Name != ctxVar {
 			return true
@@ -479,6 +501,36 @@ func analyzeHandlerBody(fn *ast.FuncDecl) ([]rawParam, *rawBody, *rawBody) {
 	})
 
 	return params, requestBody, response
+}
+
+// matchHeaderGet reports the header name when the call reads a request header
+// through the echo.Context request chain: c.Request().Header.Get("Name").
+// Returns "" for anything else.
+func matchHeaderGet(callExpr *ast.CallExpr, ctxVar string) string {
+	getSel, ok := callExpr.Fun.(*ast.SelectorExpr)
+	if !ok || getSel.Sel.Name != "Get" {
+		return ""
+	}
+	headerSel, ok := getSel.X.(*ast.SelectorExpr)
+	if !ok || headerSel.Sel.Name != "Header" {
+		return ""
+	}
+	requestCall, ok := headerSel.X.(*ast.CallExpr)
+	if !ok {
+		return ""
+	}
+	requestSel, ok := requestCall.Fun.(*ast.SelectorExpr)
+	if !ok || requestSel.Sel.Name != "Request" {
+		return ""
+	}
+	recv, ok := requestSel.X.(*ast.Ident)
+	if !ok || recv.Name != ctxVar {
+		return ""
+	}
+	if len(callExpr.Args) != 1 {
+		return ""
+	}
+	return extractStringLiteral(callExpr.Args[0])
 }
 
 // findContextParamName returns the variable name of the echo.Context parameter

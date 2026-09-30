@@ -195,6 +195,23 @@ func extractAnnotationParams(node *tree_sitter.Node, source []byte, params map[s
 	}
 }
 
+// ExplicitAnnotationName returns the binding name carried by the named
+// annotation, e.g. "@RequestHeader(\"Authorization\")" yields "Authorization".
+// The single-value form and the explicit name entry are both accepted; an
+// empty result means the annotation does not rename the bound element.
+func ExplicitAnnotationName(annotations []Annotation, annName string) string {
+	for _, ann := range annotations {
+		if ann.Name != annName {
+			continue
+		}
+		if v := strings.TrimSpace(ann.Params["value"]); v != "" {
+			return v
+		}
+		return strings.TrimSpace(ann.Params["name"])
+	}
+	return ""
+}
+
 func extractAnnotationValue(node *tree_sitter.Node, source []byte) string {
 	switch node.Kind() {
 	case "string_literal":

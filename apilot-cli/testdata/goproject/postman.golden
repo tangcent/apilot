@@ -163,6 +163,13 @@
           "name": "getUser",
           "request": {
             "method": "GET",
+            "header": [
+              {
+                "key": "X-Request-Id",
+                "value": "",
+                "type": "text"
+              }
+            ],
             "url": {
               "raw": "http://localhost/users/:id",
               "host": [
@@ -186,6 +193,13 @@
               "name": "Example response",
               "originalRequest": {
                 "method": "GET",
+                "header": [
+                  {
+                    "key": "X-Request-Id",
+                    "value": "",
+                    "type": "text"
+                  }
+                ],
                 "url": {
                   "raw": "http://localhost/users/:id",
                   "host": [

@@ -406,3 +406,32 @@ func assertParams(t *testing.T, got, want []collector.ApiParameter) {
 		}
 	}
 }
+
+func TestParse_Tags(t *testing.T) {
+	endpoints, err := Parse(filepath.Join("testdata", "router"))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	byName := make(map[string]collector.ApiEndpoint, len(endpoints))
+	for _, ep := range endpoints {
+		byName[ep.Name] = ep
+	}
+
+	// The router/app variable the route was registered on becomes the tag.
+	healthCheck, ok := byName["healthCheck"]
+	if !ok {
+		t.Fatal("Expected healthCheck endpoint")
+	}
+	if len(healthCheck.Tags) != 1 || healthCheck.Tags[0] != "app" {
+		t.Errorf("healthCheck Tags = %v, want [app]", healthCheck.Tags)
+	}
+
+	listItems, ok := byName["listItems"]
+	if !ok {
+		t.Fatal("Expected listItems endpoint")
+	}
+	if len(listItems.Tags) != 1 || listItems.Tags[0] != "router" {
+		t.Errorf("listItems Tags = %v, want [router]", listItems.Tags)
+	}
+}

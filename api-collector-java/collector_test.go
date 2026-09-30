@@ -857,3 +857,82 @@ func TestCollect_Deduplication(t *testing.T) {
 		}
 	}
 }
+
+func TestCollect_TagsAndHeaders(t *testing.T) {
+	c := New()
+	testdataDir, _ := filepath.Abs("testdata")
+
+	endpoints, err := c.Collect(collector.CollectContext{
+		SourceDir: testdataDir,
+	})
+	if err != nil {
+		t.Fatalf("Collect failed: %v", err)
+	}
+
+	byName := make(map[string]collector.ApiEndpoint, len(endpoints))
+	for _, ep := range endpoints {
+		byName[ep.Name] = ep
+	}
+
+	// Acceptance: @RequestHeader("Authorization") exports the header in
+	// Headers under its wire name, and the endpoint is tagged with its
+	// controller.
+	currentUser, ok := byName["currentUser"]
+	if !ok {
+		t.Fatal("Expected currentUser endpoint from HeaderController")
+	}
+	if len(currentUser.Tags) != 1 || currentUser.Tags[0] != "HeaderController" {
+		t.Errorf("currentUser Tags = %v, want [HeaderController]", currentUser.Tags)
+	}
+	if len(currentUser.Headers) != 1 {
+		t.Fatalf("currentUser Headers = %+v, want exactly the Authorization header", currentUser.Headers)
+	}
+	auth := currentUser.Headers[0]
+	if auth.Name != "Authorization" {
+		t.Errorf("Authorization header name = %q, want %q", auth.Name, "Authorization")
+	}
+	if !auth.Required {
+		t.Errorf("Authorization header should be required by default")
+	}
+	for _, p := range currentUser.Parameters {
+		if p.In == "header" {
+			t.Errorf("header parameter %q should live in Headers, not Parameters", p.Name)
+		}
+	}
+
+	// An optional header with an explicit value= name and no default.
+	version, ok := byName["version"]
+	if !ok {
+		t.Fatal("Expected version endpoint from HeaderController")
+	}
+	if len(version.Headers) != 1 || version.Headers[0].Name != "X-Api-Version" {
+		t.Errorf("version Headers = %+v, want [X-Api-Version]", version.Headers)
+	}
+	if version.Headers[0].Required {
+		t.Errorf("X-Api-Version header should be optional (required = false)")
+	}
+
+	// JAX-RS @HeaderParam lands in Headers too.
+	requestId, ok := byName["requestId"]
+	if !ok {
+		t.Fatal("Expected requestId endpoint from HeaderResource")
+	}
+	if len(requestId.Tags) != 1 || requestId.Tags[0] != "HeaderResource" {
+		t.Errorf("requestId Tags = %v, want [HeaderResource]", requestId.Tags)
+	}
+	if len(requestId.Headers) != 1 || requestId.Headers[0].Name != "X-Request-Id" {
+		t.Errorf("requestId Headers = %+v, want [X-Request-Id]", requestId.Headers)
+	}
+
+	// Feign @RequestHeader lands in Headers too.
+	session, ok := byName["session"]
+	if !ok {
+		t.Fatal("Expected session endpoint from HeaderUserClient")
+	}
+	if len(session.Tags) != 1 || session.Tags[0] != "HeaderUserClient" {
+		t.Errorf("session Tags = %v, want [HeaderUserClient]", session.Tags)
+	}
+	if len(session.Headers) != 1 || session.Headers[0].Name != "X-Session-Token" {
+		t.Errorf("session Headers = %+v, want [X-Session-Token]", session.Headers)
+	}
+}

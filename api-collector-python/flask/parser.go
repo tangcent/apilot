@@ -91,6 +91,7 @@ type rawEndpointInfo struct {
 	path            string
 	funcName        string
 	description     string
+	tag             string
 	params          []funcParam
 	requestBodyType string
 	responseType    string
@@ -157,12 +158,13 @@ func processFile(filePath string) fileResult {
 
 func extractRawEndpoints(rootNode *tree_sitter.Node, source []byte) []rawEndpointInfo {
 	var endpoints []rawEndpointInfo
+	blueprints := extractBlueprintNames(rootNode, source)
 
 	for i := uint(0); i < rootNode.ChildCount(); i++ {
 		child := rootNode.Child(i)
 		switch child.Kind() {
 		case "decorated_definition":
-			eps := extractDecoratedDefinition(child, source)
+			eps := extractDecoratedDefinition(child, source, blueprints)
 			endpoints = append(endpoints, eps...)
 		case "class_definition":
 			eps := extractClassDefinition(child, source)
@@ -173,7 +175,7 @@ func extractRawEndpoints(rootNode *tree_sitter.Node, source []byte) []rawEndpoin
 	return endpoints
 }
 
-func extractDecoratedDefinition(node *tree_sitter.Node, source []byte) []rawEndpointInfo {
+func extractDecoratedDefinition(node *tree_sitter.Node, source []byte, blueprints map[string]string) []rawEndpointInfo {
 	var decorator *tree_sitter.Node
 	var funcDef *tree_sitter.Node
 
@@ -196,6 +198,13 @@ func extractDecoratedDefinition(node *tree_sitter.Node, source []byte) []rawEndp
 		return nil
 	}
 
+	// Routes registered on a blueprint are grouped under the blueprint's
+	// declared name; routes on the app fall back to the variable itself.
+	tag := routeInfo.receiver
+	if name, ok := blueprints[routeInfo.receiver]; ok && name != "" {
+		tag = name
+	}
+
 	funcName := extractFunctionName(funcDef, source)
 	description := extractDocstring(funcDef, source)
 	params := extractFunctionParameters(funcDef, source, routeInfo.path)
@@ -215,6 +224,7 @@ func extractDecoratedDefinition(node *tree_sitter.Node, source []byte) []rawEndp
 			path:            path,
 			funcName:        funcName,
 			description:     description,
+			tag:             tag,
 			params:          params,
 			requestBodyType: requestBodyType,
 			responseType:    returnType,
@@ -322,6 +332,7 @@ func extractRESTXResourceEndpoints(className string, body *tree_sitter.Node, sou
 			path:            "/" + toSnakeCase(className),
 			funcName:        methodName,
 			description:     description,
+			tag:             className,
 			params:          params,
 			requestBodyType: requestBodyType,
 			responseType:    returnType,
@@ -374,6 +385,11 @@ func buildEndpoint(raw rawEndpointInfo, typeResolver *FlaskTypeResolver) *collec
 		Method:      raw.method,
 		Protocol:    "http",
 		Description: raw.description,
+	}
+	// The blueprint name (or the registering variable for app routes) is the
+	// framework grouping a Flask source tree exposes.
+	if raw.tag != "" {
+		ep.Tags = []string{raw.tag}
 	}
 
 	pathParams := extractPathParams(raw.path)
@@ -486,8 +502,9 @@ func buildEndpoint(raw rawEndpointInfo, typeResolver *FlaskTypeResolver) *collec
 }
 
 type routeInfo struct {
-	path    string
-	methods []string
+	path     string
+	methods  []string
+	receiver string
 }
 
 func extractDecoratorRouteInfo(decorator *tree_sitter.Node, source []byte) routeInfo {
@@ -526,6 +543,7 @@ func resolveCallExpression(callNode *tree_sitter.Node, source []byte) routeInfo 
 	var isRoute bool
 	var path string
 	var methods []string
+	var receiver string
 
 	for i := uint(0); i < callNode.ChildCount(); i++ {
 		child := callNode.Child(i)
@@ -533,6 +551,7 @@ func resolveCallExpression(callNode *tree_sitter.Node, source []byte) routeInfo 
 			attr := extractAttributeName(child, source)
 			if attr == "route" {
 				isRoute = true
+				receiver = extractReceiverName(child, source)
 			}
 		}
 		if child.Kind() == "argument_list" {
@@ -554,7 +573,82 @@ func resolveCallExpression(callNode *tree_sitter.Node, source []byte) routeInfo 
 		methods = []string{"GET"}
 	}
 
-	return routeInfo{path: path, methods: methods}
+	return routeInfo{path: path, methods: methods, receiver: receiver}
+}
+
+// extractReceiverName returns the object identifier of an attribute node,
+// e.g. "bp" for bp.route(...). Empty when the receiver is not a plain
+// identifier.
+func extractReceiverName(attrNode *tree_sitter.Node, source []byte) string {
+	for i := uint(0); i < attrNode.ChildCount(); i++ {
+		child := attrNode.Child(i)
+		if child.Kind() == "identifier" {
+			return child.Utf8Text(source)
+		}
+	}
+	return ""
+}
+
+// extractBlueprintNames maps blueprint variable names to the blueprint name
+// declared in their constructor: bp = Blueprint('api', __name__) → bp → api.
+func extractBlueprintNames(rootNode *tree_sitter.Node, source []byte) map[string]string {
+	names := make(map[string]string)
+	for i := uint(0); i < rootNode.ChildCount(); i++ {
+		child := rootNode.Child(i)
+		// Top-level assignments are wrapped in an expression_statement.
+		if child.Kind() == "expression_statement" {
+			for j := uint(0); j < child.ChildCount(); j++ {
+				if child.Child(j).Kind() == "assignment" {
+					child = child.Child(j)
+					break
+				}
+			}
+		}
+		if child.Kind() != "assignment" {
+			continue
+		}
+		var varName, bpName string
+		for j := uint(0); j < child.ChildCount(); j++ {
+			part := child.Child(j)
+			switch part.Kind() {
+			case "identifier":
+				if varName == "" {
+					varName = part.Utf8Text(source)
+				}
+			case "call":
+				bpName = blueprintName(part, source)
+			}
+		}
+		if varName != "" && bpName != "" {
+			names[varName] = bpName
+		}
+	}
+	return names
+}
+
+// blueprintName returns the first string argument of a Blueprint(...)
+// constructor call, unquoted. Empty when the call is not a Blueprint.
+func blueprintName(callNode *tree_sitter.Node, source []byte) string {
+	var fnName, firstArg string
+	for i := uint(0); i < callNode.ChildCount(); i++ {
+		child := callNode.Child(i)
+		if child.Kind() == "identifier" && fnName == "" {
+			fnName = child.Utf8Text(source)
+		}
+		if child.Kind() == "argument_list" && firstArg == "" {
+			for j := uint(0); j < child.ChildCount(); j++ {
+				argChild := child.Child(j)
+				if argChild.Kind() == "string" {
+					firstArg = unquotePythonString(argChild.Utf8Text(source))
+					break
+				}
+			}
+		}
+	}
+	if fnName != "Blueprint" {
+		return ""
+	}
+	return firstArg
 }
 
 func resolveAttribute(attrNode *tree_sitter.Node, source []byte) routeInfo {

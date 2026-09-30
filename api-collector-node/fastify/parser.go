@@ -277,7 +277,7 @@ func (ctx *parseContext) extractFromExpressionStatement(node *tree_sitter.Node, 
 func (ctx *parseContext) extractFromCallExpression(callNode *tree_sitter.Node, source []byte, description string) []collector.ApiEndpoint {
 	method, isRoute := extractMethodInfo(callNode, source)
 	if isRoute {
-		ep := ctx.extractShorthandRoute(callNode, source, method, description)
+		ep := ctx.extractShorthandRoute(callNode, source, method, extractReceiverName(callNode, source), description)
 		if ep != nil {
 			return []collector.ApiEndpoint{*ep}
 		}
@@ -285,10 +285,29 @@ func (ctx *parseContext) extractFromCallExpression(callNode *tree_sitter.Node, s
 	}
 
 	if isRouteObjectCall(callNode, source) {
-		return ctx.extractRouteObject(callNode, source, description)
+		return ctx.extractRouteObject(callNode, source, extractReceiverName(callNode, source), description)
 	}
 
 	return nil
+}
+
+// extractReceiverName returns the object identifier of the route call's
+// member expression, e.g. "app" for app.get("/x", handler). Empty when the
+// receiver is not a plain identifier.
+func extractReceiverName(callNode *tree_sitter.Node, source []byte) string {
+	for i := uint(0); i < callNode.ChildCount(); i++ {
+		child := callNode.Child(i)
+		if child.Kind() != "member_expression" {
+			continue
+		}
+		for j := uint(0); j < child.ChildCount(); j++ {
+			grandChild := child.Child(j)
+			if grandChild.Kind() == "identifier" {
+				return grandChild.Utf8Text(source)
+			}
+		}
+	}
+	return ""
 }
 
 func extractMethodInfo(callNode *tree_sitter.Node, source []byte) (method string, isRoute bool) {
@@ -341,7 +360,7 @@ func isRouteProperty(memberNode *tree_sitter.Node, source []byte) bool {
 	return false
 }
 
-func (ctx *parseContext) extractShorthandRoute(callNode *tree_sitter.Node, source []byte, method string, description string) *collector.ApiEndpoint {
+func (ctx *parseContext) extractShorthandRoute(callNode *tree_sitter.Node, source []byte, method string, receiver string, description string) *collector.ApiEndpoint {
 	path, handlerName := extractShorthandArguments(callNode, source)
 	if path == "" {
 		return nil
@@ -355,6 +374,11 @@ func (ctx *parseContext) extractShorthandRoute(callNode *tree_sitter.Node, sourc
 		Method:      strings.ToUpper(method),
 		Protocol:    "http",
 		Description: description,
+	}
+	// The app/instance variable the route was registered on is the closest
+	// framework-level grouping a Fastify source tree exposes.
+	if receiver != "" {
+		ep.Tags = []string{receiver}
 	}
 
 	pathParams := extractPathParams(standardPath)
@@ -489,27 +513,27 @@ func extractShorthandArgsFromNode(argsNode *tree_sitter.Node, source []byte) (pa
 	return path, handlerName
 }
 
-func (ctx *parseContext) extractRouteObject(callNode *tree_sitter.Node, source []byte, description string) []collector.ApiEndpoint {
+func (ctx *parseContext) extractRouteObject(callNode *tree_sitter.Node, source []byte, receiver string, description string) []collector.ApiEndpoint {
 	for i := uint(0); i < callNode.ChildCount(); i++ {
 		child := callNode.Child(i)
 		if child.Kind() == "arguments" {
-			return ctx.extractRouteObjectArgs(child, source, description)
+			return ctx.extractRouteObjectArgs(child, source, receiver, description)
 		}
 	}
 	return nil
 }
 
-func (ctx *parseContext) extractRouteObjectArgs(argsNode *tree_sitter.Node, source []byte, description string) []collector.ApiEndpoint {
+func (ctx *parseContext) extractRouteObjectArgs(argsNode *tree_sitter.Node, source []byte, receiver string, description string) []collector.ApiEndpoint {
 	for i := uint(0); i < argsNode.ChildCount(); i++ {
 		child := argsNode.Child(i)
 		if child.Kind() == "object" {
-			return ctx.extractRouteObjectFromObject(child, source, description)
+			return ctx.extractRouteObjectFromObject(child, source, receiver, description)
 		}
 	}
 	return nil
 }
 
-func (ctx *parseContext) extractRouteObjectFromObject(objNode *tree_sitter.Node, source []byte, description string) []collector.ApiEndpoint {
+func (ctx *parseContext) extractRouteObjectFromObject(objNode *tree_sitter.Node, source []byte, receiver string, description string) []collector.ApiEndpoint {
 	var method, path, handlerName string
 
 	for i := uint(0); i < objNode.ChildCount(); i++ {
@@ -552,6 +576,11 @@ func (ctx *parseContext) extractRouteObjectFromObject(objNode *tree_sitter.Node,
 		Method:      method,
 		Protocol:    "http",
 		Description: description,
+	}
+	// The app/instance variable the route was registered on is the closest
+	// framework-level grouping a Fastify source tree exposes.
+	if receiver != "" {
+		ep.Tags = []string{receiver}
 	}
 
 	pathParams := extractPathParams(standardPath)

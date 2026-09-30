@@ -237,6 +237,7 @@ func springmvcEndpointToAPI(ep springmvc.Endpoint, folder string) collector.ApiE
 		Name:        ep.MethodName,
 		Folder:      folder,
 		Description: ep.Description,
+		Tags:        []string{folder},
 		Path:        ep.Path,
 		Method:      string(ep.Method),
 		Protocol:    "http",
@@ -244,6 +245,14 @@ func springmvcEndpointToAPI(ep springmvc.Endpoint, folder string) collector.ApiE
 	for _, p := range ep.Parameters {
 		if p.ParamType == "body" {
 			out.RequestBody = &collector.ApiBody{MediaType: "application/json"}
+		} else if p.ParamType == "header" {
+			out.Headers = append(out.Headers, collector.ApiHeader{
+				Name:        p.Name,
+				Value:       p.DefaultValue,
+				Description: p.Description,
+				Example:     p.Example,
+				Required:    p.Required,
+			})
 		} else {
 			out.Parameters = append(out.Parameters, collector.ApiParameter{
 				Name:        p.Name,
@@ -279,6 +288,7 @@ func jaxrsEndpointToAPI(ep jaxrs.Endpoint, folder string) collector.ApiEndpoint 
 		Name:        ep.MethodName,
 		Folder:      folder,
 		Description: ep.Description,
+		Tags:        []string{folder},
 		Path:        ep.Path,
 		Method:      string(ep.Method),
 		Protocol:    "http",
@@ -286,6 +296,14 @@ func jaxrsEndpointToAPI(ep jaxrs.Endpoint, folder string) collector.ApiEndpoint 
 	for _, p := range ep.Parameters {
 		if p.ParamType == "body" {
 			out.RequestBody = &collector.ApiBody{MediaType: mediaType}
+		} else if p.ParamType == "header" {
+			out.Headers = append(out.Headers, collector.ApiHeader{
+				Name:        p.Name,
+				Value:       p.DefaultValue,
+				Description: p.Description,
+				Example:     p.Example,
+				Required:    p.Required,
+			})
 		} else {
 			out.Parameters = append(out.Parameters, collector.ApiParameter{
 				Name:        p.Name,
@@ -320,6 +338,7 @@ func feignEndpointToAPI(ep feign.Endpoint, folder string) collector.ApiEndpoint 
 		Name:        ep.MethodName,
 		Folder:      folder,
 		Description: ep.Description,
+		Tags:        []string{folder},
 		Path:        ep.Path,
 		Method:      string(ep.Method),
 		Protocol:    "http",
@@ -327,6 +346,14 @@ func feignEndpointToAPI(ep feign.Endpoint, folder string) collector.ApiEndpoint 
 	for _, p := range ep.Parameters {
 		if p.ParamType == "body" {
 			out.RequestBody = &collector.ApiBody{MediaType: "application/json"}
+		} else if p.ParamType == "header" {
+			out.Headers = append(out.Headers, collector.ApiHeader{
+				Name:        p.Name,
+				Value:       p.DefaultValue,
+				Description: p.Description,
+				Example:     p.Example,
+				Required:    p.Required,
+			})
 		} else {
 			out.Parameters = append(out.Parameters, collector.ApiParameter{
 				Name:        p.Name,

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, Header
 
 app = FastAPI()
 router = APIRouter()
@@ -19,6 +19,12 @@ def delete_item(id: int):
 @app.get("/health")
 def health_check():
     """healthCheck returns service health status."""
+    pass
+
+
+@router.get("/whoami")
+def whoami(x_token: str = Header()):
+    """whoami returns the caller identity."""
     pass
 
 

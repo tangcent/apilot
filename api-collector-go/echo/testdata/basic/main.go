@@ -42,6 +42,8 @@ func createUser(c echo.Context) error {
 // getUser returns a single user by ID.
 func getUser(c echo.Context) error {
 	id := c.Param("id")
+	requestID := c.Request().Header.Get("X-Request-Id")
+	_ = requestID
 	_ = id
 	return c.JSON(http.StatusOK, map[string]interface{}{"id": id})
 }

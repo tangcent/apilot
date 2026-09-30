@@ -224,6 +224,11 @@ func (ctx *parseContext) extractFromCallExpression(callNode *tree_sitter.Node, s
 		Protocol:    "http",
 		Description: description,
 	}
+	// The router/app variable the route was registered on is the closest
+	// framework-level grouping an Express source tree exposes.
+	if receiver := extractReceiverName(callNode, source); receiver != "" {
+		ep.Tags = []string{receiver}
+	}
 
 	pathParams := extractPathParams(standardPath)
 	if len(pathParams) > 0 {
@@ -479,6 +484,25 @@ func extractFromCallExpression(callNode *tree_sitter.Node, source []byte, descri
 	}
 
 	return ep
+}
+
+// extractReceiverName returns the object identifier of the route call's
+// member expression, e.g. "app" for app.get("/x", handler). Empty when the
+// receiver is not a plain identifier.
+func extractReceiverName(callNode *tree_sitter.Node, source []byte) string {
+	for i := uint(0); i < callNode.ChildCount(); i++ {
+		child := callNode.Child(i)
+		if child.Kind() != "member_expression" {
+			continue
+		}
+		for j := uint(0); j < child.ChildCount(); j++ {
+			grandChild := child.Child(j)
+			if grandChild.Kind() == "identifier" {
+				return grandChild.Utf8Text(source)
+			}
+		}
+	}
+	return ""
 }
 
 func extractMethodInfo(callNode *tree_sitter.Node, source []byte) (method string, isRoute bool) {

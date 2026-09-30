@@ -423,3 +423,23 @@ func TestParse_ModelSerializer(t *testing.T) {
 		}
 	})
 }
+
+func TestParse_Tags(t *testing.T) {
+	endpoints, err := Parse("testdata/viewset")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	// Class-based views are tagged with their viewset/view class name.
+	byName := make(map[string]collector.ApiEndpoint, len(endpoints))
+	for _, ep := range endpoints {
+		byName[ep.Name] = ep
+	}
+	listUsers, ok := byName["UserViewSet.list"]
+	if !ok {
+		t.Fatalf("Expected UserViewSet.list endpoint, got %v", byName)
+	}
+	if len(listUsers.Tags) != 1 || listUsers.Tags[0] != "UserViewSet" {
+		t.Errorf("UserViewSet.list Tags = %v, want [UserViewSet]", listUsers.Tags)
+	}
+}

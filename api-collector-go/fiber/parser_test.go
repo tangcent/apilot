@@ -412,3 +412,38 @@ func assertBody(t *testing.T, field string, got, want *collector.ApiBody) {
 		}
 	}
 }
+
+func TestParse_TagsAndHeaders(t *testing.T) {
+	endpoints, err := Parse(filepath.Join("testdata", "basic"))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	byName := make(map[string]collector.ApiEndpoint, len(endpoints))
+	for _, ep := range endpoints {
+		byName[ep.Name] = ep
+	}
+
+	// The router variable the route was registered on becomes the tag.
+	listUsers, ok := byName["listUsers"]
+	if !ok {
+		t.Fatal("Expected listUsers endpoint")
+	}
+	if len(listUsers.Tags) != 1 || listUsers.Tags[0] != "app" {
+		t.Errorf("listUsers Tags = %v, want [app]", listUsers.Tags)
+	}
+
+	// Headers read via c.Get live in Headers, not Parameters.
+	getUser, ok := byName["getUser"]
+	if !ok {
+		t.Fatal("Expected getUser endpoint")
+	}
+	if len(getUser.Headers) != 1 || getUser.Headers[0].Name != "X-Request-Id" {
+		t.Errorf("getUser Headers = %+v, want [X-Request-Id]", getUser.Headers)
+	}
+	for _, p := range getUser.Parameters {
+		if p.In == "header" {
+			t.Errorf("header %q should live in Headers, not Parameters", p.Name)
+		}
+	}
+}

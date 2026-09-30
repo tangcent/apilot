@@ -193,6 +193,7 @@ func isControllerDecorator(name string) bool {
 func (ctx *parseContext) extractFromClassNode(classNode *tree_sitter.Node, controllerDecorator *decoratorInfo, source []byte) []collector.ApiEndpoint {
 	basePath := ""
 	classComment := ""
+	className := extractClassName(classNode, source)
 
 	if controllerDecorator != nil {
 		basePath = controllerDecorator.firstArg
@@ -215,10 +216,22 @@ func (ctx *parseContext) extractFromClassNode(classNode *tree_sitter.Node, contr
 		return nil
 	}
 
-	return ctx.extractFromClassBody(classBody, basePath, classComment, source)
+	return ctx.extractFromClassBody(classBody, basePath, classComment, className, source)
 }
 
-func (ctx *parseContext) extractFromClassBody(classBody *tree_sitter.Node, basePath string, classComment string, source []byte) []collector.ApiEndpoint {
+// extractClassName returns the name identifier of a class_declaration node.
+// TypeScript grammar names the class name node type_identifier.
+func extractClassName(classNode *tree_sitter.Node, source []byte) string {
+	for i := uint(0); i < classNode.ChildCount(); i++ {
+		child := classNode.Child(i)
+		if child.Kind() == "identifier" || child.Kind() == "type_identifier" {
+			return child.Utf8Text(source)
+		}
+	}
+	return ""
+}
+
+func (ctx *parseContext) extractFromClassBody(classBody *tree_sitter.Node, basePath string, classComment string, className string, source []byte) []collector.ApiEndpoint {
 	var endpoints []collector.ApiEndpoint
 
 	var pendingDecorator *decoratorInfo
@@ -243,7 +256,7 @@ func (ctx *parseContext) extractFromClassBody(classBody *tree_sitter.Node, baseP
 
 		case "method_definition":
 			if pendingDecorator != nil {
-				ep := ctx.buildEndpoint(pendingDecorator, child, basePath, pendingComment, classComment, source)
+				ep := ctx.buildEndpoint(pendingDecorator, child, basePath, pendingComment, classComment, className, source)
 				if ep != nil {
 					endpoints = append(endpoints, *ep)
 				}
@@ -259,7 +272,7 @@ func (ctx *parseContext) extractFromClassBody(classBody *tree_sitter.Node, baseP
 	return endpoints
 }
 
-func (ctx *parseContext) buildEndpoint(methodDecorator *decoratorInfo, methodNode *tree_sitter.Node, basePath string, methodComment string, classComment string, source []byte) *collector.ApiEndpoint {
+func (ctx *parseContext) buildEndpoint(methodDecorator *decoratorInfo, methodNode *tree_sitter.Node, basePath string, methodComment string, classComment string, className string, source []byte) *collector.ApiEndpoint {
 	handlerName := extractHandlerName(methodNode, source)
 	paramBindings := extractParamBindings(methodNode, source)
 
@@ -277,18 +290,31 @@ func (ctx *parseContext) buildEndpoint(methodDecorator *decoratorInfo, methodNod
 		Protocol:    "http",
 		Description: description,
 	}
+	// The controller class the handler belongs to is the NestJS analog of a
+	// resource grouping.
+	if className != "" {
+		ep.Tags = []string{className}
+	}
 
-	if len(paramBindings) > 0 {
-		var params []collector.ApiParameter
-		for _, pb := range paramBindings {
-			required := pb.in == "path" || pb.in == "body"
-			params = append(params, collector.ApiParameter{
-				Name:     pb.name,
-				In:       pb.in,
-				Required: required,
-				Type:     "text",
+	var params []collector.ApiParameter
+	for _, pb := range paramBindings {
+		// @Headers('X') bindings are declared request headers, not
+		// query-style parameters, so they belong in Headers.
+		if pb.in == "header" {
+			ep.Headers = append(ep.Headers, collector.ApiHeader{
+				Name: pb.name,
 			})
+			continue
 		}
+		required := pb.in == "path" || pb.in == "body"
+		params = append(params, collector.ApiParameter{
+			Name:     pb.name,
+			In:       pb.in,
+			Required: required,
+			Type:     "text",
+		})
+	}
+	if len(params) > 0 {
 		ep.Parameters = params
 	}
 
