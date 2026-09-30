@@ -380,6 +380,9 @@ func TestParser_ParseRecord(t *testing.T) {
 				t.Errorf("Expected field %d '%s %s', got '%s %s'",
 					i, want.typ, want.name, rec.Fields[i].Type, rec.Fields[i].Name)
 			}
+			if !rec.Fields[i].IsFinal {
+				t.Errorf("Expected record component '%s' to be marked final", want.name)
+			}
 		}
 	})
 
@@ -459,6 +462,64 @@ func TestParser_ParseRecord(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestParser_ParseImmutableProduct(t *testing.T) {
+	p, err := NewParser(ParserOptions{LogLevel: LogLevelError})
+	if err != nil {
+		t.Fatalf("Failed to create parser: %v", err)
+	}
+	defer p.Close()
+
+	result, err := p.ParseFile("../testdata/ImmutableProduct.java")
+	if err != nil {
+		t.Fatalf("Failed to parse file: %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Parse result error: %v", result.Error)
+	}
+	if len(result.Classes) != 1 {
+		t.Fatalf("Expected 1 class, got %d", len(result.Classes))
+	}
+
+	class := result.Classes[0]
+	if class.Name != "ImmutableProduct" {
+		t.Errorf("Expected name 'ImmutableProduct', got '%s'", class.Name)
+	}
+	if len(class.Fields) != 3 {
+		t.Fatalf("Expected 3 fields, got %d", len(class.Fields))
+	}
+
+	fields := make(map[string]Field, len(class.Fields))
+	for _, f := range class.Fields {
+		fields[f.Name] = f
+	}
+
+	constant := fields["TYPE"]
+	if constant.Name == "" {
+		t.Fatal("Expected static final constant 'TYPE' to be captured")
+	}
+	if !constant.IsStatic || !constant.IsFinal || !constant.HasInitializer {
+		t.Errorf("Expected 'TYPE' static final with initializer, got static=%v final=%v initializer=%v",
+			constant.IsStatic, constant.IsFinal, constant.HasInitializer)
+	}
+
+	for _, want := range []struct{ name, typ string }{{"sku", "String"}, {"price", "BigDecimal"}} {
+		f := fields[want.name]
+		if f.Name == "" {
+			t.Fatalf("Expected field '%s' to be captured", want.name)
+		}
+		if f.Type != want.typ {
+			t.Errorf("Expected '%s' type '%s', got '%s'", want.name, want.typ, f.Type)
+		}
+		if !f.IsFinal || f.IsStatic {
+			t.Errorf("Expected '%s' final instance field, got final=%v static=%v",
+				want.name, f.IsFinal, f.IsStatic)
+		}
+		if f.HasInitializer {
+			t.Errorf("Expected '%s' to have no initializer", want.name)
+		}
+	}
 }
 
 func findAnnotation(annotations []Annotation, name string) *Annotation {

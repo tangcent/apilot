@@ -104,8 +104,8 @@ func extractRecord(node *tree_sitter.Node, source []byte) Class {
 }
 
 // extractRecordComponents converts formal_parameter record components to
-// fields. IsFinal stays unset even though components are implicitly final:
-// the resolver skips final fields, which would drop every record field.
+// fields. Components are implicitly private final fields (JLS 8.10.3), so
+// IsFinal is set; the resolver keeps instance final fields.
 func extractRecordComponents(params *tree_sitter.Node, source []byte) []Field {
 	var fields []Field
 
@@ -123,6 +123,7 @@ func extractRecordComponents(params *tree_sitter.Node, source []byte) []Field {
 			Type:        param.Type,
 			Annotations: param.Annotations,
 			JavaDoc:     param.JavaDoc,
+			IsFinal:     true,
 		})
 	}
 
@@ -450,6 +451,10 @@ func extractField(node *tree_sitter.Node, source []byte) *Field {
 					break
 				}
 			}
+			// The grammar carries the `= value` part as the declarator's
+			// `value` field (an expression or array_initializer), so initializer
+			// presence is read off that label rather than a node kind.
+			field.HasInitializer = child.ChildByFieldName("value") != nil
 		}
 	}
 

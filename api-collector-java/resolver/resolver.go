@@ -311,7 +311,12 @@ func (r *TypeResolver) Resolve(rawType string, typeBindings map[string]string) *
 
 		fields := make(map[string]*model.FieldModel, len(class.Fields))
 		for _, f := range class.Fields {
-			if f.IsStatic || f.IsFinal {
+			// Static fields never belong to a serialized instance, so they are
+			// skipped — that also covers static final constants. Instance final
+			// fields are ordinary data: immutable DTOs and Lombok @Value classes
+			// declare every field final, and dropping them here silently
+			// exported empty bodies.
+			if f.IsStatic {
 				continue
 			}
 			fm := r.resolveField(f, localBindings, typeParamSet)
