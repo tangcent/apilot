@@ -234,6 +234,10 @@ func extractAllClasses(tree *tree_sitter.Tree, source []byte) ([]Class, error) {
 			iface := extractInterface(node, source)
 			iface.Package = packageName
 			classes = append(classes, iface)
+		case "record_declaration":
+			rec := extractRecord(node, source)
+			rec.Package = packageName
+			classes = append(classes, rec)
 		}
 	}, 0)
 

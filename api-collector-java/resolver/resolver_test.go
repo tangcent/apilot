@@ -217,6 +217,103 @@ func TestResolve_GenericClass(t *testing.T) {
 	}
 }
 
+func TestResolve_SimpleRecord(t *testing.T) {
+	classes := []parser.Class{
+		{
+			Name: "CreateUserRequest",
+			Fields: []parser.Field{
+				{Name: "name", Type: "String"},
+				{Name: "email", Type: "String"},
+				{Name: "age", Type: "int"},
+			},
+		},
+	}
+
+	r := NewTypeResolver(classes)
+	result := r.Resolve("CreateUserRequest", nil)
+
+	if result.Kind != model.KindObject {
+		t.Fatalf("Expected KindObject, got %s", result.Kind)
+	}
+	if result.TypeName != "CreateUserRequest" {
+		t.Errorf("Expected typeName 'CreateUserRequest', got '%s'", result.TypeName)
+	}
+	if len(result.Fields) != 3 {
+		t.Fatalf("Expected 3 fields, got %d", len(result.Fields))
+	}
+
+	nameField := result.Fields["name"]
+	if nameField == nil {
+		t.Fatal("Expected 'name' field")
+	}
+	if nameField.Model.TypeName != model.JsonTypeString {
+		t.Errorf("Expected name type 'string', got '%s'", nameField.Model.TypeName)
+	}
+
+	ageField := result.Fields["age"]
+	if ageField == nil {
+		t.Fatal("Expected 'age' field")
+	}
+	if ageField.Model.TypeName != model.JsonTypeInt {
+		t.Errorf("Expected age type 'int', got '%s'", ageField.Model.TypeName)
+	}
+}
+
+func TestResolve_GenericClassRecord(t *testing.T) {
+	classes := []parser.Class{
+		{
+			Name:           "PageResponse",
+			TypeParameters: []string{"T"},
+			Fields: []parser.Field{
+				{Name: "items", Type: "List<T>"},
+				{Name: "total", Type: "int"},
+			},
+		},
+		{
+			Name: "Order",
+			Fields: []parser.Field{
+				{Name: "id", Type: "Long"},
+				{Name: "amount", Type: "double"},
+			},
+		},
+	}
+
+	r := NewTypeResolver(classes)
+	result := r.Resolve("PageResponse<Order>", nil)
+
+	if result.Kind != model.KindObject {
+		t.Fatalf("Expected KindObject, got %s", result.Kind)
+	}
+	if len(result.Fields) != 2 {
+		t.Fatalf("Expected 2 fields, got %d", len(result.Fields))
+	}
+
+	itemsField := result.Fields["items"]
+	if itemsField == nil {
+		t.Fatal("Expected 'items' field")
+	}
+	if itemsField.Model.Kind != model.KindArray {
+		t.Fatalf("Expected items KindArray, got %s", itemsField.Model.Kind)
+	}
+	if itemsField.Model.Items == nil || itemsField.Model.Items.Kind != model.KindObject {
+		t.Fatal("Expected items element KindObject")
+	}
+	if itemsField.Model.Items.TypeName != "Order" {
+		t.Errorf("Expected items element typeName 'Order', got '%s'", itemsField.Model.Items.TypeName)
+	}
+	if len(itemsField.Model.Items.Fields) != 2 {
+		t.Errorf("Expected 2 fields on items element, got %d", len(itemsField.Model.Items.Fields))
+	}
+
+	totalField := result.Fields["total"]
+	if totalField == nil {
+		t.Fatal("Expected 'total' field")
+	}
+	if totalField.Model.TypeName != model.JsonTypeInt {
+		t.Errorf("Expected total type 'int', got '%s'", totalField.Model.TypeName)
+	}
+}
+
 func TestResolve_CollectionTypes(t *testing.T) {
 	classes := []parser.Class{
 		{

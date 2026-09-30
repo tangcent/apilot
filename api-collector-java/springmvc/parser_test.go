@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/tangcent/apilot/api-collector-java/parser"
+	model "github.com/tangcent/apilot/api-model"
 )
 
 func TestParser_ExtractControllers(t *testing.T) {
@@ -150,6 +151,71 @@ func TestParser_ExtractControllers(t *testing.T) {
 	}
 	if createUser.Parameters[0].ParamType != "body" {
 		t.Errorf("Expected param type 'body', got '%s'", createUser.Parameters[0].ParamType)
+	}
+}
+
+// TestParser_RecordRequestBody verifies the acceptance case for record DTOs:
+// a record bound as @RequestBody exports its components as body fields.
+func TestParser_RecordRequestBody(t *testing.T) {
+	p := NewParser()
+
+	jp, err := parser.NewParser(parser.ParserOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create java parser: %v", err)
+	}
+	defer jp.Close()
+
+	source := []byte(`package com.example.api;
+
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class UserRecordController {
+
+    @PostMapping("/api/users")
+    public CreateUserRequest createUser(@RequestBody CreateUserRequest request) {
+        return request;
+    }
+}
+
+record CreateUserRequest(String name, String email, int age) {}
+`)
+
+	classes, err := jp.ParseSource(source)
+	if err != nil {
+		t.Fatalf("Failed to parse source: %v", err)
+	}
+
+	controllers := p.ExtractControllers([]parser.ParseResult{
+		{FilePath: "UserRecordController.java", Classes: classes},
+	})
+
+	if len(controllers) != 1 {
+		t.Fatalf("Expected 1 controller, got %d", len(controllers))
+	}
+	if len(controllers[0].Endpoints) != 1 {
+		t.Fatalf("Expected 1 endpoint, got %d", len(controllers[0].Endpoints))
+	}
+
+	schema := controllers[0].Endpoints[0].RequestBodySchema
+	if schema == nil {
+		t.Fatal("Expected request body schema")
+	}
+	if schema.Kind != model.KindObject {
+		t.Fatalf("Expected KindObject, got %s", schema.Kind)
+	}
+	if schema.TypeName != "CreateUserRequest" {
+		t.Errorf("Expected typeName 'CreateUserRequest', got '%s'", schema.TypeName)
+	}
+	for _, fieldName := range []string{"name", "email", "age"} {
+		if schema.Fields[fieldName] == nil {
+			t.Errorf("Expected body field '%s'", fieldName)
+		}
+	}
+	if len(schema.Fields) != 3 {
+		t.Errorf("Expected 3 body fields, got %d", len(schema.Fields))
 	}
 }
 
