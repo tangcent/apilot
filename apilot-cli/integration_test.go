@@ -86,6 +86,12 @@ func runCLIWithExitCode(args ...string) (string, int) {
 // mixing them into a golden comparison would make the baseline depend on
 // log settings rather than on the exported API description.
 func runCLIOnStdout(args ...string) (string, int) {
+	stdout, _, exitCode := runCLISeparate(args...)
+	return stdout, exitCode
+}
+
+// runCLISeparate runs the CLI and returns stdout and stderr separately.
+func runCLISeparate(args ...string) (string, string, int) {
 	cmd := exec.Command(binaryPath, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -99,7 +105,7 @@ func runCLIOnStdout(args ...string) (string, int) {
 			exitCode = 1
 		}
 	}
-	return stdout.String(), exitCode
+	return stdout.String(), stderr.String(), exitCode
 }
 
 func testdataProject() string {
@@ -204,6 +210,10 @@ func TestHelpOutput(t *testing.T) {
 
 	if !strings.Contains(output, "--formatter") {
 		t.Error("help output should contain --formatter flag")
+	}
+
+	if !strings.Contains(output, "--no-deps") {
+		t.Error("help output should contain --no-deps flag")
 	}
 
 	if !strings.Contains(output, "Registered collectors:") {
@@ -464,6 +474,28 @@ func TestGoProjectExportedContent(t *testing.T) {
 				t.Errorf("%s: response body is missing field %q: %s", name, field, r.Response[0].Body)
 			}
 		}
+	}
+}
+
+// TestNoDepsFlag verifies the escape hatch: with --no-deps the export is
+// byte-identical to the golden baseline (dependency resolution never changes
+// endpoint discovery), while stderr confirms the capability was turned off.
+func TestNoDepsFlag(t *testing.T) {
+	stdout, stderr, exitCode := runCLISeparate(testdataProject(), "--collector", "go", "--formatter", "markdown", "--no-deps")
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr: %s", exitCode, stderr)
+	}
+
+	baseline, err := os.ReadFile(goldenFile("markdown"))
+	if err != nil {
+		t.Fatalf("failed to read golden file: %v", err)
+	}
+	if got, want := normalizeNewlines(stdout), normalizeNewlines(string(baseline)); got != want {
+		t.Errorf("--no-deps output does not match golden file.\n\n%s", diffLines(want, got))
+	}
+
+	if !strings.Contains(stderr, "dependency type resolution disabled (--no-deps)") {
+		t.Errorf("stderr should confirm dependency resolution was disabled, got %q", stderr)
 	}
 }
 

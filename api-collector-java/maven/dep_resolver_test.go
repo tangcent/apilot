@@ -66,20 +66,21 @@ func TestExtractSourceFromMarkdown(t *testing.T) {
 }
 
 func TestMavenDependencyResolver_New(t *testing.T) {
+	// Construction does not require the CLI: availability gating lives in the
+	// collectors, which report a tool-missing outcome. Without the CLI the
+	// resolver simply records misses.
 	resolver, err := NewMavenDependencyResolver()
-	if isCLIAvailable() {
-		if err != nil {
-			t.Errorf("Expected no error when CLI available, got: %v", err)
-		}
-		if resolver == nil {
-			t.Error("Expected non-nil resolver when CLI available")
-		}
-		if resolver != nil {
-			resolver.Close()
-		}
-	} else {
-		if err == nil {
-			t.Error("Expected error when CLI unavailable")
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+	if resolver == nil {
+		t.Fatal("Expected non-nil resolver")
+	}
+	defer resolver.Close()
+
+	if !isCLIAvailable() {
+		if resolver.ResolveClass("java.lang.String") != nil {
+			t.Error("Expected nil class when CLI unavailable")
 		}
 	}
 }

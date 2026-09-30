@@ -22,3 +22,9 @@ func (r *NodeDependencyResolver) DetectDependencies(sourceDir string) ([]collect
 func (r *NodeDependencyResolver) ResolveType(typeName string) *collector.ResolvedType {
 	return r.delegate.ResolveType(typeName)
 }
+
+// ResolvedCount reports how many distinct requested types were answered from
+// dependency declarations so far.
+func (r *NodeDependencyResolver) ResolvedCount() int {
+	return r.delegate.ResolvedCount()
+}

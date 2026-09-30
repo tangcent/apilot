@@ -24,6 +24,13 @@ func NewFlaskTypeResolver(pydanticModels map[string]fastapi.PydanticModel, marsh
 	}
 }
 
+// SetDependencyResolver attaches an optional resolver that expands type names
+// found in pip dependency packages. It is forwarded to the wrapped FastAPI
+// resolver, which resolves the Pydantic half of the type space.
+func (r *FlaskTypeResolver) SetDependencyResolver(dr collector.DependencyResolver) {
+	r.pythonResolver.SetDependencyResolver(dr)
+}
+
 // SetUnresolved attaches a shared sink that records type names this resolver
 // could not expand. It is optional; without it Resolve behaves as before.
 // It is forwarded to the wrapped FastAPI resolver, which resolves the

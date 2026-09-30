@@ -20,10 +20,6 @@ type MavenDependencyResolver struct {
 }
 
 func NewMavenDependencyResolver() (*MavenDependencyResolver, error) {
-	if !isCLIAvailable() {
-		return nil, fmt.Errorf("maven-indexer-cli not available")
-	}
-
 	p, err := parser.NewParser(parser.ParserOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create java parser: %w", err)
@@ -40,6 +36,15 @@ func (r *MavenDependencyResolver) Close() {
 	if r.parser != nil {
 		r.parser.Close()
 	}
+}
+
+// ResolvedCount reports how many distinct classes have been resolved from
+// dependencies so far. It is read after Collect finishes, once all parsers
+// are done querying.
+func (r *MavenDependencyResolver) ResolvedCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.cache)
 }
 
 func (r *MavenDependencyResolver) ResolveClass(className string) *parser.Class {

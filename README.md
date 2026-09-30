@@ -153,6 +153,7 @@ Flags:
   --format         string   Format variant, e.g. simple, detailed (default: simple)
   --method         string   Filter to a specific method name (used with file-level export)
   --project-root   string   Override auto-detected project root directory
+  --no-deps                 Disable resolving request/response types from dependencies
   --output         string   Output file path (default: stdout)
   --list-collectors         Print available collectors and exit
   --list-formatters         Print available formatters and exit
@@ -178,6 +179,29 @@ apilot export UserController.java --method getUser --formatter curl
 
 # Multi-module project: override project root
 apilot export user-service/src/.../UserController.java --project-root ./company-platform
+```
+
+### Dependency type resolution
+
+Beyond the project's own sources, APilot expands request and response types
+that are declared in your dependencies — a shared common module, a third-party
+library, a framework base class. Each language reaches those types through its
+own environment:
+
+| Language | Prerequisite | What happens without it |
+|----------|--------------|--------------------------|
+| Java     | [`maven-indexer-cli`](https://github.com/tangcent/maven-indexer-cli) on PATH | Resolution is skipped; a warning names the tool and the number of declared dependencies affected |
+| Go       | `go` toolchain on PATH (reads the module cache) | Resolution is skipped; a warning names the missing toolchain |
+| Node.js  | `npm install` run (reads `node_modules`) | Resolution is skipped; a warning says to install first |
+| Python   | A discoverable environment: project `.venv`/`venv`/`env`, `CONDA_PREFIX`, or `python` on PATH | Resolution is skipped; a warning says which environment to activate |
+
+When resolution runs, APilot reports how many types were expanded from
+dependencies (`info: resolved N types from dependencies`). Use `--no-deps` to
+turn the capability off explicitly — useful in CI where the prerequisite is
+known to be absent.
+
+```bash
+apilot export ./backend --formatter markdown --no-deps
 ```
 
 ### Three levels of granularity

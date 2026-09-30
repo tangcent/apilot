@@ -17,12 +17,13 @@ import (
 )
 
 func Parse(sourceDir string) ([]collector.ApiEndpoint, error) {
-	return ParseWithUnresolved(sourceDir, nil)
+	return ParseWithUnresolved(sourceDir, nil, nil)
 }
 
-// ParseWithUnresolved is Parse plus an optional sink that records type names the
-// resolver could not expand. unresolved may be nil.
-func ParseWithUnresolved(sourceDir string, unresolved *collector.UnresolvedSet) ([]collector.ApiEndpoint, error) {
+// ParseWithUnresolved is Parse plus an optional dependency resolver that
+// expands types declared by pip dependencies, and an optional sink that
+// records type names the resolver could not expand. Both may be nil.
+func ParseWithUnresolved(sourceDir string, depResolver collector.DependencyResolver, unresolved *collector.UnresolvedSet) ([]collector.ApiEndpoint, error) {
 	pyFiles, err := discoverPythonFiles(sourceDir)
 	if err != nil || len(pyFiles) == 0 {
 		return nil, nil
@@ -67,6 +68,7 @@ func ParseWithUnresolved(sourceDir string, unresolved *collector.UnresolvedSet) 
 	}
 
 	typeResolver := NewFlaskTypeResolver(allPydanticModels, allMarshmallowSchemas)
+	typeResolver.SetDependencyResolver(depResolver)
 	typeResolver.SetUnresolved(unresolved)
 
 	var allEndpoints []collector.ApiEndpoint

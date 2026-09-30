@@ -28,6 +28,11 @@ type CollectContext struct {
 	// Frameworks is an optional list of framework hints (e.g. ["spring-mvc", "feign"]).
 	Frameworks []string `json:"frameworks,omitempty"`
 
+	// NoDeps disables dependency-based type resolution for this collection.
+	// Collectors skip external tooling and dependency artifacts entirely and
+	// report DependencyResolutionDisabled.
+	NoDeps bool `json:"noDeps,omitempty"`
+
 	// Config holds collector-specific key-value configuration.
 	Config map[string]string `json:"config,omitempty"`
 }

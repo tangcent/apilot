@@ -4,6 +4,9 @@ package gocollector
 
 import (
 	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sync"
 
 	"github.com/tangcent/apilot/api-collector"
@@ -17,6 +20,20 @@ type GoCollector struct {
 	dependencyResolver collector.DependencyResolver
 	mu                 sync.Mutex
 	unresolved         map[string]int
+	depResolution      collector.DependencyResolution
+}
+
+// goOnPath reports whether the go toolchain is available. It is a variable so
+// tests can force the tool-missing branch without uninstalling Go.
+var goOnPath = func() bool {
+	_, err := exec.LookPath("go")
+	return err == nil
+}
+
+// resolvedCounter is implemented by dependency resolvers that can report how
+// many distinct types they expanded.
+type resolvedCounter interface {
+	ResolvedCount() int
 }
 
 func New() collector.Collector { return &GoCollector{} }
@@ -41,6 +58,14 @@ func (c *GoCollector) Unresolved() map[string]int {
 	return out
 }
 
+// DependencyResolution reports whether dependency-based type resolution ran
+// during the last Collect call, and why not when it did not.
+func (c *GoCollector) DependencyResolution() collector.DependencyResolution {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.depResolution
+}
+
 // Collect walks the source directory and extracts endpoints from Gin, Echo,
 // and Fiber route registrations.
 //
@@ -55,12 +80,7 @@ func (c *GoCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEndp
 		framework string
 	}
 
-	var depResolver collector.DependencyResolver
-	if c.dependencyResolver != nil {
-		depResolver = c.dependencyResolver
-	} else {
-		depResolver = NewGoDependencyResolver(ctx.SourceDir)
-	}
+	depResolution, depResolver := c.setupDependencyResolution(ctx)
 
 	// Shared across framework parsers: a type may be referenced by handlers
 	// written for more than one framework.
@@ -103,6 +123,10 @@ func (c *GoCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEndp
 
 	c.mu.Lock()
 	c.unresolved = unresolved.Counts()
+	if rc, ok := depResolver.(resolvedCounter); ok {
+		depResolution.ResolvedTypes = rc.ResolvedCount()
+	}
+	c.depResolution = depResolution
 	c.mu.Unlock()
 
 	if len(all) == 0 {
@@ -110,4 +134,35 @@ func (c *GoCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEndp
 	}
 
 	return all, nil
+}
+
+// setupDependencyResolution decides whether dependency-based type resolution
+// runs for this Collect call, and why not when it does not.
+//
+// Types outside the project come from the Go module cache, which only the go
+// toolchain can locate; a go.mod is the marker that the project has module
+// dependencies at all.
+func (c *GoCollector) setupDependencyResolution(ctx collector.CollectContext) (collector.DependencyResolution, collector.DependencyResolver) {
+	if ctx.NoDeps {
+		return collector.DependencyResolution{State: collector.DependencyResolutionDisabled}, nil
+	}
+
+	if c.dependencyResolver != nil {
+		// Wired by a host application; its availability is the host's concern.
+		return collector.DependencyResolution{State: collector.DependencyResolutionActive}, c.dependencyResolver
+	}
+
+	if _, err := os.Stat(filepath.Join(ctx.SourceDir, "go.mod")); err != nil {
+		return collector.DependencyResolution{State: collector.DependencyResolutionNoDeps}, nil
+	}
+
+	if !goOnPath() {
+		return collector.DependencyResolution{
+			State: collector.DependencyResolutionToolMissing,
+			Detail: "go toolchain not found on PATH — request and response types from module dependencies cannot be resolved. " +
+				"Install Go (https://go.dev/dl/) and make sure go is on PATH",
+		}, nil
+	}
+
+	return collector.DependencyResolution{State: collector.DependencyResolutionActive}, NewGoDependencyResolver(ctx.SourceDir)
 }

@@ -42,8 +42,11 @@ Scan source code and export API endpoints.
 - `--format <variant>` — Format variant: `simple`, `detailed` (default: `simple`)
 - `--method <name>` — Filter to a specific method name (used with file-level export)
 - `--project-root <path>` — Override auto-detected project root directory
+- `--no-deps` — Disable resolving request/response types from dependencies
 - `--params <json>` — Formatter-specific params as JSON
 - `--output <path>` — Output file path (default: stdout)
+
+**Dependency type resolution:** request and response types declared in dependencies (shared modules, third-party libraries) are resolved when the language's prerequisite is present: `maven-indexer-cli` on PATH for Java, the `go` toolchain for Go, `npm install` having run for Node.js, and a discoverable Python environment (project venv, `CONDA_PREFIX`, or `python` on PATH) for Python. When a prerequisite is missing, stderr carries a warning naming it; when resolution runs, stderr reports how many types it expanded. Pass `--no-deps` to skip the capability explicitly.
 
 **Examples:**
 

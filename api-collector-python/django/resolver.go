@@ -10,6 +10,7 @@ import (
 type DRFTypeResolver struct {
 	serializerRegistry map[string]SerializerModel
 	resolving          map[string]bool
+	dependencyResolver collector.DependencyResolver
 	unresolved         *collector.UnresolvedSet
 }
 
@@ -18,6 +19,12 @@ func NewDRFTypeResolver(serializers map[string]SerializerModel) *DRFTypeResolver
 		serializerRegistry: serializers,
 		resolving:          make(map[string]bool),
 	}
+}
+
+// SetDependencyResolver attaches an optional resolver that expands serializer
+// names found in pip dependency packages.
+func (r *DRFTypeResolver) SetDependencyResolver(dr collector.DependencyResolver) {
+	r.dependencyResolver = dr
 }
 
 // SetUnresolved attaches a shared sink that records type names this resolver
@@ -41,6 +48,12 @@ func (r *DRFTypeResolver) recordUnresolved(typeName string) {
 func (r *DRFTypeResolver) ResolveSerializer(serializerName string) *model.ObjectModel {
 	md, found := r.serializerRegistry[serializerName]
 	if !found {
+		if r.dependencyResolver != nil {
+			if rt := r.dependencyResolver.ResolveType(serializerName); rt != nil {
+				r.serializerRegistry[serializerName] = resolvedTypeToSerializer(rt)
+				return r.ResolveSerializer(serializerName)
+			}
+		}
 		r.recordUnresolved(serializerName)
 		return model.SingleModel(serializerName)
 	}
@@ -90,6 +103,23 @@ func (r *DRFTypeResolver) resolveSerializerField(f SerializerField) *model.Field
 		Model:    fieldModel,
 		Required: f.Required && !f.ReadOnly,
 	}
+}
+
+// resolvedTypeToSerializer converts a dependency-resolved type into a DRF
+// serializer model so it can re-enter ResolveSerializer as if parsed locally.
+func resolvedTypeToSerializer(rt *collector.ResolvedType) SerializerModel {
+	md := SerializerModel{
+		Name:          rt.Name,
+		EmbeddedTypes: rt.Interfaces,
+	}
+	for _, f := range rt.Fields {
+		md.Fields = append(md.Fields, SerializerField{
+			Name:     f.Name,
+			DRFType:  f.Type,
+			Required: f.Required,
+		})
+	}
+	return md
 }
 
 func (r *DRFTypeResolver) resolveDRFFieldType(drfType string) *model.ObjectModel {

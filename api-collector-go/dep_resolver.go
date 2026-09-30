@@ -32,6 +32,15 @@ func NewGoDependencyResolver(sourceDir string) *GoDependencyResolver {
 	}
 }
 
+// ResolvedCount reports how many distinct types have been resolved from the
+// module cache so far. It is read after Collect finishes, once all framework
+// parsers are done querying.
+func (r *GoDependencyResolver) ResolvedCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.cache)
+}
+
 func (r *GoDependencyResolver) DetectDependencies(sourceDir string) ([]collector.Dependency, error) {
 	return detectGoDependencies(sourceDir)
 }

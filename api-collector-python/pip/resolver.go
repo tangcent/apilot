@@ -21,15 +21,29 @@ type PipTypeResolver struct {
 	deps       []string
 	loadedPkgs map[string]bool
 	depsParsed bool
+	// resolvedFromDeps records the distinct type names that were requested and
+	// successfully answered from dependency packages, as opposed to the cache,
+	// which preloads every model of every dependency.
+	resolvedFromDeps map[string]bool
 }
 
 func NewPipTypeResolver(sourceDir string) *PipTypeResolver {
 	return &PipTypeResolver{
-		sourceDir:  sourceDir,
-		cache:      make(map[string]*collector.ResolvedType),
-		misses:     make(map[string]bool),
-		loadedPkgs: make(map[string]bool),
+		sourceDir:        sourceDir,
+		cache:            make(map[string]*collector.ResolvedType),
+		misses:           make(map[string]bool),
+		loadedPkgs:       make(map[string]bool),
+		resolvedFromDeps: make(map[string]bool),
 	}
+}
+
+// ResolvedCount reports how many distinct requested types were answered from
+// dependency packages so far. It is read after Collect finishes, once all
+// framework parsers are done querying.
+func (r *PipTypeResolver) ResolvedCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.resolvedFromDeps)
 }
 
 func (r *PipTypeResolver) DetectDependencies(sourceDir string) ([]collector.Dependency, error) {
@@ -41,6 +55,7 @@ func (r *PipTypeResolver) ResolveType(typeName string) *collector.ResolvedType {
 	defer r.mu.Unlock()
 
 	if cached, ok := r.cache[typeName]; ok {
+		r.resolvedFromDeps[typeName] = true
 		return cached
 	}
 
@@ -56,6 +71,7 @@ func (r *PipTypeResolver) ResolveType(typeName string) *collector.ResolvedType {
 	r.loadAllDependencyTypes()
 
 	if rt, ok := r.cache[typeName]; ok {
+		r.resolvedFromDeps[typeName] = true
 		return rt
 	}
 
@@ -456,6 +472,17 @@ func FindSitePackages(sourceDir string) (string, error) {
 	return findSystemSitePackages()
 }
 
+// HasDependencyManifest reports whether sourceDir declares pip-installable
+// dependencies via requirements.txt, pyproject.toml, or a Pipfile.
+func HasDependencyManifest(sourceDir string) bool {
+	for _, f := range []string{"requirements.txt", "pyproject.toml", "Pipfile"} {
+		if _, err := os.Stat(filepath.Join(sourceDir, f)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func findVenvSitePackages(sourceDir string) string {
 	venvDirs := []string{
 		filepath.Join(sourceDir, ".venv"),
@@ -508,6 +535,9 @@ func findCondaSitePackages() string {
 
 func findSystemSitePackages() (string, error) {
 	for _, cmdName := range []string{"python3", "python"} {
+		if _, err := exec.LookPath(cmdName); err != nil {
+			continue
+		}
 		cmd := exec.Command(cmdName, "-c", "import site; print(site.getsitepackages()[0])")
 		output, err := cmd.Output()
 		if err != nil {
@@ -518,7 +548,10 @@ func findSystemSitePackages() (string, error) {
 			return dir, nil
 		}
 	}
-	return "", fmt.Errorf("failed to find site-packages directory")
+	return "", fmt.Errorf(
+		"no Python environment found: the project has no .venv/venv/env directory, CONDA_PREFIX is unset, " +
+			"and no python interpreter is on PATH — request and response types from dependencies cannot be resolved. " +
+			"Activate the project's virtualenv or install its dependencies first")
 }
 
 func FindPackageDir(sitePackagesDir string, pkgName string) string {
