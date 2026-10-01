@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -212,6 +213,94 @@ func TestParser_ParseDirectoryParallel(t *testing.T) {
 	if len(parallel) != len(sequential) {
 		t.Errorf("Parallel returned %d results, sequential returned %d",
 			len(parallel), len(sequential))
+	}
+}
+
+func TestParser_ParseDirectory_KotlinOnly(t *testing.T) {
+	p, err := NewParser(ParserOptions{LogLevel: LogLevelError})
+	if err != nil {
+		t.Fatalf("Failed to create parser: %v", err)
+	}
+	defer p.Close()
+
+	dir := t.TempDir()
+	for _, name := range []string{"User.kt", "OrderService.kt"} {
+		if writeErr := os.WriteFile(filepath.Join(dir, name), []byte("class Placeholder"), 0644); writeErr != nil {
+			t.Fatalf("Failed to write %s: %v", name, writeErr)
+		}
+	}
+
+	_, err = p.ParseDirectory(dir)
+	var ko *KotlinOnlyError
+	if !errors.As(err, &ko) {
+		t.Fatalf("Expected KotlinOnlyError, got %v", err)
+	}
+	if ko.KotlinFiles != 2 {
+		t.Errorf("KotlinFiles = %d, want 2", ko.KotlinFiles)
+	}
+}
+
+func TestParser_ParseDirectoryParallel_KotlinOnly(t *testing.T) {
+	p, err := NewParser(ParserOptions{LogLevel: LogLevelError})
+	if err != nil {
+		t.Fatalf("Failed to create parser: %v", err)
+	}
+	defer p.Close()
+
+	dir := t.TempDir()
+	if writeErr := os.WriteFile(filepath.Join(dir, "User.kt"), []byte("class Placeholder"), 0644); writeErr != nil {
+		t.Fatalf("Failed to write User.kt: %v", writeErr)
+	}
+
+	_, err = p.ParseDirectoryParallel(dir, 2)
+	var ko *KotlinOnlyError
+	if !errors.As(err, &ko) {
+		t.Fatalf("Expected KotlinOnlyError, got %v", err)
+	}
+}
+
+func TestParser_ParseDirectory_MixedJavaAndKotlin(t *testing.T) {
+	p, err := NewParser(ParserOptions{LogLevel: LogLevelError})
+	if err != nil {
+		t.Fatalf("Failed to create parser: %v", err)
+	}
+	defer p.Close()
+
+	// Java sources present: the .kt file is skipped without error, since the
+	// loud failure is reserved for projects with no Java sources at all.
+	dir := t.TempDir()
+	if writeErr := os.WriteFile(filepath.Join(dir, "User.kt"), []byte("class Placeholder"), 0644); writeErr != nil {
+		t.Fatalf("Failed to write User.kt: %v", writeErr)
+	}
+	java := "public class UserController {}"
+	if writeErr := os.WriteFile(filepath.Join(dir, "UserController.java"), []byte(java), 0644); writeErr != nil {
+		t.Fatalf("Failed to write UserController.java: %v", writeErr)
+	}
+
+	results, err := p.ParseDirectory(dir)
+	if err != nil {
+		t.Fatalf("Expected mixed Java/Kotlin directory to parse, got %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("Expected 1 parse result (the Java file), got %d", len(results))
+	}
+}
+
+func TestParser_ParseDirectory_NoSources(t *testing.T) {
+	p, err := NewParser(ParserOptions{LogLevel: LogLevelError})
+	if err != nil {
+		t.Fatalf("Failed to create parser: %v", err)
+	}
+	defer p.Close()
+
+	// A directory with no sources at all keeps its previous behavior: empty
+	// results, no error. Only Kotlin presence turns the empty result loud.
+	results, err := p.ParseDirectory(t.TempDir())
+	if err != nil {
+		t.Fatalf("Expected empty directory to parse without error, got %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("Expected 0 parse results, got %d", len(results))
 	}
 }
 
