@@ -33,6 +33,10 @@ type Field struct {
 	JavaDoc     string
 	IsStatic    bool
 	IsFinal     bool
+	// HasInitializer reports whether the declaration carries an `= value`
+	// part. A static final field with one is a compile-time constant — the
+	// distinction between a constant and an instance-final piece of data.
+	HasInitializer bool
 }
 
 // Class represents a Java class or interface with annotations and methods.

@@ -222,9 +222,9 @@ func TestResolve_SimpleRecord(t *testing.T) {
 		{
 			Name: "CreateUserRequest",
 			Fields: []parser.Field{
-				{Name: "name", Type: "String"},
-				{Name: "email", Type: "String"},
-				{Name: "age", Type: "int"},
+				{Name: "name", Type: "String", IsFinal: true},
+				{Name: "email", Type: "String", IsFinal: true},
+				{Name: "age", Type: "int", IsFinal: true},
 			},
 		},
 	}
@@ -259,14 +259,59 @@ func TestResolve_SimpleRecord(t *testing.T) {
 	}
 }
 
+func TestResolve_ImmutableFinalFields(t *testing.T) {
+	// Lombok @Value and hand-written immutable DTOs declare every instance
+	// field final; only statics (constants included) may be dropped.
+	classes := []parser.Class{
+		{
+			Name: "ImmutableProduct",
+			Fields: []parser.Field{
+				{Name: "TYPE", Type: "String", IsStatic: true, IsFinal: true, HasInitializer: true},
+				{Name: "sku", Type: "String", IsFinal: true},
+				{Name: "price", Type: "BigDecimal", IsFinal: true},
+			},
+		},
+	}
+
+	r := NewTypeResolver(classes)
+	result := r.Resolve("ImmutableProduct", nil)
+
+	if result.Kind != model.KindObject {
+		t.Fatalf("Expected KindObject, got %s", result.Kind)
+	}
+	if len(result.Fields) != 2 {
+		t.Fatalf("Expected 2 exported fields, got %d: %v", len(result.Fields), result.Fields)
+	}
+
+	if _, ok := result.Fields["TYPE"]; ok {
+		t.Error("Expected static final constant 'TYPE' to stay excluded")
+	}
+
+	sku := result.Fields["sku"]
+	if sku == nil {
+		t.Fatal("Expected final instance field 'sku' to be exported")
+	}
+	if sku.Model.TypeName != model.JsonTypeString {
+		t.Errorf("Expected sku type 'string', got '%s'", sku.Model.TypeName)
+	}
+
+	price := result.Fields["price"]
+	if price == nil {
+		t.Fatal("Expected final instance field 'price' to be exported")
+	}
+	if price.Model.TypeName != model.JsonTypeDouble {
+		t.Errorf("Expected price type 'double' (BigDecimal), got '%s'", price.Model.TypeName)
+	}
+}
+
 func TestResolve_GenericClassRecord(t *testing.T) {
 	classes := []parser.Class{
 		{
 			Name:           "PageResponse",
 			TypeParameters: []string{"T"},
 			Fields: []parser.Field{
-				{Name: "items", Type: "List<T>"},
-				{Name: "total", Type: "int"},
+				{Name: "items", Type: "List<T>", IsFinal: true},
+				{Name: "total", Type: "int", IsFinal: true},
 			},
 		},
 		{

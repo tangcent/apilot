@@ -2,6 +2,8 @@ package maven
 
 import (
 	"testing"
+
+	"github.com/tangcent/apilot/api-collector-java/parser"
 )
 
 func TestExtractSourceFromMarkdown(t *testing.T) {
@@ -81,6 +83,44 @@ func TestMavenDependencyResolver_New(t *testing.T) {
 	if !isCLIAvailable() {
 		if resolver.ResolveClass("java.lang.String") != nil {
 			t.Error("Expected nil class when CLI unavailable")
+		}
+	}
+}
+
+func TestMavenDependencyResolver_ResolveTypeFieldFiltering(t *testing.T) {
+	// Dependency classes go through the same static/final rules as workspace
+	// classes: statics are dropped, final instance fields (immutable DTOs,
+	// Lombok @Value) are kept.
+	r := &MavenDependencyResolver{cache: map[string]*parser.Class{
+		"com.example.lib.ImmutableProduct": {
+			Name: "com.example.lib.ImmutableProduct",
+			Fields: []parser.Field{
+				{Name: "TYPE", Type: "String", IsStatic: true, IsFinal: true, HasInitializer: true},
+				{Name: "sku", Type: "String", IsFinal: true},
+				{Name: "price", Type: "long", IsFinal: true},
+				{Name: "memo", Type: "String"},
+			},
+		},
+	}}
+
+	rt := r.ResolveType("com.example.lib.ImmutableProduct")
+	if rt == nil {
+		t.Fatal("Expected resolved type")
+	}
+	if len(rt.Fields) != 3 {
+		t.Fatalf("Expected 3 fields, got %d: %#v", len(rt.Fields), rt.Fields)
+	}
+
+	names := make(map[string]bool, len(rt.Fields))
+	for _, f := range rt.Fields {
+		names[f.Name] = true
+	}
+	if names["TYPE"] {
+		t.Error("Expected static final constant 'TYPE' to stay excluded")
+	}
+	for _, want := range []string{"sku", "price", "memo"} {
+		if !names[want] {
+			t.Errorf("Expected field '%s' to be kept", want)
 		}
 	}
 }

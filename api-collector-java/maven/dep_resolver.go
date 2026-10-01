@@ -154,7 +154,9 @@ func (r *MavenDependencyResolver) ResolveType(typeName string) *collector.Resolv
 	}
 
 	for _, f := range class.Fields {
-		if f.IsStatic || f.IsFinal {
+		// Statics (including static final constants) are not serialized; final
+		// instance fields are, and immutable DTOs (Lombok @Value) are all-final.
+		if f.IsStatic {
 			continue
 		}
 		required := true
