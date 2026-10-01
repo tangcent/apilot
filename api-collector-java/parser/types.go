@@ -1,4 +1,4 @@
-// Package parser provides Tree-sitter based Java/Kotlin source parsing.
+// Package parser provides Tree-sitter based Java source parsing.
 package parser
 
 // Annotation represents a Java annotation with its name and parameters.

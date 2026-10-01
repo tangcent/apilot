@@ -1,7 +1,9 @@
 package javacollector
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	collector "github.com/tangcent/apilot/api-collector"
@@ -855,6 +857,54 @@ func TestCollect_Deduplication(t *testing.T) {
 		if count > 1 {
 			t.Errorf("Duplicate endpoint: %s (count=%d)", key, count)
 		}
+	}
+}
+
+func TestSupportedLanguages(t *testing.T) {
+	c := New()
+	langs := c.SupportedLanguages()
+	if len(langs) != 1 || langs[0] != "java" {
+		t.Errorf("SupportedLanguages() = %v, want [java] — Kotlin is not parsed and must not be claimed", langs)
+	}
+}
+
+func TestCollect_KotlinOnlyProject(t *testing.T) {
+	c := New()
+
+	// A Kotlin-only project must fail loudly instead of returning an empty
+	// success (issue #142).
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "UserController.kt"), []byte("class UserController"), 0644); err != nil {
+		t.Fatalf("Failed to write UserController.kt: %v", err)
+	}
+
+	endpoints, err := c.Collect(collector.CollectContext{SourceDir: dir})
+	if err == nil {
+		t.Fatal("Expected error for Kotlin-only project, got nil")
+	}
+	if len(endpoints) != 0 {
+		t.Errorf("Expected no endpoints, got %d", len(endpoints))
+	}
+	if !strings.Contains(err.Error(), "Kotlin") {
+		t.Errorf("Expected error to mention Kotlin, got %q", err.Error())
+	}
+}
+
+func TestCollect_KotlinSourceFile(t *testing.T) {
+	c := New()
+
+	dir := t.TempDir()
+	ktFile := filepath.Join(dir, "UserController.kt")
+	if err := os.WriteFile(ktFile, []byte("class UserController"), 0644); err != nil {
+		t.Fatalf("Failed to write UserController.kt: %v", err)
+	}
+
+	_, err := c.Collect(collector.CollectContext{SourceDir: dir, SourceFile: ktFile})
+	if err == nil {
+		t.Fatal("Expected error for explicit Kotlin source file, got nil")
+	}
+	if !strings.Contains(err.Error(), "Kotlin") {
+		t.Errorf("Expected error to mention Kotlin, got %q", err.Error())
 	}
 }
 

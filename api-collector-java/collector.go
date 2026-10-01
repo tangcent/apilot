@@ -1,9 +1,11 @@
-// Package javacollector implements the Collector interface for Java/Kotlin projects.
+// Package javacollector implements the Collector interface for Java projects.
 // Supported frameworks: Spring MVC, JAX-RS, Feign.
 package javacollector
 
 import (
+	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 
 	collector "github.com/tangcent/apilot/api-collector"
@@ -14,7 +16,7 @@ import (
 	"github.com/tangcent/apilot/api-collector-java/springmvc"
 )
 
-// JavaCollector parses Java/Kotlin source trees for API endpoints.
+// JavaCollector parses Java source trees for API endpoints.
 type JavaCollector struct {
 	mu            sync.Mutex
 	unresolved    map[string]int
@@ -30,7 +32,10 @@ func New() collector.Collector { return &JavaCollector{} }
 
 func (c *JavaCollector) Name() string { return "java" }
 
-func (c *JavaCollector) SupportedLanguages() []string { return []string{"java", "kotlin"} }
+// SupportedLanguages reports only java: Kotlin is not parsed. Claiming it
+// made Kotlin-only projects look like successful collections with zero
+// endpoints (issue #142).
+func (c *JavaCollector) SupportedLanguages() []string { return []string{"java"} }
 
 // Unresolved reports type names the Java type resolver could not expand during
 // the last Collect call, mapped to occurrence counts.
@@ -74,6 +79,9 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 
 	var results []parser.ParseResult
 	if ctx.SourceFile != "" {
+		if filepath.Ext(ctx.SourceFile) == ".kt" {
+			return nil, fmt.Errorf("%s is a Kotlin source file but the java collector only parses Java", ctx.SourceFile)
+		}
 		r, parseErr := p.ParseFile(ctx.SourceFile)
 		if parseErr != nil {
 			return nil, fmt.Errorf("failed to parse file %s: %w", ctx.SourceFile, parseErr)
@@ -87,6 +95,12 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 	} else {
 		results, err = p.ParseDirectory(ctx.SourceDir)
 		if err != nil {
+			// A Kotlin-only project must fail loudly: the Java grammar
+			// cannot parse it, and an empty success would hide the gap.
+			var ko *parser.KotlinOnlyError
+			if errors.As(err, &ko) {
+				return nil, err
+			}
 			return nil, fmt.Errorf("failed to parse directory %s: %w", ctx.SourceDir, err)
 		}
 	}

@@ -1,4 +1,4 @@
-// Package parser provides Tree-sitter based Java/Kotlin source parsing.
+// Package parser provides Tree-sitter based Java source parsing.
 package parser
 
 import (
@@ -114,6 +114,12 @@ func (p *Parser) ParseDirectory(dir string) ([]ParseResult, error) {
 		return nil, err
 	}
 
+	if len(javaFiles) == 0 {
+		if ktErr := checkKotlinOnly(dir); ktErr != nil {
+			return nil, ktErr
+		}
+	}
+
 	p.logger.Info("Found %d Java files", len(javaFiles))
 
 	results := make([]ParseResult, 0, len(javaFiles))
@@ -132,6 +138,12 @@ func (p *Parser) ParseDirectoryParallel(dir string, workers int) ([]ParseResult,
 	javaFiles, err := findJavaFiles(dir)
 	if err != nil {
 		return nil, err
+	}
+
+	if len(javaFiles) == 0 {
+		if ktErr := checkKotlinOnly(dir); ktErr != nil {
+			return nil, ktErr
+		}
 	}
 
 	p.logger.Info("Found %d Java files", len(javaFiles))
@@ -205,6 +217,45 @@ func findJavaFiles(dir string) ([]string, error) {
 		return nil, fmt.Errorf("failed to walk directory: %w", err)
 	}
 	return files, nil
+}
+
+// KotlinOnlyError reports a directory that contains Kotlin sources but no
+// Java sources. The Java grammar cannot parse Kotlin, so an empty result
+// would silently look like a successful collection with zero endpoints.
+type KotlinOnlyError struct {
+	// Dir is the directory that was scanned.
+	Dir string
+	// KotlinFiles is the number of .kt files found under Dir.
+	KotlinFiles int
+}
+
+func (e *KotlinOnlyError) Error() string {
+	return fmt.Sprintf(
+		"no Java sources found under %s: found %d Kotlin file(s) (.kt) but the java collector only parses Java",
+		e.Dir, e.KotlinFiles)
+}
+
+// checkKotlinOnly returns a *KotlinOnlyError when dir contains .kt files.
+// It is called when a directory scan produced no Java files so a Kotlin-only
+// project fails loudly instead of returning an empty success.
+func checkKotlinOnly(dir string) error {
+	var kt int
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && filepath.Ext(path) == ".kt" {
+			kt++
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to walk directory: %w", err)
+	}
+	if kt > 0 {
+		return &KotlinOnlyError{Dir: dir, KotlinFiles: kt}
+	}
+	return nil
 }
 
 // extractAllClasses extracts classes and interfaces from a parsed tree.
