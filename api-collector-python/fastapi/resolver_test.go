@@ -595,3 +595,88 @@ func TestPydanticQualifiedFieldDescriptor(t *testing.T) {
 		t.Errorf("name.Description = %q, want %q", name.Description, "user name")
 	}
 }
+
+func TestPydanticFieldDefaults(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "models.py")
+	src := "from pydantic import BaseModel\n" +
+		"from typing import Optional\n\n" +
+		"class Defaults(BaseModel):\n" +
+		"    note: str = \"plain\"\n" +
+		"    single: str = 'plain'\n" +
+		"    age: int = 18\n" +
+		"    flag: bool = True\n" +
+		"    off: bool = False\n" +
+		"    blank: str\n" +
+		"    nullable: Optional[str] = None\n" +
+		"    unannotated = \"raw\"\n"
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	models, err := ExtractPydanticModelsFromFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults, ok := models["Defaults"]
+	if !ok {
+		t.Fatalf("expected Defaults model, got %v", models)
+	}
+	if len(defaults.Fields) != 8 {
+		t.Fatalf("expected 8 fields, got %d", len(defaults.Fields))
+	}
+
+	byName := make(map[string]PydanticField, len(defaults.Fields))
+	for _, f := range defaults.Fields {
+		byName[f.Name] = f
+	}
+
+	tests := []struct {
+		name     string
+		typ      string
+		required bool
+		def      string
+	}{
+		// tree-sitter reports `note: str = "plain"` as a plain assignment
+		// whose children include the annotation delimiter; the delimiter must
+		// not become the default and the literal must survive it.
+		{"note", "str", false, "plain"},
+		{"single", "str", false, "plain"},
+		{"age", "int", false, "18"},
+		{"flag", "bool", false, "true"},
+		{"off", "bool", false, "false"},
+		{"blank", "str", true, ""},
+		{"nullable", "Optional[str]", false, ""},
+		{"unannotated", "", false, "raw"},
+	}
+
+	for _, tt := range tests {
+		f, ok := byName[tt.name]
+		if !ok {
+			t.Fatalf("expected field %q", tt.name)
+		}
+		if f.Type != tt.typ {
+			t.Errorf("%s.Type = %q, want %q", tt.name, f.Type, tt.typ)
+		}
+		if f.Required != tt.required {
+			t.Errorf("%s.Required = %v, want %v", tt.name, f.Required, tt.required)
+		}
+		if f.Default != tt.def {
+			t.Errorf("%s.Default = %q, want %q", tt.name, f.Default, tt.def)
+		}
+	}
+
+	// The default flows into the exported field model untouched.
+	resolver := NewPythonTypeResolver(models)
+	obj := resolver.Resolve("Defaults")
+	noteFm, ok := obj.Fields["note"]
+	if !ok {
+		t.Fatal("expected exported field 'note'")
+	}
+	if noteFm.DefaultValue != "plain" {
+		t.Errorf("note DefaultValue = %q, want %q", noteFm.DefaultValue, "plain")
+	}
+	if noteFm.Required {
+		t.Error("note should not be required")
+	}
+}

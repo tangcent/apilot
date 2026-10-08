@@ -232,6 +232,7 @@ func extractFieldFromAssignment(node *tree_sitter.Node, source []byte) *Pydantic
 	var example string
 
 	leftFound := false
+	equalsFound := false
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Kind() {
@@ -240,7 +241,11 @@ func extractFieldFromAssignment(node *tree_sitter.Node, source []byte) *Pydantic
 				name = child.Utf8Text(source)
 				leftFound = true
 			}
+		case ":":
+			// `x: T = v` reaches this function as a plain assignment whose
+			// children include the annotation delimiter; it is not a default.
 		case "=":
+			equalsFound = true
 			required = false
 		case "call":
 			if leftFound {
@@ -255,8 +260,8 @@ func extractFieldFromAssignment(node *tree_sitter.Node, source []byte) *Pydantic
 		case "type":
 			typeText = child.Utf8Text(source)
 		default:
-			if leftFound && typeText == "" && defaultVal == "" {
-				defaultVal = child.Utf8Text(source)
+			if leftFound && equalsFound && defaultVal == "" {
+				defaultVal = normalizeFieldDefault(child.Utf8Text(source))
 			}
 		}
 	}
@@ -272,6 +277,23 @@ func extractFieldFromAssignment(node *tree_sitter.Node, source []byte) *Pydantic
 		Default:     defaultVal,
 		Description: description,
 		Example:     example,
+	}
+}
+
+// normalizeFieldDefault converts a Python literal default into the JSON-friendly
+// form the exporters render: string literals lose their quotes and boolean
+// literals are lowercased. `None` has no JSON-renderable form, so it yields an
+// empty default and the field falls back to its type-based example value.
+func normalizeFieldDefault(text string) string {
+	switch text {
+	case "True":
+		return "true"
+	case "False":
+		return "false"
+	case "None":
+		return ""
+	default:
+		return unquotePythonString(text)
 	}
 }
 
