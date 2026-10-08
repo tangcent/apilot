@@ -26,6 +26,11 @@ type PydanticField struct {
 	Default     string
 	Description string
 	Example     string
+	// Unannotated marks a field declared with a pydantic descriptor and no
+	// type annotation, e.g. `name = Field(description=...)`. The type is
+	// genuinely absent, so the resolver reports it instead of letting the
+	// field pass for a resolved string.
+	Unannotated bool
 }
 
 var pythonPrimitives = map[string]string{
@@ -78,7 +83,7 @@ func ExtractPydanticModels(rootNode *tree_sitter.Node, source []byte) map[string
 			Fields: info.fields,
 		}
 		for _, parent := range info.parents {
-			if parent != "BaseModel" {
+			if !isPydanticBaseClass(parent) {
 				md.EmbeddedTypes = append(md.EmbeddedTypes, parent)
 			}
 		}
@@ -167,6 +172,13 @@ func extractParentClasses(argList *tree_sitter.Node, source []byte) []string {
 	return parents
 }
 
+// isPydanticBaseClass reports whether a base-class expression names pydantic's
+// BaseModel. Any qualified form is accepted, so `BaseModel`,
+// `pydantic.BaseModel` and `pydantic.v1.BaseModel` all match.
+func isPydanticBaseClass(base string) bool {
+	return base == "BaseModel" || strings.HasSuffix(base, ".BaseModel")
+}
+
 func findPydanticClasses(allClasses map[string]*classInfo) map[string]bool {
 	pydanticSet := make(map[string]bool)
 
@@ -178,7 +190,7 @@ func findPydanticClasses(allClasses map[string]*classInfo) map[string]bool {
 				continue
 			}
 			for _, parent := range info.parents {
-				if parent == "BaseModel" {
+				if isPydanticBaseClass(parent) {
 					pydanticSet[name] = true
 					changed = true
 					break
@@ -231,6 +243,9 @@ func extractFieldFromAssignment(node *tree_sitter.Node, source []byte) *Pydantic
 	var description string
 	var example string
 
+	var unannotated bool
+	var annotatedCalls []*tree_sitter.Node
+
 	leftFound := false
 	equalsFound := false
 	for i := uint(0); i < node.ChildCount(); i++ {
@@ -252,13 +267,17 @@ func extractFieldFromAssignment(node *tree_sitter.Node, source []byte) *Pydantic
 				info := extractFieldTypeFromCall(child, source)
 				if info.typeName != "" {
 					typeText = info.typeName
+				} else if typeText == "" && isPydanticFieldCall(callCalleeText(child, source)) {
+					// `name = Field(...)`: a descriptor with no annotation,
+					// so there is no type to resolve at all.
+					unannotated = true
 				}
 				defaultVal = info.defaultVal
 				description = info.description
 				example = info.example
 			}
 		case "type":
-			typeText = child.Utf8Text(source)
+			typeText, annotatedCalls = annotatedTypeParts(child, source)
 		default:
 			if leftFound && equalsFound && defaultVal == "" {
 				defaultVal = normalizeFieldDefault(child.Utf8Text(source))
@@ -270,6 +289,8 @@ func extractFieldFromAssignment(node *tree_sitter.Node, source []byte) *Pydantic
 		return nil
 	}
 
+	description, example = applyAnnotatedMetadata(annotatedCalls, source, description, example)
+
 	return &PydanticField{
 		Name:        name,
 		Type:        typeText,
@@ -277,6 +298,7 @@ func extractFieldFromAssignment(node *tree_sitter.Node, source []byte) *Pydantic
 		Default:     defaultVal,
 		Description: description,
 		Example:     example,
+		Unannotated: unannotated,
 	}
 }
 
@@ -304,6 +326,7 @@ func extractFieldFromAnnotatedAssignment(node *tree_sitter.Node, source []byte) 
 	var defaultVal string
 	var description string
 	var example string
+	var annotatedCalls []*tree_sitter.Node
 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -311,7 +334,7 @@ func extractFieldFromAnnotatedAssignment(node *tree_sitter.Node, source []byte) 
 		case "identifier":
 			name = child.Utf8Text(source)
 		case "type":
-			typeText = child.Utf8Text(source)
+			typeText, annotatedCalls = annotatedTypeParts(child, source)
 		case "=":
 			required = false
 		case "call":
@@ -334,6 +357,8 @@ func extractFieldFromAnnotatedAssignment(node *tree_sitter.Node, source []byte) 
 		return nil
 	}
 
+	description, example = applyAnnotatedMetadata(annotatedCalls, source, description, example)
+
 	return &PydanticField{
 		Name:        name,
 		Type:        typeText,
@@ -342,6 +367,101 @@ func extractFieldFromAnnotatedAssignment(node *tree_sitter.Node, source []byte) 
 		Description: description,
 		Example:     example,
 	}
+}
+
+// annotatedTypeParts unwraps an `Annotated[T, Field(...)]` type node into the
+// annotated type T and the pydantic Field descriptors among the metadata
+// arguments. Any other type keeps its own text and carries no metadata, so
+// callers can use the result unconditionally.
+func annotatedTypeParts(typeNode *tree_sitter.Node, source []byte) (string, []*tree_sitter.Node) {
+	generic := childOfKind(typeNode, "generic_type")
+	if generic == nil {
+		return typeNode.Utf8Text(source), nil
+	}
+
+	var callee string
+	var params *tree_sitter.Node
+	for i := uint(0); i < generic.ChildCount(); i++ {
+		child := generic.Child(i)
+		switch child.Kind() {
+		case "identifier", "attribute":
+			callee = child.Utf8Text(source)
+		case "type_parameter":
+			params = child
+		}
+	}
+
+	if params == nil || !isAnnotatedType(callee) {
+		return typeNode.Utf8Text(source), nil
+	}
+
+	var typeText string
+	var meta []*tree_sitter.Node
+	for i := uint(0); i < params.ChildCount(); i++ {
+		child := params.Child(i)
+		if child.Kind() == "[" || child.Kind() == "]" || child.Kind() == "," {
+			continue
+		}
+		if typeText == "" {
+			// The first argument is the annotated type; the rest is metadata.
+			typeText = child.Utf8Text(source)
+			continue
+		}
+		if call := findCallNode(child); call != nil && isPydanticFieldCall(callCalleeText(call, source)) {
+			meta = append(meta, call)
+		}
+	}
+
+	if typeText == "" {
+		return typeNode.Utf8Text(source), nil
+	}
+	return typeText, meta
+}
+
+// applyAnnotatedMetadata folds the description and example carried by
+// Annotated metadata descriptors into a field. Values already taken from the
+// right-hand side win.
+func applyAnnotatedMetadata(calls []*tree_sitter.Node, source []byte, description, example string) (string, string) {
+	for _, call := range calls {
+		info := extractFieldTypeFromCall(call, source)
+		if description == "" {
+			description = info.description
+		}
+		if example == "" {
+			example = info.example
+		}
+	}
+	return description, example
+}
+
+// isAnnotatedType reports whether a generic type expression is the typing
+// Annotated wrapper. Any qualified form is accepted, so `Annotated` and
+// `typing.Annotated` both match.
+func isAnnotatedType(callee string) bool {
+	return callee == "Annotated" || strings.HasSuffix(callee, ".Annotated")
+}
+
+// childOfKind returns the first child of node with the given kind.
+func childOfKind(node *tree_sitter.Node, kind string) *tree_sitter.Node {
+	for i := uint(0); i < node.ChildCount(); i++ {
+		if child := node.Child(i); child.Kind() == kind {
+			return child
+		}
+	}
+	return nil
+}
+
+// findCallNode returns the first call node at or below node.
+func findCallNode(node *tree_sitter.Node) *tree_sitter.Node {
+	if node.Kind() == "call" {
+		return node
+	}
+	for i := uint(0); i < node.ChildCount(); i++ {
+		if found := findCallNode(node.Child(i)); found != nil {
+			return found
+		}
+	}
+	return nil
 }
 
 // fieldCallInfo carries the metadata found in a field's right-hand-side call
@@ -363,13 +483,21 @@ func isPydanticFieldCall(callee string) bool {
 	return callee == "Field" || strings.HasSuffix(callee, ".Field")
 }
 
+// callCalleeText returns the callee of a call node as written, e.g. "Field",
+// "pydantic.Field" or "pydantic.v1.Field".
+func callCalleeText(callNode *tree_sitter.Node, source []byte) string {
+	for i := uint(0); i < callNode.ChildCount(); i++ {
+		if child := callNode.Child(i); child.Kind() == "identifier" || child.Kind() == "attribute" {
+			return child.Utf8Text(source)
+		}
+	}
+	return ""
+}
+
 func extractFieldTypeFromCall(callNode *tree_sitter.Node, source []byte) fieldCallInfo {
-	var info fieldCallInfo
+	info := fieldCallInfo{typeName: callCalleeText(callNode, source)}
 	for i := uint(0); i < callNode.ChildCount(); i++ {
 		child := callNode.Child(i)
-		if child.Kind() == "identifier" || child.Kind() == "attribute" {
-			info.typeName = child.Utf8Text(source)
-		}
 		if child.Kind() == "argument_list" {
 			info = extractFieldTypeInfoFromArgs(child, source, info)
 		}
@@ -404,9 +532,11 @@ func extractFieldTypeInfoFromArgs(argList *tree_sitter.Node, source []byte, info
 			continue
 		}
 		if isPydanticFieldCall(callee) {
+			// A positional argument to Field(...) is the default value, so it
+			// gets the same JSON-friendly normalization as a plain default.
 			text := child.Utf8Text(source)
 			if strings.HasPrefix(text, `"`) || strings.HasPrefix(text, `'`) {
-				info.defaultVal = text
+				info.defaultVal = normalizeFieldDefault(text)
 			}
 		}
 	}
@@ -644,6 +774,12 @@ func (r *PythonTypeResolver) resolveFieldModel(f PydanticField) *model.FieldMode
 	if f.Type != "" {
 		fieldModel = r.Resolve(f.Type)
 	} else {
+		// A descriptor without an annotation (`name = Field(...)`) names no
+		// type at all. Report the field so the missing annotation is visible
+		// instead of passing as a resolved string.
+		if f.Unannotated {
+			r.recordUnresolved(f.Name)
+		}
 		fieldModel = model.SingleModel(model.JsonTypeString)
 	}
 
