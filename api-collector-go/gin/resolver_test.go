@@ -374,3 +374,40 @@ type CreateUserReq struct {
 		t.Errorf("Comment = %q, want empty for undocumented field", note.Comment)
 	}
 }
+
+func TestResolveValidateTagDocumentation(t *testing.T) {
+	src := `package main
+
+type CreateUserReq struct {
+	Name string ` + "`json:\"name\" validate:\"required,oneof=admin editor viewer\"`" + `
+	Age  int    ` + "`json:\"age\" validate:\"omitempty,min=0,max=120\"`" + `
+}
+`
+	structs := extractStructs(parseSource(t, src))
+	obj := NewTypeResolver(structs).Resolve("CreateUserReq")
+	if !obj.IsObject() {
+		t.Fatalf("Expected object model, got kind=%s", obj.Kind)
+	}
+
+	name := obj.Fields["name"]
+	if name == nil {
+		t.Fatal("Expected field 'name'")
+	}
+	if !name.Required {
+		t.Errorf("Required = false, want true for validate:\"required\"")
+	}
+	if len(name.Options) != 3 {
+		t.Errorf("Options = %+v, want 3 entries from oneof", name.Options)
+	}
+
+	age := obj.Fields["age"]
+	if age == nil {
+		t.Fatal("Expected field 'age'")
+	}
+	if age.Required {
+		t.Errorf("Required = true, want false without validate:\"required\"")
+	}
+	if age.Options != nil {
+		t.Errorf("Options = %+v, want nil for min/max keywords", age.Options)
+	}
+}
