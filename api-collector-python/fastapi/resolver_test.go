@@ -1,6 +1,7 @@
 package fastapi
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -593,6 +594,207 @@ func TestPydanticQualifiedFieldDescriptor(t *testing.T) {
 	}
 	if name.Description != "user name" {
 		t.Errorf("name.Description = %q, want %q", name.Description, "user name")
+	}
+}
+
+// `class X(pydantic.BaseModel)` must export exactly what `class X(BaseModel)`
+// does: the qualified base is pydantic's, not an embedded domain type.
+func TestPydanticQualifiedBaseClass(t *testing.T) {
+	dir := t.TempDir()
+	qualified := filepath.Join(dir, "qualified.py")
+	bare := filepath.Join(dir, "bare.py")
+	body := "class UserCreate(%s):\n" +
+		"    name: str\n" +
+		"    age: int = 0\n"
+	if err := os.WriteFile(qualified, []byte("import pydantic\n\n"+fmt.Sprintf(body, "pydantic.BaseModel")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bare, []byte("from pydantic import BaseModel\n\n"+fmt.Sprintf(body, "BaseModel")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	qualifiedModels, err := ExtractPydanticModelsFromFile(qualified)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bareModels, err := ExtractPydanticModelsFromFile(bare)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	userCreate, ok := qualifiedModels["UserCreate"]
+	if !ok {
+		t.Fatalf("expected UserCreate model, got %v", qualifiedModels)
+	}
+	if len(userCreate.Fields) != 2 {
+		t.Fatalf("qualified base fields = %d, want 2", len(userCreate.Fields))
+	}
+	if len(userCreate.EmbeddedTypes) != 0 {
+		t.Errorf("EmbeddedTypes = %v, want empty (the qualified base is pydantic's)", userCreate.EmbeddedTypes)
+	}
+	if len(qualifiedModels) != len(bareModels) {
+		t.Errorf("qualified form produced %d models, bare form %d", len(qualifiedModels), len(bareModels))
+	}
+	for name, want := range bareModels {
+		got, ok := qualifiedModels[name]
+		if !ok {
+			t.Fatalf("qualified form is missing model %q", name)
+		}
+		if len(got.Fields) != len(want.Fields) {
+			t.Errorf("%s fields = %d, want %d (same as the bare form)", name, len(got.Fields), len(want.Fields))
+		}
+	}
+}
+
+// `Annotated[str, Field(...)]` documents the field without changing its type:
+// the wrapper must be dropped and the descriptor's metadata kept.
+func TestPydanticAnnotatedField(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "models.py")
+	src := "from pydantic import BaseModel, Field\n" +
+		"import pydantic\n" +
+		"from typing import Annotated, List\n\n" +
+		"class UserCreate(BaseModel):\n" +
+		"    name: Annotated[str, Field(description=\"user name\", example=\"John\")] = \"x\"\n" +
+		"    tags: Annotated[List[str], pydantic.Field(description=\"tag list\")]\n" +
+		"    plain: str = \"untouched\"\n"
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	models, err := ExtractPydanticModelsFromFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	userCreate, ok := models["UserCreate"]
+	if !ok {
+		t.Fatalf("expected UserCreate model, got %v", models)
+	}
+	if len(userCreate.Fields) != 3 {
+		t.Fatalf("expected 3 fields, got %d", len(userCreate.Fields))
+	}
+
+	byName := make(map[string]PydanticField, len(userCreate.Fields))
+	for _, f := range userCreate.Fields {
+		byName[f.Name] = f
+	}
+
+	name := byName["name"]
+	if name.Type != "str" {
+		t.Errorf("name.Type = %q, want %q (the Annotated wrapper must be dropped)", name.Type, "str")
+	}
+	if name.Description != "user name" {
+		t.Errorf("name.Description = %q, want %q", name.Description, "user name")
+	}
+	if name.Example != "John" {
+		t.Errorf("name.Example = %q, want %q", name.Example, "John")
+	}
+	if name.Default != "x" {
+		t.Errorf("name.Default = %q, want %q", name.Default, "x")
+	}
+
+	// A bare Annotated field stays required and keeps its element type.
+	tags := byName["tags"]
+	if tags.Type != "List[str]" {
+		t.Errorf("tags.Type = %q, want %q", tags.Type, "List[str]")
+	}
+	if tags.Description != "tag list" {
+		t.Errorf("tags.Description = %q, want %q", tags.Description, "tag list")
+	}
+	if !tags.Required {
+		t.Error("tags should stay required")
+	}
+
+	if plain := byName["plain"]; plain.Type != "str" || plain.Description != "" {
+		t.Errorf("plain = %+v, want an untouched str field", plain)
+	}
+
+	resolver := NewPythonTypeResolver(models)
+	obj := resolver.Resolve("UserCreate")
+	if !obj.IsObject() {
+		t.Fatalf("expected object model, got kind=%s", obj.Kind)
+	}
+	nameFm := obj.Fields["name"]
+	if nameFm == nil {
+		t.Fatal("expected exported field 'name'")
+	}
+	if nameFm.Model.TypeName != model.JsonTypeString {
+		t.Errorf("name type = %q, want string", nameFm.Model.TypeName)
+	}
+	if nameFm.Comment != "user name" {
+		t.Errorf("name.Comment = %q, want %q", nameFm.Comment, "user name")
+	}
+	if nameFm.Demo != "John" {
+		t.Errorf("name.Demo = %q, want %q", nameFm.Demo, "John")
+	}
+}
+
+// `name = Field(...)` names no type at all, so it must be reported rather than
+// passed off as a resolved string.
+func TestPydanticUnannotatedFieldDescriptor(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "models.py")
+	src := "from pydantic import BaseModel, Field\n\n" +
+		"class UserCreate(BaseModel):\n" +
+		"    name = Field(\"x\", description=\"user name\")\n"
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	models, err := ExtractPydanticModelsFromFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := models["UserCreate"].Fields[0]
+	if name.Type != "" {
+		t.Errorf("name.Type = %q, want empty (no annotation was written)", name.Type)
+	}
+	if !name.Unannotated {
+		t.Error("name.Unannotated = false, want true for a descriptor without an annotation")
+	}
+	if name.Description != "user name" {
+		t.Errorf("name.Description = %q, want %q", name.Description, "user name")
+	}
+
+	sink := collector.NewUnresolvedSet()
+	resolver := NewPythonTypeResolver(models)
+	resolver.SetUnresolved(sink)
+	obj := resolver.Resolve("UserCreate")
+	if nameFm := obj.Fields["name"]; nameFm == nil {
+		t.Fatal("expected exported field 'name'")
+	}
+	if sink.Counts()["name"] != 1 {
+		t.Errorf("unresolved counts = %v, want name:1", sink.Counts())
+	}
+}
+
+// A field with an annotation keeps its type, so the descriptor must not be
+// mistaken for an unannotated one.
+func TestPydanticAnnotatedFieldDescriptorIsNotUnannotated(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "models.py")
+	src := "from pydantic import BaseModel, Field\n\n" +
+		"class UserCreate(BaseModel):\n" +
+		"    name: str = Field(default=\"x\", description=\"user name\")\n"
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	models, err := ExtractPydanticModelsFromFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := models["UserCreate"].Fields[0]
+	if name.Unannotated {
+		t.Error("name.Unannotated = true, want false for an annotated field")
+	}
+
+	sink := collector.NewUnresolvedSet()
+	resolver := NewPythonTypeResolver(models)
+	resolver.SetUnresolved(sink)
+	resolver.Resolve("UserCreate")
+	if len(sink.Counts()) != 0 {
+		t.Errorf("an annotated field must not be reported unresolved, got %v", sink.Counts())
 	}
 }
 
