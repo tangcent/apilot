@@ -39,6 +39,36 @@ func TestExtractTags(t *testing.T) {
 	}
 }
 
+func TestExtractValidateTag(t *testing.T) {
+	tag := reflect.StructTag(`validate:"required,oneof=admin editor viewer"`)
+	d := Extract("", tag)
+	if d.Required == nil || !*d.Required {
+		t.Errorf("Required = %v, want true", d.Required)
+	}
+	if len(d.Options) != 3 || d.Options[0].Value != "admin" || d.Options[1].Value != "editor" || d.Options[2].Value != "viewer" {
+		t.Errorf("Options = %+v, want admin,editor,viewer", d.Options)
+	}
+}
+
+func TestExtractValidateTagIgnoresOtherKeywords(t *testing.T) {
+	tag := reflect.StructTag(`validate:"omitempty,min=0,max=120"`)
+	d := Extract("", tag)
+	if d.Required != nil {
+		t.Errorf("Required = %v, want nil", d.Required)
+	}
+	if d.Options != nil {
+		t.Errorf("Options = %+v, want nil", d.Options)
+	}
+}
+
+func TestExtractEnumsWinsOverOneof(t *testing.T) {
+	tag := reflect.StructTag(`enums:"a,b" validate:"oneof=x y z"`)
+	d := Extract("", tag)
+	if len(d.Options) != 2 || d.Options[0].Value != "a" || d.Options[1].Value != "b" {
+		t.Errorf("Options = %+v, want a,b", d.Options)
+	}
+}
+
 func TestExtractEmpty(t *testing.T) {
 	d := Extract("", "")
 	if d.Comment != "" || d.Demo != "" || d.DefaultValue != "" || d.Required != nil || d.Options != nil {

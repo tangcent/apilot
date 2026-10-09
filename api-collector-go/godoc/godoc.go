@@ -17,10 +17,12 @@ import (
 //   - example:"..."     — example value
 //   - default:"..."     — documented default
 //   - enums:"a,b,c"     — comma-separated allowed values
+//   - validate:"required,oneof=a b c" — go-playground/validator keywords;
+//     `required` marks the field required and `oneof` supplies the allowed
+//     values. Any other keyword (min, max, omitempty, ...) is ignored.
 //
-// Required is never set here: whether a field is required is decided by the
-// binding/validate tag handling in each framework resolver, and validation
-// keywords such as `validate:"required"` or `oneof=` are not parsed.
+// `enums` wins over `oneof` when a field carries both: enums exists purely to
+// document options, while oneof is a validation constraint.
 func Extract(comment string, tag reflect.StructTag) docmeta.Documentation {
 	d := docmeta.Documentation{Comment: strings.TrimSpace(comment)}
 	if v := tag.Get("description"); v != "" {
@@ -31,6 +33,16 @@ func Extract(comment string, tag reflect.StructTag) docmeta.Documentation {
 	}
 	if v := tag.Get("default"); v != "" {
 		d.DefaultValue = v
+	}
+	if v := tag.Get("validate"); v != "" {
+		for _, keyword := range splitCSV(v) {
+			switch {
+			case keyword == "required":
+				d.Required = docmeta.Bool(true)
+			case strings.HasPrefix(keyword, "oneof="):
+				d.Options = docmeta.OptionsFromValues(strings.Fields(strings.TrimPrefix(keyword, "oneof=")))
+			}
+		}
 	}
 	if v := tag.Get("enums"); v != "" {
 		d.Options = docmeta.OptionsFromValues(splitCSV(v))
