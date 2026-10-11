@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Query, Path, Body
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Generic, TypeVar
 from datetime import datetime
 
@@ -49,7 +49,7 @@ class Address(BaseModel):
 
 
 class CreateUserReq(BaseModel):
-    username: str
+    username: str = Field(description="Login name chosen by the user.", example="alice")
     email: str
     phone: str
     password: str

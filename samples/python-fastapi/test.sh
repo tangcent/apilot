@@ -54,6 +54,7 @@ EXPECTED_FIELDS=(
     "| total | int |"
     "| page_num | int |"
     "| page_size | int |"
+    "| username | string | Login name chosen by the user. |"
 )
 
 failures=()

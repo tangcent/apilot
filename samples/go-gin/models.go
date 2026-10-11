@@ -131,9 +131,11 @@ type PageResult struct {
 // ===== User DTOs =====
 
 type CreateUserReq struct {
-	Name     string `json:"name" binding:"required"`
-	Email    string `json:"email" binding:"required"`
-	Password string `json:"password"`
+	// Name is the display name shown to other users.
+	Name string `json:"name" binding:"required"`
+	// Email is the account's login address.
+	Email    string `json:"email" binding:"required" example:"user@example.com"`
+	Password string `json:"password" description:"Plain-text password, never returned in responses."`
 	Phone    string `json:"phone"`
 }
 

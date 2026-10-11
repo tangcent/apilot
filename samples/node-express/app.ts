@@ -100,7 +100,9 @@ interface Notification extends BaseModel {
 // ===== User DTOs =====
 
 interface CreateUserRequest {
+    /** The display name shown to other users. */
     name: string;
+    /** The account's login email address. */
     email: string;
     age?: number;
     password?: string;

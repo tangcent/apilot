@@ -53,6 +53,8 @@ EXPECTED_FIELDS=(
     "| name | string |"
     "| password | string |"
     "| phone | string |"
+    "| name | string | Name is the display name shown to other users. |"
+    "| password | string | Plain-text password, never returned in responses. |"
 )
 
 failures=()

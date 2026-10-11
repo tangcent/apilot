@@ -52,6 +52,8 @@ EXPECTED_FIELDS=(
     "| password | string |"
     "| phone | string |"
     "listUsers returns all users."
+    "| name | string | The display name shown to other users. |"
+    "| email | string | The account's login email address. |"
 )
 
 failures=()
