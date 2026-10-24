@@ -271,7 +271,7 @@ func springmvcEndpointToAPI(ep springmvc.Endpoint, folder string) collector.ApiE
 	}
 	for _, p := range ep.Parameters {
 		if p.ParamType == "body" {
-			out.RequestBody = &collector.ApiBody{MediaType: "application/json"}
+			out.RequestBody = &collector.ApiBody{Name: p.Name, MediaType: "application/json"}
 		} else if p.ParamType == "header" {
 			out.Headers = append(out.Headers, collector.ApiHeader{
 				Name:        p.Name,
@@ -322,7 +322,7 @@ func jaxrsEndpointToAPI(ep jaxrs.Endpoint, folder string) collector.ApiEndpoint 
 	}
 	for _, p := range ep.Parameters {
 		if p.ParamType == "body" {
-			out.RequestBody = &collector.ApiBody{MediaType: mediaType}
+			out.RequestBody = &collector.ApiBody{Name: p.Name, MediaType: mediaType}
 		} else if p.ParamType == "header" {
 			out.Headers = append(out.Headers, collector.ApiHeader{
 				Name:        p.Name,
@@ -372,7 +372,7 @@ func feignEndpointToAPI(ep feign.Endpoint, folder string) collector.ApiEndpoint 
 	}
 	for _, p := range ep.Parameters {
 		if p.ParamType == "body" {
-			out.RequestBody = &collector.ApiBody{MediaType: "application/json"}
+			out.RequestBody = &collector.ApiBody{Name: p.Name, MediaType: "application/json"}
 		} else if p.ParamType == "header" {
 			out.Headers = append(out.Headers, collector.ApiHeader{
 				Name:        p.Name,

@@ -43,6 +43,7 @@ MIN_ENDPOINTS=110
 EXPECTED_ROUTES=(
     "/users"
     "/users/{id}"
+    "/api/payments/callback"
 )
 
 EXPECTED_FIELDS=(
@@ -53,6 +54,11 @@ EXPECTED_FIELDS=(
     "| code | int |"
     "| message | string |"
     "| granularity | day | NO |"
+    # A scalar body keeps its parameter name instead of an empty name cell.
+    "| callbackData | string |"
+    # A collection of scalars keeps the parameter name and reports the element
+    # type on an indexed row: ids[0] with long, never [0] with long[].
+    "| ids[0] | long |"
 )
 
 failures=()

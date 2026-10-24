@@ -9,6 +9,14 @@ import java.util.List;
 
 public interface PaymentClient extends BaseCrudClient<CreatePaymentReq, Payment> {
 
+    // An unannotated parameter is the request body in Feign, whatever its
+    // type: this String payload is as much a body as a DTO.
+    @RequestLine("POST /api/payments/callback")
+    Result<Void> paymentCallback(String callbackData);
+
+    @RequestLine("POST /api/payments/batch-cancel")
+    Result<Void> batchCancel(List<Long> ids);
+
     @RequestLine("POST /api/payments/{id}/refund")
     Result<PaymentRefundVO> refundPayment(@Param("id") Long id, PaymentRefundReq req);
 

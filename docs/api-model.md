@@ -54,6 +54,7 @@ This document describes the canonical JSON representation of `ApiEndpoint` — t
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
+| `name` | string | no | Parameter that supplies the body (e.g. `callbackData`); empty for a response |
 | `mediaType` | string | no | MIME type (e.g. `"application/json"`) |
 | `schema` | object | no | JSON Schema object describing the body structure |
 | `example` | any | no | Example body value |

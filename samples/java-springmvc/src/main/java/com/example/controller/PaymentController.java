@@ -11,6 +11,13 @@ import java.util.List;
 @RequestMapping("/api/payments")
 public class PaymentController extends BaseCrudController<CreatePaymentReq, Payment> {
 
+    // A scalar body carries no fields, so the exported table has nothing to
+    // name the payload with except the parameter.
+    @PostMapping("/callback")
+    public Result<Void> paymentCallback(@RequestBody String callbackData) {
+        return Result.success(null);
+    }
+
     @PostMapping("/{id}/refund")
     public Result<PaymentRefundVO> refundPayment(@PathVariable Long id, @RequestBody PaymentRefundReq req) {
         return Result.success(new PaymentRefundVO());

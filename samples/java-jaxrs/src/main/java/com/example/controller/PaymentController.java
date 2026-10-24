@@ -10,6 +10,24 @@ import java.util.List;
 @Path("/api/payments")
 public class PaymentController extends BaseCrudController<CreatePaymentReq, Payment> {
 
+    // A scalar body carries no fields, so the exported table has nothing to
+    // name the payload with except the parameter.
+    @POST
+    @Path("/callback")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Result<Void> paymentCallback(String callbackData) {
+        return Result.success(null);
+    }
+
+    @POST
+    @Path("/batch-cancel")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Result<Void> batchCancel(List<Long> ids) {
+        return Result.success(null);
+    }
+
     @POST
     @Path("/{id}/refund")
     @Consumes(MediaType.APPLICATION_JSON)

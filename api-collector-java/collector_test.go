@@ -1172,6 +1172,132 @@ func TestCollect_JAXRSResponseFromBody(t *testing.T) {
 	}
 }
 
+// TestCollect_RequestBodyName covers the bodies that carry no fields of their
+// own: a scalar and a raw collection. A DTO names itself with its fields, but
+// `@RequestBody String callbackData` has nothing to name it with except the
+// parameter, and losing that name left the exported row either unnamed or
+// named after an element index (issue #166).
+func TestCollect_RequestBodyName(t *testing.T) {
+	dir := t.TempDir()
+
+	writeJava(t, dir, "ScalarController.java", `package com.example;
+
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/spring")
+public class ScalarController {
+
+    @PostMapping("/callback")
+    public String paymentCallback(@RequestBody String callbackData) {
+        return callbackData;
+    }
+
+    @DeleteMapping("/batch")
+    public String batchDelete(@RequestBody List<Long> ids) {
+        return "";
+    }
+}
+`)
+
+	writeJava(t, dir, "ScalarResource.java", `package com.example;
+
+import javax.ws.rs.DELETE;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import java.util.List;
+
+@Path("/api/jaxrs")
+public class ScalarResource {
+
+    @POST
+    @Path("/callback")
+    public String paymentCallback(String callbackData) {
+        return callbackData;
+    }
+
+    @DELETE
+    @Path("/batch")
+    public String batchDelete(List<Long> ids) {
+        return "";
+    }
+}
+`)
+
+	writeJava(t, dir, "ScalarClient.java", `package com.example;
+
+import feign.RequestLine;
+import java.util.List;
+
+public interface ScalarClient {
+
+    @RequestLine("POST /api/feign/callback")
+    String paymentCallback(String callbackData);
+
+    @RequestLine("DELETE /api/feign/batch")
+    String batchDelete(List<Long> ids);
+}
+`)
+
+	c := New()
+	endpoints, err := c.Collect(collector.CollectContext{SourceDir: dir})
+	if err != nil {
+		t.Fatalf("Collect failed: %v", err)
+	}
+
+	byPath := make(map[string]*collector.ApiEndpoint, len(endpoints))
+	for i := range endpoints {
+		byPath[endpoints[i].Path] = &endpoints[i]
+	}
+
+	// name, then the shape the schema has to keep.
+	tests := []struct {
+		path string
+		name string
+		kind model.ObjectModelKind
+	}{
+		{"/api/spring/callback", "callbackData", model.KindSingle},
+		{"/api/spring/batch", "ids", model.KindArray},
+		{"/api/jaxrs/callback", "callbackData", model.KindSingle},
+		{"/api/jaxrs/batch", "ids", model.KindArray},
+		{"/api/feign/callback", "callbackData", model.KindSingle},
+		{"/api/feign/batch", "ids", model.KindArray},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			ep, ok := byPath[tt.path]
+			if !ok {
+				t.Fatalf("Expected endpoint %q, got %d endpoints", tt.path, len(byPath))
+			}
+			if ep.RequestBody == nil {
+				t.Fatalf("%s: no request body was exported at all", tt.path)
+			}
+			if ep.RequestBody.Name != tt.name {
+				t.Errorf("%s: request body name = %q, want %q", tt.path, ep.RequestBody.Name, tt.name)
+			}
+			if ep.RequestBody.Body == nil {
+				t.Fatalf("%s: request body has no schema", tt.path)
+			}
+			if ep.RequestBody.Body.Kind != tt.kind {
+				t.Errorf("%s: request body kind = %s, want %s", tt.path, ep.RequestBody.Body.Kind, tt.kind)
+			}
+		})
+	}
+}
+
+func writeJava(t *testing.T, dir, name, source string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0644); err != nil {
+		t.Fatalf("Failed to write %s: %v", name, err)
+	}
+}
+
 // TestCollect_ReportsOpaqueResponses covers the collector side of the
 // diagnostic: an opaque payload is reported instead of disappearing.
 func TestCollect_ReportsOpaqueResponses(t *testing.T) {

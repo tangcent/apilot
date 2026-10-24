@@ -207,6 +207,12 @@ func (b *ObjectModelBuilder) Build() *ObjectModel {
 
 // ApiBody describes the request or response body of an endpoint.
 type ApiBody struct {
+	// Name is the parameter that supplies the body, e.g. callbackData for
+	// `@RequestBody String callbackData`. A formatter keeps it visible when the
+	// body carries no fields of its own, where the parameter name is the only
+	// thing distinguishing one scalar payload from another. Empty for a
+	// response, which no parameter supplies.
+	Name      string       `json:"name,omitempty"`
 	MediaType string       `json:"mediaType,omitempty"`
 	Body      *ObjectModel `json:"body,omitempty"`
 	Example   any          `json:"example,omitempty"`

@@ -313,7 +313,13 @@ func extractSpringRequestMappingMethod(ann parser.Annotation) HTTPMethod {
 func (p *Parser) extractSpringParameter(param parser.Parameter, methodJavaDocParams map[string]string) *EndpointParameter {
 	paramType, required := detectSpringParameterType(param.Annotations)
 	if paramType == "" {
-		return nil
+		// SpringMvcContract binds a parameter with no Spring annotation as the
+		// body, the same way the default contract does: a scalar payload is a
+		// body too, and dropping it exported the endpoint without a request.
+		if isRequestTarget(param.Type) {
+			return nil
+		}
+		paramType, required = "body", true
 	}
 	ep := documentedParameter(param, methodJavaDocParams, paramType, required, "RequestParam")
 	// The header name on the wire comes from the annotation, not the Java
@@ -329,7 +335,8 @@ func (p *Parser) extractSpringParameter(param parser.Parameter, methodJavaDocPar
 
 // detectSpringParameterType maps Spring MVC binding annotations to a canonical
 // location and the required flag the annotations imply. An empty location means
-// the parameter has no Spring binding annotation and is not part of the API.
+// the parameter carries no Spring binding annotation, which Feign reads as the
+// request body rather than as nothing at all.
 func detectSpringParameterType(annotations []parser.Annotation) (string, bool) {
 	for _, ann := range annotations {
 		switch ann.Name {
@@ -466,10 +473,15 @@ func parseRequestLine(value string) (HTTPMethod, string) {
 func (p *Parser) extractFeignParam(param parser.Parameter, methodPath string, methodJavaDocParams map[string]string) *EndpointParameter {
 	ann := findAnnotation(param.Annotations, "Param")
 	if ann == nil {
-		if param.Type != "" && !isJavaPrimitive(param.Type) {
-			return documentedParameter(param, methodJavaDocParams, "body", true, "")
+		// Feign binds an unannotated parameter as the request body whatever its
+		// type, not only when the type is a DTO: a String callback payload is a
+		// body too, and dropping it exported the endpoint without a request at
+		// all. Feign rejects a second unannotated parameter, so at most one
+		// parameter reaches this branch as the body.
+		if isRequestTarget(param.Type) {
+			return nil
 		}
-		return nil
+		return documentedParameter(param, methodJavaDocParams, "body", true, "")
 	}
 	name := ann.Params["value"]
 	if name == "" {
@@ -490,14 +502,14 @@ func (p *Parser) extractFeignParam(param parser.Parameter, methodPath string, me
 	return ep
 }
 
-func isJavaPrimitive(typ string) bool {
-	switch typ {
-	case "byte", "short", "int", "long", "float", "double", "boolean", "char",
-		"Byte", "Short", "Integer", "Long", "Float", "Double", "Boolean", "Character",
-		"String", "void", "Void":
+// isRequestTarget reports whether a parameter supplies the target URI of the
+// call rather than the body. Feign accepts an unannotated URI argument that
+// overrides the client url, and that argument is not part of the payload.
+func isRequestTarget(typ string) bool {
+	if typ == "" {
 		return true
 	}
-	return false
+	return typ == "URI" || typ == "java.net.URI"
 }
 
 func findAnnotation(annotations []parser.Annotation, name string) *parser.Annotation {

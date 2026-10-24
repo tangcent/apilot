@@ -46,6 +46,8 @@ EXPECTED_ROUTES=(
     "/api/categories/{id}/detail"
     "/api/categories/{id}/status"
     "/api/categories/{id}/cache"
+    "/api/payments/callback"
+    "/api/payments/batch-cancel"
 )
 
 EXPECTED_FIELDS=(
@@ -59,6 +61,11 @@ EXPECTED_FIELDS=(
     # the payload is only visible in the method body.
     "| &ensp;&ensp;&#124;─parentId | long |"
     "| &ensp;&ensp;&#124;─icon | string |"
+    # An unannotated scalar parameter is the request body, and keeps its name.
+    "| callbackData | string |"
+    # A raw collection keeps its name and reports the element type: ids[0]
+    # with long, never [0] with long[].
+    "| ids[0] | long |"
 )
 
 failures=()

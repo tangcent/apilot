@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/tangcent/apilot/api-collector-java/parser"
+	model "github.com/tangcent/apilot/api-model"
 )
 
 func TestParser_SpringCloudFeignClient(t *testing.T) {
@@ -961,5 +962,145 @@ func TestParser_RequestLineDocumentation(t *testing.T) {
 	}
 	if keyword.ParamType != "query" {
 		t.Errorf("Expected keyword to be a query parameter, got %q", keyword.ParamType)
+	}
+}
+
+// TestParser_UnannotatedParameterIsBody pins the Feign binding rule: a
+// parameter with no @Param annotation is the request body whatever its type.
+// Dropping a scalar payload exported the endpoint with no request section at
+// all, which reads as "no body" to anyone using the document.
+func TestParser_UnannotatedParameterIsBody(t *testing.T) {
+	results := []parser.ParseResult{
+		{
+			FilePath: "PaymentClient.java",
+			Classes: []parser.Class{
+				{
+					Name:        "PaymentClient",
+					Package:     "com.example.client",
+					IsInterface: true,
+					Methods: []parser.Method{
+						{
+							Name: "paymentCallback",
+							Annotations: []parser.Annotation{
+								{Name: "RequestLine", Params: map[string]string{"value": "POST /api/payments/callback"}},
+							},
+							Parameters: []parser.Parameter{
+								{Name: "callbackData", Type: "String"},
+							},
+							ReturnType: "Result",
+						},
+						{
+							Name: "batchDelete",
+							Annotations: []parser.Annotation{
+								{Name: "RequestLine", Params: map[string]string{"value": "DELETE /api/payments/batch"}},
+							},
+							Parameters: []parser.Parameter{
+								{Name: "ids", Type: "List<Long>"},
+							},
+							ReturnType: "Result",
+						},
+						{
+							Name: "fetch",
+							Annotations: []parser.Annotation{
+								{Name: "RequestLine", Params: map[string]string{"value": "GET /api/payments"}},
+							},
+							Parameters: []parser.Parameter{
+								{Name: "target", Type: "URI"},
+							},
+							ReturnType: "Result",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	clients := NewParser().ExtractClients(results)
+	if len(clients) != 1 {
+		t.Fatalf("Expected 1 client, got %d", len(clients))
+	}
+	endpoints := clients[0].Endpoints
+	if len(endpoints) != 3 {
+		t.Fatalf("Expected 3 endpoints, got %d", len(endpoints))
+	}
+
+	scalar := endpoints[0]
+	if len(scalar.Parameters) != 1 || scalar.Parameters[0].ParamType != "body" {
+		t.Fatalf("Expected the unannotated scalar to be the body, got %+v", scalar.Parameters)
+	}
+	if scalar.Parameters[0].Name != "callbackData" {
+		t.Errorf("Expected body parameter 'callbackData', got '%s'", scalar.Parameters[0].Name)
+	}
+	if scalar.RequestBodySchema == nil || !scalar.RequestBodySchema.IsSingle() {
+		t.Fatalf("Expected a single-valued body schema, got %+v", scalar.RequestBodySchema)
+	}
+	if scalar.RequestBodySchema.TypeName != model.JsonTypeString {
+		t.Errorf("Expected body type '%s', got '%s'", model.JsonTypeString, scalar.RequestBodySchema.TypeName)
+	}
+
+	collection := endpoints[1]
+	if len(collection.Parameters) != 1 || collection.Parameters[0].ParamType != "body" {
+		t.Fatalf("Expected the unannotated collection to be the body, got %+v", collection.Parameters)
+	}
+	if collection.RequestBodySchema == nil || !collection.RequestBodySchema.IsArray() {
+		t.Fatalf("Expected an array body schema, got %+v", collection.RequestBodySchema)
+	}
+
+	// A URI argument overrides the target of the call; it is not a payload.
+	if len(endpoints[2].Parameters) != 0 {
+		t.Errorf("Expected a URI argument to stay out of the request, got %+v", endpoints[2].Parameters)
+	}
+	if endpoints[2].RequestBodySchema != nil {
+		t.Errorf("Expected no request body for a URI argument, got %+v", endpoints[2].RequestBodySchema)
+	}
+}
+
+// TestParser_SpringStyleUnannotatedParameterIsBody pins the same rule for a
+// client written with Spring MVC annotations: SpringMvcContract binds an
+// unannotated parameter as the body, so the scalar payload has to survive
+// there too.
+func TestParser_SpringStyleUnannotatedParameterIsBody(t *testing.T) {
+	results := []parser.ParseResult{
+		{
+			FilePath: "PaymentClient.java",
+			Classes: []parser.Class{
+				{
+					Name:        "PaymentClient",
+					Package:     "com.example.client",
+					IsInterface: true,
+					Annotations: []parser.Annotation{
+						{Name: "FeignClient", Params: map[string]string{"name": "payment-service"}},
+					},
+					Methods: []parser.Method{
+						{
+							Name: "paymentCallback",
+							Annotations: []parser.Annotation{
+								{Name: "PostMapping", Params: map[string]string{"value": "/api/payments/callback"}},
+							},
+							Parameters: []parser.Parameter{
+								{Name: "callbackData", Type: "String"},
+							},
+							ReturnType: "Result",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	clients := NewParser().ExtractClients(results)
+	if len(clients) != 1 {
+		t.Fatalf("Expected 1 client, got %d", len(clients))
+	}
+	if len(clients[0].Endpoints) != 1 {
+		t.Fatalf("Expected 1 endpoint, got %d", len(clients[0].Endpoints))
+	}
+
+	ep := clients[0].Endpoints[0]
+	if len(ep.Parameters) != 1 || ep.Parameters[0].ParamType != "body" {
+		t.Fatalf("Expected the unannotated scalar to be the body, got %+v", ep.Parameters)
+	}
+	if ep.Parameters[0].Name != "callbackData" {
+		t.Errorf("Expected body parameter 'callbackData', got '%s'", ep.Parameters[0].Name)
 	}
 }

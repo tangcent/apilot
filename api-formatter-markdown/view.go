@@ -174,7 +174,7 @@ func buildEndpointView(ep model.ApiEndpoint, outputDemo bool, maxVisits int) End
 
 	if ep.RequestBody != nil {
 		if ep.RequestBody.Body != nil {
-			view.BodyRows = flattenObjectModel(ep.RequestBody.Body, maxVisits)
+			view.BodyRows = flattenObjectModel(ep.RequestBody.Body, ep.RequestBody.Name, maxVisits)
 		}
 		if outputDemo {
 			view.BodyDemo = generateDemo(ep.RequestBody)
@@ -183,7 +183,7 @@ func buildEndpointView(ep model.ApiEndpoint, outputDemo bool, maxVisits int) End
 
 	if ep.Response != nil {
 		if ep.Response.Body != nil {
-			view.ResponseBodyRows = flattenObjectModel(ep.Response.Body, maxVisits)
+			view.ResponseBodyRows = flattenObjectModel(ep.Response.Body, "", maxVisits)
 		}
 		if outputDemo {
 			view.ResponseDemo = generateDemo(ep.Response)
@@ -235,13 +235,19 @@ func mdEscape(s string) string {
 	return s
 }
 
-func flattenObjectModel(m *model.ObjectModel, maxVisits int) []BodyRow {
+// flattenObjectModel turns a body schema into table rows. name is the parameter
+// that supplies the body, empty when the schema stands on its own (a response,
+// or a collector that reports no parameter). A body with fields of its own
+// ignores name: the field rows speak for themselves at the top level. A body
+// without fields keeps it, because otherwise nothing in the table says which
+// payload the endpoint expects.
+func flattenObjectModel(m *model.ObjectModel, name string, maxVisits int) []BodyRow {
 	if m == nil {
 		return nil
 	}
 	visitCounts := make(map[uintptr]int)
 	var rows []BodyRow
-	flattenModel(m, 0, &rows, visitCounts, maxVisits)
+	flattenModel(m, name, 0, &rows, visitCounts, maxVisits)
 	return rows
 }
 
@@ -249,7 +255,7 @@ func objPtr(m *model.ObjectModel) uintptr {
 	return uintptr(unsafe.Pointer(m))
 }
 
-func flattenModel(m *model.ObjectModel, depth int, rows *[]BodyRow, visitCounts map[uintptr]int, maxVisits int) {
+func flattenModel(m *model.ObjectModel, name string, depth int, rows *[]BodyRow, visitCounts map[uintptr]int, maxVisits int) {
 	if m == nil {
 		return
 	}
@@ -262,20 +268,23 @@ func flattenModel(m *model.ObjectModel, depth int, rows *[]BodyRow, visitCounts 
 		}
 		visitCounts[id]++
 		names := sortedFieldNames(m.Fields)
-		for _, name := range names {
-			fm := m.Fields[name]
-			flattenFieldRow(name, fm, depth, rows, visitCounts, maxVisits)
+		for _, fieldName := range names {
+			fm := m.Fields[fieldName]
+			flattenFieldRow(fieldName, fm, depth, rows, visitCounts, maxVisits)
 		}
 		visitCounts[id]--
 
 	case model.KindArray:
+		// A collection has no field of its own, so the parameter names it and
+		// the index picks one element out of it: rows are ids[0] with long,
+		// never [0] with long[]. An unnamed collection keeps the bare index.
 		if m.Items != nil {
-			flattenArrayItem(m.Items, "[0]", depth, rows, visitCounts, maxVisits)
+			flattenArrayItem(m.Items, name+"[0]", depth, rows, visitCounts, maxVisits)
 		}
 
 	case model.KindSingle:
 		*rows = append(*rows, BodyRow{
-			Name: "",
+			Name: mdEscape(name),
 			Type: mdEscape(m.TypeName),
 			Desc: "",
 		})
@@ -290,7 +299,7 @@ func flattenModel(m *model.ObjectModel, depth int, rows *[]BodyRow, visitCounts 
 
 	case model.KindRef:
 		*rows = append(*rows, BodyRow{
-			Name: "",
+			Name: mdEscape(name),
 			Type: mdEscape(m.TypeName),
 			Desc: "",
 		})
@@ -322,9 +331,12 @@ func flattenArrayItem(item *model.ObjectModel, prefix string, depth int, rows *[
 		}
 
 	case model.KindSingle:
+		// The row is one element, so the type cell is the element type. The
+		// container type belongs on a row that names the collection as a whole,
+		// which is how a field row reports it.
 		*rows = append(*rows, BodyRow{
 			Name: mdEscape(prefix),
-			Type: mdEscape(item.TypeName + "[]"),
+			Type: mdEscape(item.TypeName),
 			Desc: "",
 		})
 
@@ -339,7 +351,7 @@ func flattenArrayItem(item *model.ObjectModel, prefix string, depth int, rows *[
 	case model.KindRef:
 		*rows = append(*rows, BodyRow{
 			Name: mdEscape(prefix),
-			Type: mdEscape(item.TypeName + "[]"),
+			Type: mdEscape(item.TypeName),
 			Desc: "",
 		})
 	}

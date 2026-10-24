@@ -731,3 +731,63 @@ func TestFormat_NoFolderEndpoints(t *testing.T) {
 		t.Error("Output should not have empty folder heading")
 	}
 }
+
+// TestBuildEndpointView_BodyRows covers the bodies that carry no fields of
+// their own. The parameter name is the only thing naming such a payload, so it
+// has to reach the table; and an indexed row reports the element type of the
+// collection, not the container type.
+func TestBuildEndpointView_BodyRows(t *testing.T) {
+	userArray := model.ArrayModel(
+		model.NewObjectModelBuilder().LongField("id").Build(),
+	)
+
+	tests := []struct {
+		name string
+		body *model.ApiBody
+		want []BodyRow
+	}{
+		{
+			name: "scalar body keeps its parameter name",
+			body: &model.ApiBody{Name: "callbackData", Body: model.SingleModel(model.JsonTypeString)},
+			want: []BodyRow{{Name: "callbackData", Type: "string"}},
+		},
+		{
+			name: "collection of scalars names the index and reports the element type",
+			body: &model.ApiBody{Name: "ids", Body: model.ArrayModel(model.SingleModel(model.JsonTypeLong))},
+			want: []BodyRow{{Name: "ids[0]", Type: "long"}},
+		},
+		{
+			name: "collection of objects names the index on every element row",
+			body: &model.ApiBody{Name: "users", Body: userArray},
+			want: []BodyRow{{Name: "users[0].id", Type: "long"}},
+		},
+		{
+			name: "object body is described by its fields, without a root row",
+			body: &model.ApiBody{
+				Name: "user",
+				Body: model.NewObjectModelBuilder().LongField("id").Build(),
+			},
+			want: []BodyRow{{Name: "id", Type: "long"}},
+		},
+		{
+			name: "a body no parameter supplies keeps the bare index",
+			body: &model.ApiBody{Body: model.ArrayModel(model.SingleModel(model.JsonTypeLong))},
+			want: []BodyRow{{Name: "[0]", Type: "long"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			view := buildEndpointView(model.ApiEndpoint{Path: "/x", RequestBody: tt.body}, true, 2)
+
+			if len(view.BodyRows) != len(tt.want) {
+				t.Fatalf("got %d rows, want %d: %+v", len(view.BodyRows), len(tt.want), view.BodyRows)
+			}
+			for i, want := range tt.want {
+				if view.BodyRows[i] != want {
+					t.Errorf("row %d = %+v, want %+v", i, view.BodyRows[i], want)
+				}
+			}
+		})
+	}
+}
