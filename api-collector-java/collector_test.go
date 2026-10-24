@@ -1103,3 +1103,103 @@ func TestCollect_SchemaResolution_ReactiveController(t *testing.T) {
 		t.Error("streamUsers response element does not expand the User fields")
 	}
 }
+
+// TestCollect_JAXRSResponseFromBody covers the shape that used to lose the
+// whole response section: the return type is Response and the payload only
+// exists in the method body (issue #164).
+func TestCollect_JAXRSResponseFromBody(t *testing.T) {
+	c := New()
+	testdataDir, _ := filepath.Abs("testdata")
+
+	endpoints, err := c.Collect(collector.CollectContext{
+		SourceDir:  testdataDir,
+		Frameworks: []string{"jaxrs"},
+	})
+	if err != nil {
+		t.Fatalf("Collect failed: %v", err)
+	}
+
+	byFolderAndName := make(map[string]*collector.ApiEndpoint)
+	for i := range endpoints {
+		byFolderAndName[endpoints[i].Folder+"."+endpoints[i].Name] = &endpoints[i]
+	}
+
+	// Response.ok(Result.success(user)) expands to the result wrapper with the
+	// User DTO under data.
+	for _, key := range []string{"ResponseResource.get", "ResponseResource.create"} {
+		ep, ok := byFolderAndName[key]
+		if !ok {
+			t.Fatalf("Expected endpoint %q", key)
+		}
+		if ep.Response == nil {
+			t.Fatalf("%s: Response is nil, the section would be missing from the export", key)
+		}
+		if ep.Response.Body == nil || !ep.Response.Body.IsObject() {
+			t.Fatalf("%s: expected an object body, got %+v", key, ep.Response.Body)
+		}
+		data := ep.Response.Body.Fields["data"]
+		if data == nil || data.Model == nil || !data.Model.IsObject() {
+			t.Fatalf("%s: expected data to hold User, got %+v", key, data)
+		}
+		if _, ok := data.Model.Fields["email"]; !ok {
+			t.Errorf("%s: expected User field 'email' under data", key)
+		}
+	}
+
+	// A paged payload keeps PageResult and its item list.
+	paged, ok := byFolderAndName["ResponseResource.paged"]
+	if !ok {
+		t.Fatal("Expected endpoint ResponseResource.paged")
+	}
+	if paged.Response == nil || paged.Response.Body == nil {
+		t.Fatal("paged: Response body is nil")
+	}
+	page := paged.Response.Body.Fields["data"]
+	if page == nil || page.Model == nil || !page.Model.IsObject() {
+		t.Fatalf("paged: expected data to hold PageResult, got %+v", page)
+	}
+	if _, ok := page.Model.Fields["items"]; !ok {
+		t.Error("paged: expected PageResult field 'items' under data")
+	}
+
+	// A body-built response with no entity still exports a section.
+	del, ok := byFolderAndName["ResponseResource.delete"]
+	if !ok {
+		t.Fatal("Expected endpoint ResponseResource.delete")
+	}
+	if del.Response == nil {
+		t.Error("delete: a Response with no entity must still export a response section")
+	}
+}
+
+// TestCollect_ReportsOpaqueResponses covers the collector side of the
+// diagnostic: an opaque payload is reported instead of disappearing.
+func TestCollect_ReportsOpaqueResponses(t *testing.T) {
+	c := New()
+	testdataDir, _ := filepath.Abs("testdata")
+
+	if _, err := c.Collect(collector.CollectContext{
+		SourceDir:  testdataDir,
+		Frameworks: []string{"jaxrs"},
+	}); err != nil {
+		t.Fatalf("Collect failed: %v", err)
+	}
+
+	reporter, ok := c.(collector.WarningsReporter)
+	if !ok {
+		t.Fatal("JavaCollector must report the gaps it works around")
+	}
+
+	var found bool
+	for _, warning := range reporter.Warnings() {
+		if strings.Contains(warning, "ResponseResource.update") {
+			found = true
+		}
+		if strings.Contains(warning, "ResponseResource.delete") {
+			t.Errorf("an entity-less response is not a lost payload, got %q", warning)
+		}
+	}
+	if !found {
+		t.Errorf("Expected a warning for ResponseResource.update, got %v", reporter.Warnings())
+	}
+}

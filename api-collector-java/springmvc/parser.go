@@ -261,8 +261,9 @@ func (p *Parser) extractEndpoint(method parser.Method, basePath string, class pa
 	}
 
 	if method.ReturnType != "" && method.ReturnType != "void" && method.ReturnType != "Void" {
-		resolvedType := unwrapSpringResponseType(method.ReturnType)
-		endpoint.ResponseSchema = typeResolver.Resolve(resolvedType, typeBindings)
+		// A ResponseEntity<T> wrapper is unwrapped by the type resolver, the
+		// same way it handles a reactor publisher.
+		endpoint.ResponseSchema = typeResolver.Resolve(method.ReturnType, typeBindings)
 	}
 
 	return endpoint
@@ -434,11 +435,4 @@ func (p *Parser) combinePaths(basePath, methodPath string) string {
 		return basePath
 	}
 	return path.Join(basePath, methodPath)
-}
-
-func unwrapSpringResponseType(rawType string) string {
-	if strings.HasPrefix(rawType, "ResponseEntity<") && strings.HasSuffix(rawType, ">") {
-		return rawType[len("ResponseEntity<") : len(rawType)-1]
-	}
-	return rawType
 }

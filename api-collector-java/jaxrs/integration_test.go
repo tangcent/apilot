@@ -2,6 +2,7 @@ package jaxrs
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tangcent/apilot/api-collector-java/parser"
@@ -140,9 +141,18 @@ func TestIntegration_TypeResolution(t *testing.T) {
 		}
 	}
 
-	// Response return type should not produce a schema
-	if createEp.ResponseSchema != nil {
-		t.Error("Plain Response return should not produce a ResponseSchema")
+	// createUser returns Response, whose payload is built in the body:
+	// `return Response.ok(user).build()` carries the User parameter.
+	if createEp.ResponseSchema == nil {
+		t.Fatal("Expected ResponseSchema for createUser, built from the body")
+	}
+	if !createEp.ResponseSchema.IsObject() {
+		t.Fatalf("Expected object model for User, got kind=%s", createEp.ResponseSchema.Kind)
+	}
+	for _, name := range []string{"name", "email", "active"} {
+		if _, ok := createEp.ResponseSchema.Fields[name]; !ok {
+			t.Errorf("Expected field '%s' in User response body", name)
+		}
 	}
 
 	// getUser returns User directly
@@ -184,6 +194,125 @@ func TestIntegration_TypeResolution(t *testing.T) {
 	}
 	if listEp.ResponseSchema.Items == nil || !listEp.ResponseSchema.Items.IsObject() {
 		t.Error("Expected array items to be User object")
+	}
+}
+
+func TestIntegration_ResponsePayloadFromBody(t *testing.T) {
+	p, err := parser.NewParser(parser.ParserOptions{
+		LogLevel: parser.LogLevelError,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create parser: %v", err)
+	}
+	defer p.Close()
+
+	// The whole testdata directory is parsed so the DTOs the payload refers to
+	// are in the class registry, as they would be in a real project.
+	results, err := p.ParseDirectory(filepath.Join("..", "testdata"))
+	if err != nil {
+		t.Fatalf("Failed to parse directory: %v", err)
+	}
+
+	jParser := NewParser()
+	resources := jParser.ExtractResources(results)
+
+	var resource *Resource
+	for i := range resources {
+		if resources[i].Name == "ResponseResource" {
+			resource = &resources[i]
+			break
+		}
+	}
+	if resource == nil {
+		t.Fatal("Expected ResponseResource in parsed resources")
+	}
+
+	endpoints := make(map[string]*Endpoint)
+	for i := range resource.Endpoints {
+		endpoints[resource.Endpoints[i].MethodName] = &resource.Endpoints[i]
+	}
+
+	// Response.ok(Result.success(user)) — both the wrapper and the generic
+	// result are expanded, so `data` holds the User fields.
+	//
+	// This is the shape the issue reported: the entire response section was
+	// missing because the payload was only written in the body.
+	for _, method := range []string{"get", "create"} {
+		ep := endpoints[method]
+		if ep == nil {
+			t.Fatalf("Expected '%s' endpoint", method)
+		}
+		schema := ep.ResponseSchema
+		if schema == nil || !schema.IsObject() {
+			t.Fatalf("%s: expected Result object schema, got %+v", method, schema)
+		}
+		for _, field := range []string{"code", "message", "data"} {
+			if _, ok := schema.Fields[field]; !ok {
+				t.Errorf("%s: expected field %q in the result wrapper", method, field)
+			}
+		}
+		data := schema.Fields["data"]
+		if data == nil || data.Model == nil || !data.Model.IsObject() {
+			t.Fatalf("%s: expected data to hold the User object, got %+v", method, data)
+		}
+		if _, ok := data.Model.Fields["name"]; !ok {
+			t.Errorf("%s: expected User field 'name' under data", method)
+		}
+	}
+
+	// The paged payload keeps its element type through the local variable.
+	paged := endpoints["paged"]
+	if paged == nil {
+		t.Fatal("Expected 'paged' endpoint")
+	}
+	if paged.ResponseSchema == nil {
+		t.Fatal("Expected ResponseSchema for paged")
+	}
+	pageData := paged.ResponseSchema.Fields["data"]
+	if pageData == nil || pageData.Model == nil || !pageData.Model.IsObject() {
+		t.Fatalf("Expected data to hold PageResult, got %+v", pageData)
+	}
+	if _, ok := pageData.Model.Fields["items"]; !ok {
+		t.Error("Expected PageResult field 'items' under data")
+	}
+
+	// A response built with no entity still yields a section, and is not
+	// reported as a lost payload.
+	del := endpoints["delete"]
+	if del == nil {
+		t.Fatal("Expected 'delete' endpoint")
+	}
+	if del.ResponseSchema == nil {
+		t.Fatal("A Response with no entity must still export a response schema")
+	}
+	if del.ResponseSchema.IsObject() {
+		t.Errorf("Expected opaque schema for the entity-less delete, got %+v", del.ResponseSchema)
+	}
+
+	// The payload comes from another method: it cannot be named, so it is
+	// exported as opaque and reported rather than dropped in silence.
+	update := endpoints["update"]
+	if update == nil {
+		t.Fatal("Expected 'update' endpoint")
+	}
+	if update.ResponseSchema == nil {
+		t.Fatal("An opaque Response must still export a response schema")
+	}
+	if update.ResponseSchema.TypeName != responseTypeName {
+		t.Errorf("Expected opaque %q schema, got %q", responseTypeName, update.ResponseSchema.TypeName)
+	}
+
+	var warned bool
+	for _, warning := range jParser.Warnings() {
+		if strings.Contains(warning, "ResponseResource.update") {
+			warned = true
+		}
+		if strings.Contains(warning, "ResponseResource.delete") {
+			t.Errorf("An entity-less response is not a lost payload, got warning %q", warning)
+		}
+	}
+	if !warned {
+		t.Errorf("Expected a warning naming ResponseResource.update, got %v", jParser.Warnings())
 	}
 }
 

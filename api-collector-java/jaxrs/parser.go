@@ -2,6 +2,7 @@
 package jaxrs
 
 import (
+	"fmt"
 	"path"
 	"strings"
 
@@ -9,12 +10,14 @@ import (
 	javadoc "github.com/tangcent/apilot/api-collector-java/doc"
 	"github.com/tangcent/apilot/api-collector-java/parser"
 	"github.com/tangcent/apilot/api-collector-java/resolver"
+	model "github.com/tangcent/apilot/api-model"
 )
 
 type Parser struct {
-	dependencyResolver resolver.DependencyResolver
+	dependencyResolver   resolver.DependencyResolver
 	collectorDepResolver collector.DependencyResolver
 	unresolved           *collector.UnresolvedSet
+	warnings             []string
 }
 
 // NewParser creates a new JAX-RS parser.
@@ -36,8 +39,22 @@ func (p *Parser) SetUnresolved(u *collector.UnresolvedSet) {
 	p.unresolved = u
 }
 
+// Warnings returns the diagnostics raised by the last ExtractResources call.
+// Each one describes a decision the collector made on the caller's behalf —
+// a response it could not fully document, for instance — so that the gap is
+// visible instead of appearing as a complete export.
+func (p *Parser) Warnings() []string {
+	return append([]string(nil), p.warnings...)
+}
+
+func (p *Parser) warnf(format string, args ...any) {
+	p.warnings = append(p.warnings, fmt.Sprintf(format, args...))
+}
+
 // ExtractResources extracts JAX-RS resources from parse results.
 func (p *Parser) ExtractResources(results []parser.ParseResult) []Resource {
+	p.warnings = nil
+
 	classRegistry := buildClassRegistry(results)
 	typeResolver := resolver.NewTypeResolver(flattenClasses(results))
 	if p.dependencyResolver != nil {
@@ -129,7 +146,7 @@ func (p *Parser) extractResource(class parser.Class, typeResolver *resolver.Type
 
 	var endpoints []Endpoint
 	for _, method := range class.Methods {
-		ep := p.extractEndpoint(method, basePath, class, typeResolver, typeBindings)
+		ep := p.extractEndpoint(method, basePath, class, typeResolver, typeBindings, classRegistry)
 		if ep == nil {
 			continue
 		}
@@ -184,7 +201,7 @@ func (p *Parser) extractInheritedEndpoints(class parser.Class, basePath string, 
 			continue
 		}
 
-		ep := p.extractEndpoint(method, effectiveBasePath, class, typeResolver, mergedBindings)
+		ep := p.extractEndpoint(method, effectiveBasePath, class, typeResolver, mergedBindings, classRegistry)
 		if ep == nil {
 			continue
 		}
@@ -222,7 +239,7 @@ func (p *Parser) isMethodOverridden(methodName string, class parser.Class) bool 
 	return false
 }
 
-func (p *Parser) extractEndpoint(method parser.Method, basePath string, class parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string) *Endpoint {
+func (p *Parser) extractEndpoint(method parser.Method, basePath string, class parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string, classRegistry map[string]parser.Class) *Endpoint {
 	httpMethod, ok := p.extractHTTPMethod(method.Annotations)
 	if !ok {
 		return nil
@@ -263,11 +280,8 @@ func (p *Parser) extractEndpoint(method parser.Method, basePath string, class pa
 		endpoint.RequestBodySchema = typeResolver.Resolve(requestBodyType, typeBindings)
 	}
 
-	if method.ReturnType != "" && method.ReturnType != "void" && method.ReturnType != "Void" {
-		resolvedType := unwrapJaxrsResponseType(method.ReturnType)
-		if resolvedType != "" {
-			endpoint.ResponseSchema = typeResolver.Resolve(resolvedType, typeBindings)
-		}
+	if schema := p.responseSchema(method, class, typeResolver, typeBindings, classRegistry); schema != nil {
+		endpoint.ResponseSchema = schema
 	}
 
 	return endpoint
@@ -414,14 +428,48 @@ func (p *Parser) extractMediaTypes(annotations []parser.Annotation, annName stri
 	return nil
 }
 
-func unwrapJaxrsResponseType(rawType string) string {
-	if rawType == "Response" {
-		return ""
+// responseSchema resolves the response body of a method, or nil when the type
+// declares no response at all.
+func (p *Parser) responseSchema(method parser.Method, class parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string, classRegistry map[string]parser.Class) *model.ObjectModel {
+	if method.ReturnType == "" || method.ReturnType == "void" || method.ReturnType == "Void" {
+		return nil
 	}
-	if strings.HasPrefix(rawType, "Response<") && strings.HasSuffix(rawType, ">") {
-		return rawType[len("Response<") : len(rawType)-1]
+
+	if !isJaxrsResponse(method.ReturnType) {
+		return typeResolver.Resolve(method.ReturnType, typeBindings)
 	}
-	return rawType
+
+	// Response is opaque: the payload is built in the body, so the body is the
+	// only place it can come from. Falling back to the declared type silently
+	// is what left whole exports without a response section.
+	payload, opaque := responsePayload(method.Body, parameterTypes(method), classRegistry)
+	if payload != "" {
+		return typeResolver.Resolve(payload, typeBindings)
+	}
+
+	if opaque {
+		p.warnf("%s.%s: the response entity built in the method body does not name a type; the exported response is marked opaque",
+			class.Name, method.Name)
+	}
+
+	// Either the body builds no entity (Response.noContent().build()) or its
+	// payload cannot be named. Both still describe a response, so the section
+	// is exported with the wrapper itself as its body rather than dropped.
+	return model.SingleModel(responseTypeName)
+}
+
+// responseTypeName is the type shown as the body of a Response whose payload
+// could not be expanded.
+const responseTypeName = "Response"
+
+func parameterTypes(method parser.Method) map[string]string {
+	types := make(map[string]string, len(method.Parameters))
+	for _, param := range method.Parameters {
+		if param.Name != "" && param.Type != "" {
+			types[param.Name] = param.Type
+		}
+	}
+	return types
 }
 
 func normalizePath(s string) string {

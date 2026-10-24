@@ -259,8 +259,9 @@ func (p *Parser) extractSpringStyleEndpoint(method parser.Method, class parser.C
 	}
 
 	if method.ReturnType != "" && method.ReturnType != "void" && method.ReturnType != "Void" {
-		resolvedType := unwrapResponseType(method.ReturnType)
-		endpoint.ResponseSchema = typeResolver.Resolve(resolvedType, typeBindings)
+		// A ResponseEntity<T> wrapper is unwrapped by the type resolver, the
+		// same way it handles a reactor publisher.
+		endpoint.ResponseSchema = typeResolver.Resolve(method.ReturnType, typeBindings)
 	}
 
 	return endpoint
@@ -495,13 +496,6 @@ func (p *Parser) extractFeignParam(param parser.Parameter, methodPath string, me
 	ep := documentedParameter(param, methodJavaDocParams, paramType, paramType == "path", "")
 	ep.Name = name
 	return ep
-}
-
-func unwrapResponseType(rawType string) string {
-	if strings.HasPrefix(rawType, "ResponseEntity<") && strings.HasSuffix(rawType, ">") {
-		return rawType[len("ResponseEntity<") : len(rawType)-1]
-	}
-	return rawType
 }
 
 func isJavaPrimitive(typ string) bool {

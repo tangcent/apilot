@@ -1,9 +1,11 @@
 package jaxrs
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/tangcent/apilot/api-collector-java/parser"
+	model "github.com/tangcent/apilot/api-model"
 )
 
 func makeJaxrsResults() []parser.ParseResult {
@@ -445,7 +447,7 @@ func TestParser_ResponseTypeUnwrapping(t *testing.T) {
 					},
 					Methods: []parser.Method{
 						{
-							Name:        "getPlainResponse",
+							Name:        "getOpaqueResponse",
 							Annotations: []parser.Annotation{{Name: "GET"}},
 							ReturnType:  "Response",
 						},
@@ -472,8 +474,18 @@ func TestParser_ResponseTypeUnwrapping(t *testing.T) {
 		t.Fatalf("Expected 3 endpoints, got %d", len(resources[0].Endpoints))
 	}
 
-	if resources[0].Endpoints[0].ResponseSchema != nil {
-		t.Error("Plain Response should not produce a schema")
+	// A bare Response still describes a response; its body is the wrapper
+	// because nothing else could be named. Dropping the schema dropped the
+	// whole section from the export.
+	opaque := resources[0].Endpoints[0].ResponseSchema
+	if opaque == nil {
+		t.Fatal("Plain Response must still produce a schema")
+	}
+	if opaque.Kind != model.KindSingle || opaque.TypeName != responseTypeName {
+		t.Errorf("Expected opaque %q schema, got kind=%s type=%s", responseTypeName, opaque.Kind, opaque.TypeName)
+	}
+	if warnings := p.Warnings(); len(warnings) != 1 || !strings.Contains(warnings[0], "getOpaqueResponse") {
+		t.Errorf("Expected one warning naming the method, got %v", warnings)
 	}
 
 	if resources[0].Endpoints[1].ResponseSchema == nil {

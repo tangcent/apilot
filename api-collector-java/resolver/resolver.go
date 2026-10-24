@@ -125,6 +125,16 @@ var reactiveWrappers = map[string]bool{
 	"flux": true,
 }
 
+// responseWrappers are the framework types that carry the payload as their
+// single type argument: Spring's `ResponseEntity<Order>` and Feign's.
+//
+// They are plumbing in the same way a publisher is — nothing of the wrapper
+// reaches the wire — so the unwrap lives here rather than in each framework
+// parser, and a wrapper nested inside another type keeps working.
+var responseWrappers = map[string]bool{
+	"responseentity": true,
+}
+
 type DependencyResolver interface {
 	ResolveClass(className string) *parser.Class
 }
@@ -243,6 +253,12 @@ func (r *TypeResolver) Resolve(rawType string, typeBindings map[string]string) *
 				return model.ArrayModel(payload)
 			}
 			return payload
+		}
+
+		// Response wrappers are the same shape: `ResponseEntity<Order>` is
+		// `Order`, and the wrapper itself never appears in the schema.
+		if responseWrappers[simpleTypeName(baseName)] && len(typeArgs) == 1 {
+			return r.Resolve(typeArgs[0], typeBindings)
 		}
 
 		if typeBindings != nil {

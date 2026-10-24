@@ -43,6 +43,9 @@ MIN_ENDPOINTS=100
 EXPECTED_ROUTES=(
     "/users"
     "/users/{id}"
+    "/api/categories/{id}/detail"
+    "/api/categories/{id}/status"
+    "/api/categories/{id}/cache"
 )
 
 EXPECTED_FIELDS=(
@@ -52,6 +55,10 @@ EXPECTED_FIELDS=(
     "| granularity |"
     "| code | int |"
     "| message | string |"
+    # Category fields reached through Response.ok(Result.success(category)):
+    # the payload is only visible in the method body.
+    "| &ensp;&ensp;&#124;─parentId | long |"
+    "| &ensp;&ensp;&#124;─icon | string |"
 )
 
 failures=()
@@ -73,6 +80,14 @@ for field in "${EXPECTED_FIELDS[@]}"; do
     fi
 done
 
+# Every endpoint documents its response. A JAX-RS handler returning Response
+# builds its payload in the method body, so a missing section means the
+# collector dropped it instead of marking it opaque (issue #164).
+response_count=$(grep -c '^> RESPONSE$' "$OUTPUT_FILE" || true)
+if [ "$response_count" -ne "$endpoint_count" ]; then
+    failures+=("$((endpoint_count - response_count)) endpoint(s) exported without a response section")
+fi
+
 if [ ${#failures[@]} -gt 0 ]; then
     echo "✗ $SAMPLE_NAME test failed"
     for failure in "${failures[@]}"; do
@@ -84,6 +99,6 @@ if [ ${#failures[@]} -gt 0 ]; then
 fi
 
 echo "✓ $SAMPLE_NAME test passed"
-echo "  - $endpoint_count endpoints exported"
+echo "  - $endpoint_count endpoints exported, $response_count with a response section"
 echo "  - ${#EXPECTED_ROUTES[@]} routes and ${#EXPECTED_FIELDS[@]} fields verified"
 exit 0

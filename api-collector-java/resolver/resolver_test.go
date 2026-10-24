@@ -634,6 +634,66 @@ func TestResolve_ReactiveWrappers(t *testing.T) {
 	})
 }
 
+// TestResolve_ResponseWrappers covers the framework response wrappers that
+// declare their payload as a type argument. Like a publisher, the wrapper is
+// transport: nothing of ResponseEntity reaches the wire.
+func TestResolve_ResponseWrappers(t *testing.T) {
+	classes := []parser.Class{
+		{
+			Name:           "Result",
+			TypeParameters: []string{"T"},
+			Fields: []parser.Field{
+				{Name: "code", Type: "int"},
+				{Name: "data", Type: "T"},
+			},
+		},
+		{
+			Name: "User",
+			Fields: []parser.Field{
+				{Name: "id", Type: "Long"},
+				{Name: "name", Type: "String"},
+			},
+		},
+	}
+
+	r := NewTypeResolver(classes)
+
+	t.Run("ResponseEntity<User> is User", func(t *testing.T) {
+		result := r.Resolve("ResponseEntity<User>", nil)
+		if result.Kind != model.KindObject || result.TypeName != "User" {
+			t.Fatalf("Expected object/User, got %s/%s", result.Kind, result.TypeName)
+		}
+		if _, ok := result.Fields["name"]; !ok {
+			t.Error("Expected the User fields to be expanded")
+		}
+	})
+
+	t.Run("the payload keeps expanding", func(t *testing.T) {
+		result := r.Resolve("ResponseEntity<Result<User>>", nil)
+		if result.Kind != model.KindObject || result.TypeName != "Result" {
+			t.Fatalf("Expected object/Result, got %s/%s", result.Kind, result.TypeName)
+		}
+		dataField := result.Fields["data"]
+		if dataField == nil || dataField.Model == nil || dataField.Model.TypeName != "User" {
+			t.Errorf("Expected data object/User, got %+v", dataField)
+		}
+	})
+
+	t.Run("a wrapped publisher resolves through both layers", func(t *testing.T) {
+		result := r.Resolve("ResponseEntity<Mono<User>>", nil)
+		if result.Kind != model.KindObject || result.TypeName != "User" {
+			t.Fatalf("Expected object/User, got %s/%s", result.Kind, result.TypeName)
+		}
+	})
+
+	t.Run("a raw ResponseEntity is not a payload", func(t *testing.T) {
+		result := r.Resolve("ResponseEntity", nil)
+		if result.Kind != model.KindSingle || result.TypeName != "ResponseEntity" {
+			t.Errorf("Expected the raw wrapper to stay unresolved, got %s/%s", result.Kind, result.TypeName)
+		}
+	})
+}
+
 func TestResolve_TypeBindings(t *testing.T) {
 	classes := []parser.Class{
 		{

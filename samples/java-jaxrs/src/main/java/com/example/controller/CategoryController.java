@@ -2,6 +2,7 @@ package com.example.controller;
 
 import javax.ws.rs.*;
 import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Response;
 import com.example.model.Category;
 import com.example.model.Result;
 import com.example.model.PageResult;
@@ -39,6 +40,33 @@ public class CategoryController extends BaseCrudController<CreateCategoryReq, Ca
     @Produces(MediaType.APPLICATION_JSON)
     public Result<List<Category>> getRootCategories() {
         return Result.success(List.of());
+    }
+
+    /**
+     * The payload is built in the body: the declared type is Response, which
+     * says nothing about what comes back.
+     */
+    @GET
+    @Path("/{id}/detail")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getCategoryDetail(@PathParam("id") Long id) {
+        Category category = new Category();
+        return Response.ok(Result.success(category)).build();
+    }
+
+    @PATCH
+    @Path("/{id}/status")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response updateStatus(@PathParam("id") Long id, @QueryParam("status") Integer status) {
+        Category category = new Category();
+        return Response.status(202).entity(Result.success(category)).build();
+    }
+
+    @DELETE
+    @Path("/{id}/cache")
+    public Response clearCache(@PathParam("id") Long id) {
+        return Response.noContent().build();
     }
 }
 

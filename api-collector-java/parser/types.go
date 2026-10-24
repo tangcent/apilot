@@ -15,6 +15,11 @@ type Method struct {
 	ReturnType    string
 	JavaDoc       string
 	JavaDocParams map[string]string
+	// Body is the raw text of the method body, braces included, or empty for
+	// a declaration without one (interface and abstract methods). Frameworks
+	// whose response payload is built inside the body rather than declared in
+	// the return type need it to recover the payload.
+	Body string
 }
 
 // Parameter represents a method parameter.

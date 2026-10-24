@@ -20,6 +20,7 @@ import (
 type JavaCollector struct {
 	mu            sync.Mutex
 	unresolved    map[string]int
+	warnings      []string
 	depResolution collector.DependencyResolution
 }
 
@@ -47,6 +48,15 @@ func (c *JavaCollector) Unresolved() map[string]int {
 		out[name] = n
 	}
 	return out
+}
+
+// Warnings reports the diagnostics raised during the last Collect call: gaps
+// the collector worked around so the export could still be produced. A JAX-RS
+// response whose payload is only built in the method body is the first of them.
+func (c *JavaCollector) Warnings() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.warnings...)
 }
 
 // DependencyResolution reports whether dependency-based type resolution ran
@@ -107,6 +117,7 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 
 	frameworks := resolveFrameworks(ctx)
 	var endpoints []collector.ApiEndpoint
+	var warnings []string
 
 	// Shared across framework parsers: a type may be referenced by endpoints
 	// from more than one framework.
@@ -136,6 +147,7 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 				endpoints = append(endpoints, jaxrsEndpointToAPI(ep, res.Name))
 			}
 		}
+		warnings = append(warnings, jr.Warnings()...)
 	}
 
 	if frameworks["feign"] {
@@ -153,6 +165,7 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 
 	c.mu.Lock()
 	c.unresolved = unresolved.Counts()
+	c.warnings = warnings
 	depResolution.ResolvedTypes = depResolverCount(depResolver)
 	c.depResolution = depResolution
 	c.mu.Unlock()

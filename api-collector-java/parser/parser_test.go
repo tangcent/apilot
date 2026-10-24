@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -723,4 +724,40 @@ public class User {
 			t.Errorf("Expected 0 classes for empty source, got %d", len(classes))
 		}
 	})
+}
+
+func TestParser_ExtractsMethodBody(t *testing.T) {
+	p, err := NewParser(ParserOptions{LogLevel: LogLevelError})
+	if err != nil {
+		t.Fatalf("Failed to create parser: %v", err)
+	}
+	defer p.Close()
+
+	classes, err := p.ParseSource([]byte(`package com.example;
+
+public class UserResource {
+    public Response get(Long id) {
+        User user = new User();
+        return Response.ok(Result.success(user)).build();
+    }
+
+    public abstract Response declaration();
+}`))
+	if err != nil {
+		t.Fatalf("Failed to parse source: %v", err)
+	}
+	if len(classes) != 1 || len(classes[0].Methods) != 2 {
+		t.Fatalf("Expected 1 class with 2 methods, got %d", len(classes[0].Methods))
+	}
+
+	// The body is needed by frameworks whose payload is built there rather
+	// than declared in the return type.
+	if body := classes[0].Methods[0].Body; !strings.Contains(body, "Response.ok(Result.success(user))") {
+		t.Errorf("Expected method body text, got %q", body)
+	}
+
+	// A declaration has no body, which is not the same thing as an empty one.
+	if body := classes[0].Methods[1].Body; body != "" {
+		t.Errorf("Expected no body for a declaration, got %q", body)
+	}
 }

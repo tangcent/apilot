@@ -360,6 +360,11 @@ func extractMethod(node *tree_sitter.Node, source []byte) Method {
 			method.ReturnType = child.Utf8Text(source)
 		case "formal_parameters":
 			method.Parameters = extractParameters(child, source)
+		case "block":
+			// The body is kept as source text: the frameworks that build the
+			// response inside the method need to read it, and a node handle
+			// would not outlive the parse tree.
+			method.Body = child.Utf8Text(source)
 		}
 	}
 
