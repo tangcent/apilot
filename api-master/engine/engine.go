@@ -94,6 +94,12 @@ func Run(cfg Config) error {
 		reportUnresolved(os.Stderr, reporter.Unresolved())
 	}
 
+	// A collector that had to leave part of a document unexpanded says so
+	// here; otherwise the gap is only visible to whoever reads the export.
+	if reporter, ok := c.(collector.WarningsReporter); ok {
+		reportWarnings(os.Stderr, reporter.Warnings())
+	}
+
 	collected := len(endpoints)
 
 	if sourceFile != "" {
@@ -203,6 +209,16 @@ func reportUnresolved(w io.Writer, counts map[string]int) {
 			unit = "occurrence"
 		}
 		fmt.Fprintf(w, "  %-20s %d %s\n", name, counts[name], unit)
+	}
+}
+
+// reportWarnings writes the diagnostics a collector raised while producing the
+// export, one line each. Like the other reports it goes to a side channel
+// (stderr) so exported documents stay byte-stable, and it never affects the
+// exit code: a marked section is a gap to fill, not a failed run.
+func reportWarnings(w io.Writer, warnings []string) {
+	for _, warning := range warnings {
+		fmt.Fprintf(w, "warning: %s\n", warning)
 	}
 }
 
