@@ -13,6 +13,7 @@ import (
 	pycollector   "github.com/tangcent/apilot/api-collector-python"
 
 	curlfmt    "github.com/tangcent/apilot/api-formatter-curl"
+	jsonfmt    "github.com/tangcent/apilot/api-formatter-json"
 	mdfmt      "github.com/tangcent/apilot/api-formatter-markdown"
 	postmanfmt "github.com/tangcent/apilot/api-formatter-postman"
 )
@@ -26,6 +27,7 @@ func init() {
 	engine.RegisterFormatter(mdfmt.New())
 	engine.RegisterFormatter(curlfmt.New())
 	engine.RegisterFormatter(postmanfmt.New())
+	engine.RegisterFormatter(jsonfmt.New())
 }
 
 func main() {

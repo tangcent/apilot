@@ -26,6 +26,9 @@ apilot export ./my-service --formatter markdown --format detailed --output API.m
 
 # Generate cURL commands
 apilot export ./my-service --formatter curl
+
+# Export endpoint JSON for a CI gate
+apilot export ./my-service --formatter json --output api.json
 ```
 
 ## Core Commands
@@ -38,7 +41,7 @@ Scan source code and export API endpoints.
 
 **Flags:**
 - `--collector <name>` — Collector to use (auto-detected if omitted)
-- `--formatter <name>` — Output format: `markdown`, `curl`, `postman` (default: `markdown`)
+- `--formatter <name>` — Output format: `markdown`, `curl`, `postman`, `json` (default: `markdown`)
 - `--format <variant>` — Format variant: `simple`, `detailed` (default: `simple`)
 - `--method <name>` — Filter to a specific method name (used with file-level export)
 - `--project-root <path>` — Override auto-detected project root directory
@@ -62,6 +65,9 @@ apilot export ./backend --formatter markdown --format detailed --output API.md
 
 # Quick cURL reference
 apilot export ./backend --formatter curl
+
+# Stable JSON to assert on in a pipeline
+apilot export ./backend --formatter json --output api.json
 ```
 
 ### `apilot set <key> <value>`

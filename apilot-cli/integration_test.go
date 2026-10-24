@@ -260,6 +260,9 @@ func TestListFormatters(t *testing.T) {
 	if !strings.Contains(output, "postman") {
 		t.Error("should list postman formatter")
 	}
+	if !strings.Contains(output, "json") {
+		t.Error("should list json formatter")
+	}
 }
 
 func TestGoProjectWithMarkdownFormatter(t *testing.T) {
@@ -276,6 +279,10 @@ func TestGoProjectWithCurlFormatter(t *testing.T) {
 
 func TestGoProjectWithPostmanFormatter(t *testing.T) {
 	assertGolden(t, "postman", testdataProject(), "--collector", "go", "--formatter", "postman")
+}
+
+func TestGoProjectWithJSONFormatter(t *testing.T) {
+	assertGolden(t, "json", testdataProject(), "--collector", "go", "--formatter", "json")
 }
 
 func TestAutoDetectCollector(t *testing.T) {
@@ -474,6 +481,145 @@ func TestGoProjectExportedContent(t *testing.T) {
 				t.Errorf("%s: response body is missing field %q: %s", name, field, r.Response[0].Body)
 			}
 		}
+	}
+}
+
+// jsonDocument is the subset of the JSON export the assertions below need.
+type jsonDocument struct {
+	Endpoints []struct {
+		Name     string `json:"name"`
+		Method   string `json:"method"`
+		Path     string `json:"path"`
+		Protocol string `json:"protocol"`
+		Request     *struct {
+			Parameters *struct {
+				Path  []jsonParameter `json:"path"`
+				Query []jsonParameter `json:"query"`
+			} `json:"parameters"`
+			Body *jsonBody `json:"body"`
+		} `json:"request"`
+		Response *jsonBody `json:"response"`
+	} `json:"endpoints"`
+}
+
+type jsonParameter struct {
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Required bool   `json:"required"`
+	Default  string `json:"default"`
+}
+
+type jsonBody struct {
+	MediaType string `json:"mediaType"`
+	Schema    *struct {
+		Kind   string `json:"kind"`
+		Fields []struct {
+			Name string `json:"name"`
+			Kind string `json:"kind"`
+			Type string `json:"type"`
+		} `json:"fields"`
+	} `json:"schema"`
+}
+
+// schemaFieldNames returns the object member names of a body schema.
+func schemaFieldNames(body *jsonBody) []string {
+	if body == nil || body.Schema == nil {
+		return nil
+	}
+	names := make([]string, 0, len(body.Schema.Fields))
+	for _, f := range body.Schema.Fields {
+		names = append(names, f.Name)
+	}
+	return names
+}
+
+// countMarkdownEndpointHeadings counts the per-endpoint headings of the
+// detailed markdown variant.
+func countMarkdownEndpointHeadings(markdown string) int {
+	count := 0
+	for _, line := range strings.Split(normalizeNewlines(markdown), "\n") {
+		if strings.HasPrefix(line, "### ") {
+			count++
+		}
+	}
+	return count
+}
+
+// TestJSONExportContent asserts the content a CI gate is meant to build on: the
+// endpoint set matches the markdown export, the identifiers survive, and two
+// runs produce the same bytes.
+func TestJSONExportContent(t *testing.T) {
+	stdout, exitCode := runCLIOnStdout(testdataProject(), "--collector", "go", "--formatter", "json")
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", exitCode)
+	}
+
+	var doc jsonDocument
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("json output should be valid JSON: %v\n%s", err, stdout)
+	}
+
+	// Acceptance criterion: the endpoint count equals the markdown heading count.
+	markdown, exitCode := runCLIOnStdout(testdataProject(), "--collector", "go", "--formatter", "markdown", "--format", "detailed")
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0 for markdown, got %d", exitCode)
+	}
+	if got, want := len(doc.Endpoints), countMarkdownEndpointHeadings(markdown); got != want {
+		t.Errorf("json endpoints = %d, markdown endpoint headings = %d", got, want)
+	}
+
+	var names []string
+	for _, ep := range doc.Endpoints {
+		names = append(names, ep.Name)
+	}
+	wantNames := "createUser,deleteUser,getUser,listUsers,updateUser"
+	if got := strings.Join(names, ","); got != wantNames {
+		t.Errorf("endpoint order = %s, want %s", got, wantNames)
+	}
+
+	byName := make(map[string]int, len(doc.Endpoints))
+	for i, ep := range doc.Endpoints {
+		if ep.Protocol != "http" || ep.Method == "" || ep.Path == "" {
+			t.Errorf("endpoint %s: protocol/method/path = %q/%q/%q", ep.Name, ep.Protocol, ep.Method, ep.Path)
+		}
+		byName[ep.Name] = i
+	}
+
+	// Query parameters of GET /users, including the declared default.
+	listUsers := doc.Endpoints[byName["listUsers"]]
+	if listUsers.Request == nil || listUsers.Request.Parameters == nil {
+		t.Fatal("listUsers: request parameters missing")
+	}
+	query := listUsers.Request.Parameters.Query
+	if len(query) != 2 || query[0].Name != "keyword" || query[1].Name != "page" || query[1].Default != "1" {
+		t.Errorf("listUsers: query parameters = %+v, want keyword then page=1", query)
+	}
+
+	// Request schema of POST /users.
+	createUser := doc.Endpoints[byName["createUser"]]
+	if createUser.Request == nil || createUser.Request.Body == nil {
+		t.Fatal("createUser: request body missing")
+	}
+	if createUser.Request.Body.MediaType != "application/json" {
+		t.Errorf("createUser: request media type = %q, want application/json", createUser.Request.Body.MediaType)
+	}
+	if got, want := strings.Join(schemaFieldNames(createUser.Request.Body), ","), "email,name,password,tags"; got != want {
+		t.Errorf("createUser: request fields = %s, want %s", got, want)
+	}
+
+	// Response schema of GET /users/:id, plus its path parameter.
+	getUser := doc.Endpoints[byName["getUser"]]
+	if getUser.Request == nil || getUser.Request.Parameters == nil || len(getUser.Request.Parameters.Path) != 1 {
+		t.Fatalf("getUser: path parameters missing")
+	}
+	if got, want := strings.Join(schemaFieldNames(getUser.Response), ","), "age,email,id,name"; got != want {
+		t.Errorf("getUser: response fields = %s, want %s", got, want)
+	}
+
+	// Same input, same bytes: a gate cannot depend on a run-specific detail.
+	second, _ := runCLIOnStdout(testdataProject(), "--collector", "go", "--formatter", "json")
+	if stdout != second {
+		t.Error("two runs of the json formatter produced different output")
 	}
 }
 

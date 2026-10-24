@@ -1,0 +1,248 @@
+{
+  "endpoints": [
+    {
+      "name": "createUser",
+      "method": "POST",
+      "path": "/users",
+      "protocol": "http",
+      "description": "createUser registers a new account.",
+      "request": {
+        "body": {
+          "mediaType": "application/json",
+          "schema": {
+            "kind": "object",
+            "fields": [
+              {
+                "name": "email",
+                "kind": "single",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "name",
+                "kind": "single",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "password",
+                "kind": "single",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "tags",
+                "kind": "array",
+                "items": {
+                  "kind": "single",
+                  "type": "string"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "response": {
+        "mediaType": "application/json",
+        "schema": {
+          "kind": "object",
+          "fields": [
+            {
+              "name": "age",
+              "kind": "single",
+              "type": "int"
+            },
+            {
+              "name": "email",
+              "kind": "single",
+              "type": "string"
+            },
+            {
+              "name": "id",
+              "kind": "single",
+              "type": "long"
+            },
+            {
+              "name": "name",
+              "kind": "single",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "deleteUser",
+      "method": "DELETE",
+      "path": "/users/:id",
+      "protocol": "http",
+      "description": "deleteUser removes a user by id.",
+      "request": {
+        "parameters": {
+          "path": [
+            {
+              "name": "id",
+              "type": "text",
+              "required": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "getUser",
+      "method": "GET",
+      "path": "/users/:id",
+      "protocol": "http",
+      "description": "getUser returns a single user by id.",
+      "request": {
+        "parameters": {
+          "path": [
+            {
+              "name": "id",
+              "type": "text",
+              "required": true
+            }
+          ],
+          "header": [
+            {
+              "name": "X-Request-Id",
+              "type": "text",
+              "required": false
+            }
+          ]
+        }
+      },
+      "response": {
+        "mediaType": "application/json",
+        "schema": {
+          "kind": "object",
+          "fields": [
+            {
+              "name": "age",
+              "kind": "single",
+              "type": "int"
+            },
+            {
+              "name": "email",
+              "kind": "single",
+              "type": "string"
+            },
+            {
+              "name": "id",
+              "kind": "single",
+              "type": "long"
+            },
+            {
+              "name": "name",
+              "kind": "single",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "listUsers",
+      "method": "GET",
+      "path": "/users",
+      "protocol": "http",
+      "description": "listUsers returns a filtered page of users.",
+      "request": {
+        "parameters": {
+          "query": [
+            {
+              "name": "keyword",
+              "type": "text",
+              "required": true
+            },
+            {
+              "name": "page",
+              "type": "text",
+              "required": false,
+              "default": "1"
+            }
+          ]
+        }
+      },
+      "response": {
+        "mediaType": "application/json",
+        "schema": {
+          "kind": "map",
+          "key": {
+            "kind": "single",
+            "type": "string"
+          },
+          "value": {
+            "kind": "single",
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "name": "updateUser",
+      "method": "PUT",
+      "path": "/users/:id",
+      "protocol": "http",
+      "description": "updateUser updates an existing user.",
+      "request": {
+        "parameters": {
+          "path": [
+            {
+              "name": "id",
+              "type": "text",
+              "required": true
+            }
+          ]
+        },
+        "body": {
+          "mediaType": "application/json",
+          "schema": {
+            "kind": "object",
+            "fields": [
+              {
+                "name": "email",
+                "kind": "single",
+                "type": "string"
+              },
+              {
+                "name": "name",
+                "kind": "single",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      },
+      "response": {
+        "mediaType": "application/json",
+        "schema": {
+          "kind": "object",
+          "fields": [
+            {
+              "name": "age",
+              "kind": "single",
+              "type": "int"
+            },
+            {
+              "name": "email",
+              "kind": "single",
+              "type": "string"
+            },
+            {
+              "name": "id",
+              "kind": "single",
+              "type": "long"
+            },
+            {
+              "name": "name",
+              "kind": "single",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

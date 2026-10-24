@@ -25,6 +25,7 @@ Point APilot at a source directory and it figures out the rest:
 apilot export ./my-service --formatter postman --output collection.json
 apilot export ./my-service --formatter markdown --format detailed
 apilot export ./my-service --formatter curl
+apilot export ./my-service --formatter json --output api.json
 ```
 
 It detects your language and framework automatically, walks the source tree, and produces clean, structured API output — ready to import into Postman, share as docs, or drop into a CI pipeline.
@@ -49,6 +50,7 @@ It detects your language and framework automatically, walks the source tree, and
 | markdown | Markdown docs (simple or detailed)       |
 | curl     | One `curl` command per endpoint          |
 | postman  | Postman Collection v2.1 JSON             |
+| json     | Machine-readable endpoint JSON for CI    |
 
 ---
 
@@ -149,7 +151,7 @@ apilot export <source-path> [flags]
 
 Flags:
   --collector      string   Collector name (auto-detected if omitted)
-  --formatter      string   Output format: markdown, curl, postman (default: markdown)
+  --formatter      string   Output format: markdown, curl, postman, json (default: markdown)
   --format         string   Format variant, e.g. simple, detailed (default: simple)
   --method         string   Filter to a specific method name (used with file-level export)
   --project-root   string   Override auto-detected project root directory
@@ -179,6 +181,9 @@ apilot export UserController.java --method getUser --formatter curl
 
 # Multi-module project: override project root
 apilot export user-service/src/.../UserController.java --project-root ./company-platform
+
+# Machine-readable export for a CI gate
+apilot export ./backend --formatter json --output api.json
 ```
 
 ### Dependency type resolution
@@ -211,6 +216,105 @@ apilot export ./backend --formatter markdown --no-deps
 | `apilot export ./project` | All APIs in project |
 | `apilot export UserController.java` | All APIs in that file |
 | `apilot export UserController.java --method getUser` | One specific API |
+
+### Machine-readable JSON
+
+`--formatter json` writes one document a pipeline can diff and gate on, instead
+of counting headings in markdown:
+
+```bash
+apilot export ./backend --formatter json --output api.json
+apilot export ./backend --formatter json | jq '.endpoints | length'
+```
+
+The output depends only on the collected endpoints — no timestamps, no absolute
+paths, no host-specific values — so the same input produces byte-identical
+output on every machine, and endpoints are sorted rather than left in whatever
+order the source tree was walked.
+
+```json
+{
+  "endpoints": [
+    {
+      "name": "getUser",
+      "method": "GET",
+      "path": "/users/:id",
+      "protocol": "http",
+      "description": "Returns a single user.",
+      "folder": "UserController",
+      "request": {
+        "parameters": {
+          "path": [
+            { "name": "id", "type": "text", "required": true }
+          ],
+          "query": [
+            { "name": "verbose", "type": "text", "required": false, "default": "false" }
+          ]
+        },
+        "body": {
+          "mediaType": "application/json",
+          "schema": {
+            "kind": "object",
+            "fields": [
+              { "name": "name", "kind": "single", "type": "string", "required": true, "description": "display name" }
+            ]
+          }
+        }
+      },
+      "response": {
+        "mediaType": "application/json",
+        "schema": {
+          "kind": "object",
+          "fields": [
+            { "name": "id", "kind": "single", "type": "long", "required": true },
+            { "name": "roles", "kind": "array", "items": { "kind": "single", "type": "string" } }
+          ]
+        }
+      }
+    }
+  ]
+}
+```
+
+**Endpoint order.** `endpoints` is sorted by `folder`, then `name`, `method` and
+`path`; endpoints that belong to no folder come last.
+
+**Parameters** are grouped by location under `request.parameters`:
+
+| Group | Location | Notes |
+|-------|----------|-------|
+| `path` | path variable | |
+| `query` | query string | |
+| `header` | request header | headers declared outside the parameter list are merged here |
+| `cookie` | cookie | |
+| `form` | form field | `type` is `file` for uploads |
+| `body` | raw body parameter | separate from the `request.body` schema |
+
+A group with no parameter is omitted. Order within a group is the order the
+collector reported. Each parameter carries `name`, `type`, `required`, and —
+when the source declares them — `default`, `value`, `description`, `example`
+and `enum`.
+
+**Schema** is a tree of nodes, one node per value, shared by request and
+response bodies:
+
+| `kind` | Meaning | Keys besides `kind` |
+|--------|---------|---------------------|
+| `single` | primitive | `type`: `string`, `int`, `long`, `float`, `double`, `boolean`, `null` |
+| `ref` | named type left unexpanded | `type`: the type name |
+| `object` | object | `fields`: member nodes |
+| `array` | array | `items`: element node |
+| `map` | map | `key`, `value`: nodes |
+
+A member of an object is the same node plus `name`, and the documentation that
+belongs to that member: `required`, `description`, `default`, `demo`, `generic`,
+`options`. Optional keys are omitted when empty, so a field is required only
+when `required` is `true`.
+
+Object members are sorted by name. The collected model keeps fields in a map, so
+declaration order is already lost before a formatter runs; sorting is the only
+order that is stable across runs and machines. A type that refers back to itself
+terminates as a `ref` node instead of expanding forever.
 
 ---
 
@@ -250,7 +354,7 @@ APilot is a multi-module Go monorepo with a clean three-layer design:
 apilot-cli  (bundled binary)
   └── api-master  (engine + plugin runtime)
         ├── api-collector-{java,go,node,python}
-        └── api-formatter-{markdown,curl,postman}
+        └── api-formatter-{markdown,curl,json,postman}
 ```
 
 The `api-collector` and `api-formatter` packages define the stable interfaces. Everything else is an implementation. See [docs/architecture.md](docs/architecture.md) for the full breakdown.

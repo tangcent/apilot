@@ -20,7 +20,7 @@ APilot is a multi-module monorepo that parses API source code and exports docume
 ┌──────────────────────▼──────────────────────────────────────┐
 │                   Collector / Formatter Modules              │
 │  api-collector-{java,go,node,python}                 │
-│  api-formatter-{markdown,curl,postman}                        │
+│  api-formatter-{markdown,curl,json,postman}                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -43,6 +43,7 @@ APilot is a multi-module monorepo that parses API source code and exports docume
 | `api-formatter-markdown` | Go | Markdown formatter (simple + detailed templates) |
 | `api-formatter-curl` | Go | cURL command formatter |
 | `api-formatter-postman` | Go | Postman Collection v2.1 formatter |
+| `api-formatter-json` | Go | Machine-readable endpoint JSON for CI assertions |
 | `vscode-plugin` | TypeScript | VSCode extension: invokes apilot-cli as subprocess |
 | `jetbrains-plugin` | Kotlin | IntelliJ plugin: PSI-based, no Go dependency |
 
@@ -59,6 +60,7 @@ apilot-cli
   ├── api-collector-python
   ├── api-formatter-markdown
   ├── api-formatter-curl
+  ├── api-formatter-json
   └── api-formatter-postman
 
 api-master
@@ -78,7 +80,7 @@ api-collector-{java,go,node,python}
   ├── api-collector
   └── api-docmeta   (shared documentation-metadata contract)
 
-api-formatter-{markdown,curl,postman}
+api-formatter-{markdown,curl,json,postman}
   ├── api-model     (for ApiEndpoint type)
   └── api-formatter
 

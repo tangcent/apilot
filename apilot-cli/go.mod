@@ -8,6 +8,7 @@ require (
 	github.com/tangcent/apilot/api-collector-node v0.0.0
 	github.com/tangcent/apilot/api-collector-python v0.0.0
 	github.com/tangcent/apilot/api-formatter-curl v0.0.0
+	github.com/tangcent/apilot/api-formatter-json v0.0.0
 	github.com/tangcent/apilot/api-formatter-markdown v0.0.0
 	github.com/tangcent/apilot/api-formatter-postman v0.0.0
 	github.com/tangcent/apilot/api-master v0.0.0
@@ -26,6 +27,7 @@ replace (
 	github.com/tangcent/apilot/api-collector-python => ../api-collector-python
 	github.com/tangcent/apilot/api-formatter => ../api-formatter
 	github.com/tangcent/apilot/api-formatter-curl => ../api-formatter-curl
+	github.com/tangcent/apilot/api-formatter-json => ../api-formatter-json
 	github.com/tangcent/apilot/api-formatter-markdown => ../api-formatter-markdown
 	github.com/tangcent/apilot/api-formatter-postman => ../api-formatter-postman
 	github.com/tangcent/apilot/api-master => ../api-master

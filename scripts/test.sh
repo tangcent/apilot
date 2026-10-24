@@ -11,6 +11,7 @@ MODULES=(
   api-collector-node
   api-collector-python
   api-formatter-curl
+  api-formatter-json
   api-formatter-markdown
   api-formatter-postman
   api-master
