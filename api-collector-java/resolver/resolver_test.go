@@ -521,6 +521,119 @@ func TestResolve_NestedGenerics(t *testing.T) {
 	})
 }
 
+// TestResolve_ReactiveWrappers covers reactor publishers: the wrapper carries
+// no data, so the schema is its type argument — `Mono<T>` is `T` and `Flux<T>`
+// is an array of `T`.
+func TestResolve_ReactiveWrappers(t *testing.T) {
+	classes := []parser.Class{
+		{
+			Name:           "Result",
+			TypeParameters: []string{"T"},
+			Fields: []parser.Field{
+				{Name: "code", Type: "int"},
+				{Name: "message", Type: "String"},
+				{Name: "data", Type: "T"},
+			},
+		},
+		{
+			Name: "User",
+			Fields: []parser.Field{
+				{Name: "id", Type: "Long"},
+				{Name: "name", Type: "String"},
+			},
+		},
+		{
+			Name:           "Envelope",
+			TypeParameters: []string{"T"},
+			Fields: []parser.Field{
+				{Name: "payload", Type: "Mono<T>"},
+			},
+		},
+	}
+
+	r := NewTypeResolver(classes)
+
+	t.Run("Mono<User> is User", func(t *testing.T) {
+		result := r.Resolve("Mono<User>", nil)
+		if result.Kind != model.KindObject || result.TypeName != "User" {
+			t.Fatalf("Expected object/User, got %s/%s", result.Kind, result.TypeName)
+		}
+		if _, ok := result.Fields["name"]; !ok {
+			t.Error("Expected the User fields to be expanded")
+		}
+	})
+
+	t.Run("qualified Mono is unwrapped too", func(t *testing.T) {
+		result := r.Resolve("reactor.core.publisher.Mono<User>", nil)
+		if result.Kind != model.KindObject || result.TypeName != "User" {
+			t.Fatalf("Expected object/User, got %s/%s", result.Kind, result.TypeName)
+		}
+	})
+
+	t.Run("Mono<Result<User>> expands the payload", func(t *testing.T) {
+		result := r.Resolve("Mono<Result<User>>", nil)
+		if result.Kind != model.KindObject || result.TypeName != "Result" {
+			t.Fatalf("Expected object/Result, got %s/%s", result.Kind, result.TypeName)
+		}
+		dataField := result.Fields["data"]
+		if dataField == nil || dataField.Model == nil {
+			t.Fatal("Expected a data field")
+		}
+		if dataField.Model.Kind != model.KindObject || dataField.Model.TypeName != "User" {
+			t.Errorf("Expected data object/User, got %s/%s", dataField.Model.Kind, dataField.Model.TypeName)
+		}
+		if _, ok := dataField.Model.Fields["name"]; !ok {
+			t.Error("Expected the User fields to be expanded")
+		}
+	})
+
+	t.Run("Mono<Result<Void>> leaves data null", func(t *testing.T) {
+		result := r.Resolve("Mono<Result<Void>>", nil)
+		dataField := result.Fields["data"]
+		if dataField == nil || dataField.Model == nil {
+			t.Fatal("Expected a data field")
+		}
+		if dataField.Model.Kind != model.KindSingle || dataField.Model.TypeName != model.JsonTypeNull {
+			t.Errorf("Expected data single/null, got %s/%s", dataField.Model.Kind, dataField.Model.TypeName)
+		}
+	})
+
+	t.Run("Flux<User> is an array of User", func(t *testing.T) {
+		result := r.Resolve("Flux<User>", nil)
+		if result.Kind != model.KindArray {
+			t.Fatalf("Expected KindArray, got %s", result.Kind)
+		}
+		if result.Items == nil || result.Items.Kind != model.KindObject || result.Items.TypeName != "User" {
+			t.Fatalf("Expected items object/User, got %+v", result.Items)
+		}
+		if _, ok := result.Items.Fields["name"]; !ok {
+			t.Error("Expected the User fields to be expanded")
+		}
+	})
+
+	t.Run("Flux<Result<User>> is an array of Result", func(t *testing.T) {
+		result := r.Resolve("Flux<Result<User>>", nil)
+		if result.Kind != model.KindArray || result.Items == nil || result.Items.TypeName != "Result" {
+			t.Fatalf("Expected array of Result, got %+v", result)
+		}
+		dataField := result.Items.Fields["data"]
+		if dataField == nil || dataField.Model == nil || dataField.Model.TypeName != "User" {
+			t.Errorf("Expected element data object/User, got %+v", dataField)
+		}
+	})
+
+	t.Run("Mono<T> honours the bound type parameter", func(t *testing.T) {
+		result := r.Resolve("Envelope<User>", nil)
+		payload := result.Fields["payload"]
+		if payload == nil || payload.Model == nil {
+			t.Fatal("Expected a payload field")
+		}
+		if payload.Model.Kind != model.KindObject || payload.Model.TypeName != "User" {
+			t.Errorf("Expected payload object/User, got %s/%s", payload.Model.Kind, payload.Model.TypeName)
+		}
+	})
+}
+
 func TestResolve_TypeBindings(t *testing.T) {
 	classes := []parser.Class{
 		{

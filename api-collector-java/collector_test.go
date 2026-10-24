@@ -986,3 +986,120 @@ func TestCollect_TagsAndHeaders(t *testing.T) {
 		t.Errorf("session Headers = %+v, want [X-Session-Token]", session.Headers)
 	}
 }
+
+// TestCollect_SchemaResolution_ReactiveController covers reactor publishers:
+// the wrapper is plumbing, so the exported schema is the type argument.
+// `Mono<T>` is `T` and `Flux<T>` is an array of `T`, the same way
+// `ResponseEntity<T>` is unwrapped.
+func TestCollect_SchemaResolution_ReactiveController(t *testing.T) {
+	c := New()
+	testdataDir, _ := filepath.Abs("testdata")
+
+	endpoints, err := c.Collect(collector.CollectContext{
+		SourceDir:  testdataDir,
+		Frameworks: []string{"spring-mvc"},
+	})
+	if err != nil {
+		t.Fatalf("Collect failed: %v", err)
+	}
+
+	byName := make(map[string]collector.ApiEndpoint, len(endpoints))
+	for _, ep := range endpoints {
+		if ep.Folder == "ReactiveUserController" {
+			byName[ep.Name] = ep
+		}
+	}
+
+	responseBody := func(name string) *model.ObjectModel {
+		t.Helper()
+		ep, ok := byName[name]
+		if !ok {
+			t.Fatalf("Expected %s endpoint from ReactiveUserController", name)
+		}
+		if ep.Response == nil || ep.Response.Body == nil {
+			t.Fatalf("%s has no response body", name)
+		}
+		return ep.Response.Body
+	}
+
+	// Mono<User> unwraps to User, own and inherited fields included.
+	body := responseBody("getUser")
+	if body.Kind != model.KindObject || body.TypeName != "User" {
+		t.Fatalf("getUser response = %s/%s, want object/User", body.Kind, body.TypeName)
+	}
+	for _, name := range []string{"name", "email", "active", "id"} {
+		if _, ok := body.Fields[name]; !ok {
+			t.Errorf("getUser response is missing field %q", name)
+		}
+	}
+
+	// Mono<Result<User>>: the wrapper is gone, Result carries the payload.
+	body = responseBody("getProfile")
+	if body.Kind != model.KindObject || body.TypeName != "Result" {
+		t.Fatalf("getProfile response = %s/%s, want object/Result", body.Kind, body.TypeName)
+	}
+	if len(body.Fields) != 3 {
+		t.Errorf("getProfile Result has %d fields, want code/message/data", len(body.Fields))
+	}
+	if code := body.Fields["code"]; code == nil || code.Model.TypeName != model.JsonTypeInt {
+		t.Errorf("getProfile Result.code = %+v, want int", code)
+	}
+	data := body.Fields["data"]
+	if data == nil || data.Model == nil {
+		t.Fatal("getProfile Result.data is missing")
+	}
+	if data.Model.Kind != model.KindObject || data.Model.TypeName != "User" {
+		t.Errorf("getProfile Result.data = %s/%s, want object/User", data.Model.Kind, data.Model.TypeName)
+	}
+	if _, ok := data.Model.Fields["email"]; !ok {
+		t.Error("getProfile Result.data does not expand the User fields")
+	}
+
+	// Mono<Result<PageResult<User>>>: two levels of generics must resolve.
+	body = responseBody("listUsers")
+	data = body.Fields["data"]
+	if data == nil || data.Model == nil {
+		t.Fatal("listUsers Result.data is missing")
+	}
+	if data.Model.Kind != model.KindObject || data.Model.TypeName != "PageResult" {
+		t.Fatalf("listUsers Result.data = %s/%s, want object/PageResult", data.Model.Kind, data.Model.TypeName)
+	}
+	for _, name := range []string{"total", "page", "size", "items"} {
+		if _, ok := data.Model.Fields[name]; !ok {
+			t.Errorf("listUsers PageResult is missing field %q", name)
+		}
+	}
+	items := data.Model.Fields["items"]
+	if items == nil || items.Model == nil || items.Model.Kind != model.KindArray {
+		t.Fatalf("listUsers PageResult.items is not an array: %+v", items)
+	}
+	if items.Model.Items == nil || items.Model.Items.TypeName != "User" {
+		t.Errorf("listUsers PageResult.items element = %+v, want User", items.Model.Items)
+	}
+	if _, ok := items.Model.Items.Fields["name"]; !ok {
+		t.Error("listUsers PageResult.items does not expand the User fields")
+	}
+
+	// Mono<Result<Void>>: nothing is returned, so data is null — not an
+	// unresolved `Void` wrapper.
+	body = responseBody("deleteUser")
+	data = body.Fields["data"]
+	if data == nil || data.Model == nil {
+		t.Fatal("deleteUser Result.data is missing")
+	}
+	if data.Model.Kind != model.KindSingle || data.Model.TypeName != model.JsonTypeNull {
+		t.Errorf("deleteUser Result.data = %s/%s, want single/null", data.Model.Kind, data.Model.TypeName)
+	}
+
+	// Flux<User> is a JSON array, so the element fields are exported.
+	body = responseBody("streamUsers")
+	if body.Kind != model.KindArray {
+		t.Fatalf("streamUsers response = %s, want array", body.Kind)
+	}
+	if body.Items == nil || body.Items.Kind != model.KindObject || body.Items.TypeName != "User" {
+		t.Fatalf("streamUsers response element = %+v, want object/User", body.Items)
+	}
+	if _, ok := body.Items.Fields["email"]; !ok {
+		t.Error("streamUsers response element does not expand the User fields")
+	}
+}

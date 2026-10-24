@@ -114,6 +114,17 @@ var mapTypes = map[string]bool{
 	"TreeMap":       true,
 }
 
+// reactiveWrappers maps a reactor publisher's simple name to whether its
+// payload is streamed as an array.
+//
+// A publisher is plumbing, not payload: nothing of `Mono` or `Flux` reaches
+// the wire, so the exported schema is the type argument. `Mono<T>` is `T`;
+// `Flux<T>` is a stream and serialises as an array of `T`.
+var reactiveWrappers = map[string]bool{
+	"mono": false,
+	"flux": true,
+}
+
 type DependencyResolver interface {
 	ResolveClass(className string) *parser.Class
 }
@@ -223,6 +234,17 @@ func (r *TypeResolver) Resolve(rawType string, typeBindings map[string]string) *
 	baseName, typeArgs := parseGenericType(rawType)
 
 	if baseName != rawType {
+		// Reactor publishers used as a return type (`Mono<Result<User>>`)
+		// carry no data of their own, so the schema is the type argument.
+		// easy-yapi resolves these through a handled rule of the same shape.
+		if isStream, ok := reactiveWrappers[simpleTypeName(baseName)]; ok && len(typeArgs) == 1 {
+			payload := r.Resolve(typeArgs[0], typeBindings)
+			if isStream {
+				return model.ArrayModel(payload)
+			}
+			return payload
+		}
+
 		if typeBindings != nil {
 			resolvedArgs := make([]string, len(typeArgs))
 			for i, arg := range typeArgs {
