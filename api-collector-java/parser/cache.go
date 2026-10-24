@@ -15,7 +15,9 @@ import (
 // cached entries are keyed on file content alone, so an entry written by an
 // older build would otherwise be replayed with the new field left empty and
 // the missing information would look like source that does not carry it.
-const cacheSchemaVersion = "2"
+//
+// Version 3: Class carries the compilation unit path and its imports.
+const cacheSchemaVersion = "3"
 
 // Cache provides file-level caching based on content hash.
 type Cache struct {

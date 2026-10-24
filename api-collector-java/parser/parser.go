@@ -81,6 +81,9 @@ func (p *Parser) ParseFile(path string) (*ParseResult, error) {
 	if err != nil {
 		return &ParseResult{FilePath: path, Error: err}, err
 	}
+	for i := range classes {
+		classes[i].FilePath = path
+	}
 
 	result := &ParseResult{FilePath: path, Classes: classes}
 
@@ -264,6 +267,7 @@ func extractAllClasses(tree *tree_sitter.Tree, source []byte) ([]Class, error) {
 	var packageName string
 
 	rootNode := tree.RootNode()
+	imports := extractImports(rootNode, source)
 	cursor := rootNode.Walk()
 	defer cursor.Close()
 
@@ -280,14 +284,17 @@ func extractAllClasses(tree *tree_sitter.Tree, source []byte) ([]Class, error) {
 		case "class_declaration":
 			class := extractClass(node, source)
 			class.Package = packageName
+			class.Imports = imports
 			classes = append(classes, class)
 		case "interface_declaration":
 			iface := extractInterface(node, source)
 			iface.Package = packageName
+			iface.Imports = imports
 			classes = append(classes, iface)
 		case "record_declaration":
 			rec := extractRecord(node, source)
 			rec.Package = packageName
+			rec.Imports = imports
 			classes = append(classes, rec)
 		}
 	}, 0)

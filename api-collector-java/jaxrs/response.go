@@ -26,12 +26,21 @@ func isJaxrsResponse(returnType string) bool {
 	return false
 }
 
+// typeLookup returns the declaration of a type name as seen from the
+// compilation unit being exported.
+//
+// Payload inspection asks the same question the type resolver does: whether
+// `Result.success(x)` is `Result<T>` depends on which Result the file can see,
+// so the answer comes from the resolver instead of a simple-name registry of
+// its own.
+type typeLookup func(name string) (parser.Class, bool)
+
 // responsePayload recovers the payload type of a JAX-RS Response from the
 // method body, where the entity is built rather than declared.
 //
 // body is the raw method body, params maps the method's parameter names to
-// their declared types, and classRegistry supplies the type-parameter counts
-// that turn `Result.success(category)` into `Result<Category>`.
+// their declared types, and lookup supplies the type-parameter counts that
+// turn `Result.success(category)` into `Result<Category>`.
 //
 // The result is one of three states:
 //
@@ -46,7 +55,7 @@ func isJaxrsResponse(returnType string) bool {
 // `Result.success(x)`. Anything else (a value returned by another method, a
 // variable assembled across branches) is reported as opaque instead of being
 // guessed.
-func responsePayload(body string, params map[string]string, classRegistry map[string]parser.Class) (string, bool) {
+func responsePayload(body string, params map[string]string, lookup typeLookup) (string, bool) {
 	expr, found := responseEntityExpr(body)
 	if !found {
 		// No Response construction at all: the value is produced elsewhere
@@ -58,7 +67,7 @@ func responsePayload(body string, params map[string]string, classRegistry map[st
 		// which is not a gap worth a warning.
 		return "", false
 	}
-	if typeName, ok := entityType(expr, params, body, classRegistry); ok {
+	if typeName, ok := entityType(expr, params, body, lookup); ok {
 		return typeName, false
 	}
 	return "", true
@@ -215,7 +224,7 @@ func trimEmptyEdges(args []string) []string {
 }
 
 // entityType reduces an entity expression to the type it carries.
-func entityType(expr string, params map[string]string, body string, classRegistry map[string]parser.Class) (string, bool) {
+func entityType(expr string, params map[string]string, body string, lookup typeLookup) (string, bool) {
 	expr = strings.TrimSpace(expr)
 
 	if typeName, ok := newExpressionType(expr); ok {
@@ -235,8 +244,8 @@ func entityType(expr string, params map[string]string, body string, classRegistr
 	// type parameter comes from the argument. This is the shape that makes a
 	// wrapped export useful, so it is worth the one inference step.
 	if base, args, ok := staticFactoryCall(expr); ok {
-		if typeParameterCount(classRegistry, base) == 1 && len(args) == 1 {
-			if argType, ok := entityType(args[0], params, body, classRegistry); ok {
+		if typeParameterCount(lookup, base) == 1 && len(args) == 1 {
+			if argType, ok := entityType(args[0], params, body, lookup); ok {
 				return base + "<" + argType + ">", true
 			}
 		}
@@ -452,10 +461,10 @@ func isTypeChar(c byte) bool {
 }
 
 // typeParameterCount reports how many type parameters a class declares, and 0
-// when the class is not in the registry. It is what makes
+// when the class is not among the scanned sources. It is what makes
 // `Result.success(category)` bind to `Result<Category>` instead of staying raw.
-func typeParameterCount(classRegistry map[string]parser.Class, name string) int {
-	class, found := classRegistry[name]
+func typeParameterCount(lookup typeLookup, name string) int {
+	class, found := lookup(name)
 	if !found {
 		return 0
 	}

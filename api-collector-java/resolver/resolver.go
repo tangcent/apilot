@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"sort"
 	"strings"
 
 	collector "github.com/tangcent/apilot/api-collector"
@@ -139,8 +140,16 @@ type DependencyResolver interface {
 	ResolveClass(className string) *parser.Class
 }
 
+// TypeResolver expands Java type spellings into object models.
+//
+// Classes are indexed under their package-qualified name, so two declarations
+// sharing a simple name in different packages coexist instead of overwriting
+// each other. Which one a simple name denotes is decided per compilation unit
+// by resolveSimpleName, following JLS 6.5.5.1 and 6.4.1.
 type TypeResolver struct {
-	classRegistry      map[string]parser.Class
+	classRegistry      map[string]parser.Class // qualified name -> declaration
+	bySimpleName       map[string][]string     // simple name -> qualified names, sorted
+	byFile             map[string][]string     // compilation unit -> qualified names declared there
 	allTypeParams      map[string]bool
 	resolving          map[string]bool
 	dependencyResolver DependencyResolver
@@ -148,19 +157,131 @@ type TypeResolver struct {
 }
 
 func NewTypeResolver(classes []parser.Class) *TypeResolver {
-	registry := make(map[string]parser.Class, len(classes))
-	allTypeParams := make(map[string]bool)
-	for _, c := range classes {
-		registry[c.Name] = c
-		for _, tp := range c.TypeParameters {
-			allTypeParams[tp] = true
-		}
-	}
-	return &TypeResolver{
-		classRegistry: registry,
-		allTypeParams: allTypeParams,
+	r := &TypeResolver{
+		classRegistry: make(map[string]parser.Class, len(classes)),
+		bySimpleName:  make(map[string][]string),
+		byFile:        make(map[string][]string),
+		allTypeParams: make(map[string]bool),
 		resolving:     make(map[string]bool),
 	}
+	for _, c := range classes {
+		r.register(c, qualifiedName(c))
+	}
+	return r
+}
+
+// qualifiedName returns the registry key of a declaration.
+func qualifiedName(c parser.Class) string {
+	if c.Package == "" {
+		return c.Name
+	}
+	return c.Package + "." + c.Name
+}
+
+// register indexes a declaration under key. Classes resolved from
+// dependencies are registered under the name that was looked up, so a
+// subsequent lookup of the same name is answered from the registry.
+func (r *TypeResolver) register(c parser.Class, key string) {
+	r.classRegistry[key] = c
+	r.bySimpleName[c.Name] = appendKey(r.bySimpleName[c.Name], key)
+	if c.FilePath != "" {
+		r.byFile[c.FilePath] = appendKey(r.byFile[c.FilePath], key)
+	}
+	for _, tp := range c.TypeParameters {
+		r.allTypeParams[tp] = true
+	}
+}
+
+func appendKey(keys []string, key string) []string {
+	for _, existing := range keys {
+		if existing == key {
+			return keys
+		}
+	}
+	keys = append(keys, key)
+	sort.Strings(keys)
+	return keys
+}
+
+// Class returns the declaration a type name denotes as seen from source.
+// It applies the same precedence as Resolve, without expanding the fields.
+func (r *TypeResolver) Class(source parser.Class, name string) (parser.Class, bool) {
+	c, found := r.classRegistry[r.resolveSimpleName(source, name)]
+	return c, found
+}
+
+// resolveSimpleName maps a type name as written in source to the registry key
+// it denotes, following JLS 6.5.5.1 and 6.4.1: a declaration in the same
+// compilation unit shadows a single-type import, which shadows a declaration
+// in the same package, which shadows an import-on-demand.
+//
+// The result doubles as the name to keep resolving with, so an import of a
+// type whose body is not among the scanned sources still selects the imported
+// type instead of a same-named class that happens to sit elsewhere in the
+// project.
+func (r *TypeResolver) resolveSimpleName(source parser.Class, name string) string {
+	if name == "" || strings.Contains(name, ".") {
+		return name
+	}
+
+	// 1. Same compilation unit: a class declared in the same file.
+	for _, key := range r.byFile[source.FilePath] {
+		if r.classRegistry[key].Name == name {
+			return key
+		}
+	}
+
+	// 2. Single-type import. The import names the type even when its body is
+	// not in the scanned sources, so it is returned without a registry check.
+	for _, imp := range source.Imports {
+		if imp.Static || imp.OnDemand {
+			continue
+		}
+		if lastSegment(imp.Path) == name {
+			return imp.Path
+		}
+	}
+
+	// 3. Same package.
+	if source.Package != "" {
+		if key := source.Package + "." + name; r.isRegistered(key) {
+			return key
+		}
+	}
+
+	// 4. Import-on-demand.
+	for _, imp := range source.Imports {
+		if imp.Static || !imp.OnDemand {
+			continue
+		}
+		if key := imp.Path + "." + name; r.isRegistered(key) {
+			return key
+		}
+	}
+
+	// 5. Nothing in scope declared the name. Sources parsed without import
+	// information (a single file, a dependency source) can only offer the
+	// declarations themselves, so accept the only one — or the first of
+	// several, in a stable order, which is what an ambiguous reference would
+	// have to fall back to anyway.
+	if keys := r.bySimpleName[name]; len(keys) > 0 {
+		return keys[0]
+	}
+
+	return name
+}
+
+func (r *TypeResolver) isRegistered(key string) bool {
+	_, found := r.classRegistry[key]
+	return found
+}
+
+// lastSegment returns the last dot-separated segment of a name.
+func lastSegment(name string) string {
+	if i := strings.LastIndex(name, "."); i >= 0 {
+		return name[i+1:]
+	}
+	return name
 }
 
 func (r *TypeResolver) SetDependencyResolver(dr DependencyResolver) {
@@ -226,14 +347,24 @@ func resolvedTypeToClass(rt *collector.ResolvedType) *parser.Class {
 	return class
 }
 
+// Resolve resolves rawType without a compilation-unit context: a simple name
+// falls back to a declaration carrying it, which is all a source parsed
+// without scope information can offer (see resolveSimpleName).
 func (r *TypeResolver) Resolve(rawType string, typeBindings map[string]string) *model.ObjectModel {
+	return r.ResolveFrom(parser.Class{}, rawType, typeBindings)
+}
+
+// ResolveFrom resolves rawType as written in source, honouring that
+// compilation unit's package and imports when a simple name has to be matched
+// to a declaration.
+func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBindings map[string]string) *model.ObjectModel {
 	if rawType == "" {
 		return model.NullModel()
 	}
 
 	if typeBindings != nil {
 		if bound, ok := typeBindings[rawType]; ok {
-			return r.Resolve(bound, nil)
+			return r.ResolveFrom(source, bound, nil)
 		}
 	}
 
@@ -248,7 +379,7 @@ func (r *TypeResolver) Resolve(rawType string, typeBindings map[string]string) *
 		// carry no data of their own, so the schema is the type argument.
 		// easy-yapi resolves these through a handled rule of the same shape.
 		if isStream, ok := reactiveWrappers[simpleTypeName(baseName)]; ok && len(typeArgs) == 1 {
-			payload := r.Resolve(typeArgs[0], typeBindings)
+			payload := r.ResolveFrom(source, typeArgs[0], typeBindings)
 			if isStream {
 				return model.ArrayModel(payload)
 			}
@@ -258,13 +389,13 @@ func (r *TypeResolver) Resolve(rawType string, typeBindings map[string]string) *
 		// Response wrappers are the same shape: `ResponseEntity<Order>` is
 		// `Order`, and the wrapper itself never appears in the schema.
 		if responseWrappers[simpleTypeName(baseName)] && len(typeArgs) == 1 {
-			return r.Resolve(typeArgs[0], typeBindings)
+			return r.ResolveFrom(source, typeArgs[0], typeBindings)
 		}
 
 		if typeBindings != nil {
 			resolvedArgs := make([]string, len(typeArgs))
 			for i, arg := range typeArgs {
-				resolvedModel := r.Resolve(arg, typeBindings)
+				resolvedModel := r.ResolveFrom(source, arg, typeBindings)
 				if resolvedModel != nil {
 					resolvedArgs[i] = resolvedModel.TypeName
 					if resolvedModel.Kind == model.KindSingle && resolvedModel.TypeName != arg {
@@ -293,7 +424,7 @@ func (r *TypeResolver) Resolve(rawType string, typeBindings map[string]string) *
 
 		if collectionTypes[baseName] {
 			if len(typeArgs) > 0 {
-				itemModel := r.Resolve(typeArgs[0], typeBindings)
+				itemModel := r.ResolveFrom(source, typeArgs[0], typeBindings)
 				return model.ArrayModel(itemModel)
 			}
 			return model.ArrayModel(model.NullModel())
@@ -303,80 +434,24 @@ func (r *TypeResolver) Resolve(rawType string, typeBindings map[string]string) *
 			keyModel := model.SingleModel(model.JsonTypeString)
 			valueModel := model.NullModel()
 			if len(typeArgs) >= 2 {
-				valueModel = r.Resolve(typeArgs[1], typeBindings)
+				valueModel = r.ResolveFrom(source, typeArgs[1], typeBindings)
 			} else if len(typeArgs) == 1 {
-				valueModel = r.Resolve(typeArgs[0], typeBindings)
+				valueModel = r.ResolveFrom(source, typeArgs[0], typeBindings)
 			}
 			return model.MapModel(keyModel, valueModel)
 		}
 	}
 
-	if class, found := r.classRegistry[baseName]; found {
-		if r.resolving[baseName] {
-			return model.RefModel(baseName)
-		}
+	name := r.resolveSimpleName(source, baseName)
 
-		if class.IsInterface {
-			if impl := r.findImplementation(class.Name, typeArgs); impl != nil {
-				return impl
-			}
-			return model.RefModel(baseName)
-		}
-
-		if isMapSubclass(class) {
-			return r.resolveMapSubclass(class, typeArgs, typeBindings)
-		}
-
-		r.resolving[baseName] = true
-		defer func() { delete(r.resolving, baseName) }()
-
-		localBindings := make(map[string]string)
-		for i, tp := range class.TypeParameters {
-			if i < len(typeArgs) {
-				localBindings[tp] = typeArgs[i]
-			}
-		}
-		for k, v := range typeBindings {
-			if _, exists := localBindings[k]; !exists {
-				localBindings[k] = v
-			}
-		}
-
-		typeParamSet := make(map[string]bool, len(class.TypeParameters))
-		for _, tp := range class.TypeParameters {
-			typeParamSet[tp] = true
-		}
-
-		fields := make(map[string]*model.FieldModel, len(class.Fields))
-		for _, f := range class.Fields {
-			// Static fields never belong to a serialized instance, so they are
-			// skipped — that also covers static final constants. Instance final
-			// fields are ordinary data: immutable DTOs and Lombok @Value classes
-			// declare every field final, and dropping them here silently
-			// exported empty bodies.
-			if f.IsStatic {
-				continue
-			}
-			fm := r.resolveField(f, localBindings, typeParamSet)
-			fields[f.Name] = fm
-		}
-
-		r.resolveInheritedFields(class, localBindings, fields)
-
-		return &model.ObjectModel{
-			Kind:     model.KindObject,
-			TypeName: baseName,
-			Fields:   fields,
-		}
+	if class, found := r.classRegistry[name]; found {
+		return r.resolveClass(class, name, typeArgs, typeBindings)
 	}
 
 	if r.dependencyResolver != nil {
-		if depClass := r.dependencyResolver.ResolveClass(baseName); depClass != nil {
-			r.classRegistry[baseName] = *depClass
-			for _, tp := range depClass.TypeParameters {
-				r.allTypeParams[tp] = true
-			}
-			return r.Resolve(rawType, typeBindings)
+		if depClass := r.dependencyResolver.ResolveClass(name); depClass != nil {
+			r.register(*depClass, name)
+			return r.resolveClass(*depClass, name, typeArgs, typeBindings)
 		}
 	}
 
@@ -384,15 +459,15 @@ func (r *TypeResolver) Resolve(rawType string, typeBindings map[string]string) *
 	// on the wire, so answer for them instead of reporting a failure.
 	// easy-yapi reaches the same answer with `json.rule.convert` rules over the
 	// qualified name plus an IrType lookup over the simple name.
-	if jsonType, ok := jdkQualifiedScalars[rawType]; ok {
+	if jsonType, ok := jdkQualifiedScalars[name]; ok {
 		return model.SingleModel(jsonType)
 	}
-	if jsonType, ok := jdkScalarTypes[simpleTypeName(rawType)]; ok {
+	if jsonType, ok := jdkScalarTypes[simpleTypeName(name)]; ok {
 		return model.SingleModel(jsonType)
 	}
 	// `java.lang.Object` carries no fields, so an empty object is its true
 	// shape rather than an opaque scalar.
-	if simpleTypeName(rawType) == "object" {
+	if simpleTypeName(name) == "object" {
 		return model.EmptyObject()
 	}
 
@@ -400,8 +475,68 @@ func (r *TypeResolver) Resolve(rawType string, typeBindings map[string]string) *
 	return model.SingleModel(rawType)
 }
 
-func (r *TypeResolver) resolveField(f parser.Field, localBindings map[string]string, typeParamSet map[string]bool) *model.FieldModel {
-	fieldModel := r.Resolve(f.Type, localBindings)
+// resolveClass expands one declaration into an object model.
+func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []string, typeBindings map[string]string) *model.ObjectModel {
+	if r.resolving[key] {
+		return model.RefModel(class.Name)
+	}
+
+	if class.IsInterface {
+		if impl, implKey, found := r.findImplementation(class, key); found {
+			return r.resolveClass(impl, implKey, nil, nil)
+		}
+		return model.RefModel(class.Name)
+	}
+
+	if isMapSubclass(class) {
+		return r.resolveMapSubclass(class, typeArgs, typeBindings)
+	}
+
+	r.resolving[key] = true
+	defer func() { delete(r.resolving, key) }()
+
+	localBindings := make(map[string]string)
+	for i, tp := range class.TypeParameters {
+		if i < len(typeArgs) {
+			localBindings[tp] = typeArgs[i]
+		}
+	}
+	for k, v := range typeBindings {
+		if _, exists := localBindings[k]; !exists {
+			localBindings[k] = v
+		}
+	}
+
+	typeParamSet := make(map[string]bool, len(class.TypeParameters))
+	for _, tp := range class.TypeParameters {
+		typeParamSet[tp] = true
+	}
+
+	fields := make(map[string]*model.FieldModel, len(class.Fields))
+	for _, f := range class.Fields {
+		// Static fields never belong to a serialized instance, so they are
+		// skipped — that also covers static final constants. Instance final
+		// fields are ordinary data: immutable DTOs and Lombok @Value classes
+		// declare every field final, and dropping them here silently
+		// exported empty bodies.
+		if f.IsStatic {
+			continue
+		}
+		fm := r.resolveField(class, f, localBindings, typeParamSet)
+		fields[f.Name] = fm
+	}
+
+	r.resolveInheritedFields(class, localBindings, fields)
+
+	return &model.ObjectModel{
+		Kind:     model.KindObject,
+		TypeName: class.Name,
+		Fields:   fields,
+	}
+}
+
+func (r *TypeResolver) resolveField(source parser.Class, f parser.Field, localBindings map[string]string, typeParamSet map[string]bool) *model.FieldModel {
+	fieldModel := r.ResolveFrom(source, f.Type, localBindings)
 	fm := &model.FieldModel{
 		Model:    fieldModel,
 		Required: true,
@@ -438,7 +573,7 @@ func (r *TypeResolver) resolveInheritedFields(class parser.Class, localBindings 
 		return
 	}
 
-	superClass, found := r.classRegistry[class.SuperClass]
+	superClass, found := r.Class(class, class.SuperClass)
 	if !found {
 		return
 	}
@@ -466,7 +601,9 @@ func (r *TypeResolver) resolveInheritedFields(class parser.Class, localBindings 
 
 	for _, f := range superClass.Fields {
 		if _, exists := fields[f.Name]; !exists {
-			fm := r.resolveField(f, superBindings, superTypeParamSet)
+			// The field type is written in the superclass's own compilation
+			// unit, so that is the scope its simple names resolve in.
+			fm := r.resolveField(superClass, f, superBindings, superTypeParamSet)
 			fields[f.Name] = fm
 		}
 	}
@@ -532,18 +669,28 @@ func isMapSubclass(class parser.Class) bool {
 	return mapTypes[baseName]
 }
 
-func (r *TypeResolver) findImplementation(interfaceName string, typeArgs []string) *model.ObjectModel {
-	for _, class := range r.classRegistry {
+// findImplementation returns the class in the scanned sources that implements
+// the interface registered under key, preferring a declaration whose own
+// implements clause resolves to that interface.
+func (r *TypeResolver) findImplementation(iface parser.Class, key string) (parser.Class, string, bool) {
+	keys := make([]string, 0, len(r.classRegistry))
+	for candidate := range r.classRegistry {
+		keys = append(keys, candidate)
+	}
+	sort.Strings(keys) // stable pick when several classes implement the interface
+
+	for _, candidate := range keys {
+		class := r.classRegistry[candidate]
 		if class.IsInterface {
 			continue
 		}
-		for _, iface := range class.Interfaces {
-			if iface == interfaceName {
-				return r.Resolve(class.Name, nil)
+		for _, ifaceName := range class.Interfaces {
+			if r.resolveSimpleName(class, ifaceName) == key || ifaceName == iface.Name {
+				return class, candidate, true
 			}
 		}
 	}
-	return nil
+	return parser.Class{}, "", false
 }
 
 func (r *TypeResolver) resolveMapSubclass(class parser.Class, typeArgs []string, typeBindings map[string]string) *model.ObjectModel {
@@ -565,12 +712,12 @@ func (r *TypeResolver) resolveMapSubclass(class parser.Class, typeArgs []string,
 	if len(class.TypeParameters) > 0 {
 		firstTypeParam := class.TypeParameters[0]
 		if resolved, ok := localBindings[firstTypeParam]; ok {
-			valueModel = r.Resolve(resolved, localBindings)
+			valueModel = r.ResolveFrom(class, resolved, localBindings)
 		} else {
-			valueModel = r.Resolve(firstTypeParam, localBindings)
+			valueModel = r.ResolveFrom(class, firstTypeParam, localBindings)
 		}
 	} else if len(class.SuperClassTypeArgs) >= 2 {
-		valueModel = r.Resolve(class.SuperClassTypeArgs[1], typeBindings)
+		valueModel = r.ResolveFrom(class, class.SuperClassTypeArgs[1], typeBindings)
 	} else {
 		valueModel = model.NullModel()
 	}

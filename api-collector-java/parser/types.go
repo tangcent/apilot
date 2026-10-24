@@ -44,6 +44,19 @@ type Field struct {
 	HasInitializer bool
 }
 
+// Import is one import declaration of a compilation unit.
+type Import struct {
+	// Path is the imported name: a type for a single-type import
+	// ("com.example.dto.Result"), a package for an on-demand import
+	// ("com.example.dto").
+	Path string
+	// OnDemand reports `import com.example.dto.*`.
+	OnDemand bool
+	// Static reports `import static ...`. Those name members rather than
+	// types, so type resolution ignores them.
+	Static bool
+}
+
 // Class represents a Java class or interface with annotations and methods.
 type Class struct {
 	Name               string
@@ -57,6 +70,13 @@ type Class struct {
 	SuperClassTypeArgs []string
 	TypeParameters     []string
 	Interfaces         []string
+	// FilePath is the compilation unit that declared this class. Simple-name
+	// resolution needs it to tell a declaration in the same file apart from
+	// one that is merely imported (JLS 6.5.5.1). Empty for sources parsed
+	// without a path, such as an in-memory dependency source.
+	FilePath string
+	// Imports carries the import declarations of the same compilation unit.
+	Imports []Import
 }
 
 // ParseResult contains the parsing result for a single file.

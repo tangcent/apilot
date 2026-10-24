@@ -35,7 +35,6 @@ func (p *Parser) SetUnresolved(u *collector.UnresolvedSet) {
 }
 
 func (p *Parser) ExtractControllers(results []parser.ParseResult) []Controller {
-	classRegistry := buildClassRegistry(results)
 	typeResolver := resolver.NewTypeResolver(flattenClasses(results))
 	if p.dependencyResolver != nil {
 		typeResolver.SetDependencyResolver(p.dependencyResolver)
@@ -52,26 +51,13 @@ func (p *Parser) ExtractControllers(results []parser.ParseResult) []Controller {
 		}
 
 		for _, class := range result.Classes {
-			if controller := p.extractController(class, typeResolver, classRegistry); controller != nil {
+			if controller := p.extractController(class, typeResolver); controller != nil {
 				controllers = append(controllers, *controller)
 			}
 		}
 	}
 
 	return controllers
-}
-
-func buildClassRegistry(results []parser.ParseResult) map[string]parser.Class {
-	registry := make(map[string]parser.Class)
-	for _, result := range results {
-		if result.Error != nil {
-			continue
-		}
-		for _, class := range result.Classes {
-			registry[class.Name] = class
-		}
-	}
-	return registry
 }
 
 func flattenClasses(results []parser.ParseResult) []parser.Class {
@@ -85,23 +71,23 @@ func flattenClasses(results []parser.ParseResult) []parser.Class {
 	return classes
 }
 
-func (p *Parser) extractController(class parser.Class, typeResolver *resolver.TypeResolver, classRegistry map[string]parser.Class) *Controller {
+func (p *Parser) extractController(class parser.Class, typeResolver *resolver.TypeResolver) *Controller {
 	if !p.isController(class) {
 		return nil
 	}
 
 	basePath := p.extractBasePath(class.Annotations)
 
-	typeBindings := buildTypeBindings(class, classRegistry)
+	typeBindings := buildTypeBindings(class, typeResolver)
 
 	var endpoints []Endpoint
 	for _, method := range class.Methods {
-		if endpoint := p.extractEndpoint(method, basePath, class, typeResolver, typeBindings); endpoint != nil {
+		if endpoint := p.extractEndpoint(method, basePath, class, class, typeResolver, typeBindings); endpoint != nil {
 			endpoints = append(endpoints, *endpoint)
 		}
 	}
 
-	inheritedEndpoints := p.extractInheritedEndpoints(class, basePath, typeResolver, classRegistry, typeBindings)
+	inheritedEndpoints := p.extractInheritedEndpoints(class, basePath, typeResolver, typeBindings)
 	endpoints = append(endpoints, inheritedEndpoints...)
 
 	return &Controller{
@@ -112,12 +98,12 @@ func (p *Parser) extractController(class parser.Class, typeResolver *resolver.Ty
 	}
 }
 
-func buildTypeBindings(class parser.Class, classRegistry map[string]parser.Class) map[string]string {
+func buildTypeBindings(class parser.Class, typeResolver *resolver.TypeResolver) map[string]string {
 	if class.SuperClass == "" {
 		return nil
 	}
 
-	superClass, found := classRegistry[class.SuperClass]
+	superClass, found := typeResolver.Class(class, class.SuperClass)
 	if !found {
 		return nil
 	}
@@ -132,17 +118,17 @@ func buildTypeBindings(class parser.Class, classRegistry map[string]parser.Class
 	return bindings
 }
 
-func (p *Parser) extractInheritedEndpoints(class parser.Class, basePath string, typeResolver *resolver.TypeResolver, classRegistry map[string]parser.Class, typeBindings map[string]string) []Endpoint {
+func (p *Parser) extractInheritedEndpoints(class parser.Class, basePath string, typeResolver *resolver.TypeResolver, typeBindings map[string]string) []Endpoint {
 	if class.SuperClass == "" {
 		return nil
 	}
 
-	superClass, found := classRegistry[class.SuperClass]
+	superClass, found := typeResolver.Class(class, class.SuperClass)
 	if !found {
 		return nil
 	}
 
-	parentTypeBindings := buildTypeBindings(superClass, classRegistry)
+	parentTypeBindings := buildTypeBindings(superClass, typeResolver)
 	mergedBindings := mergeBindings(parentTypeBindings, typeBindings)
 
 	var inherited []Endpoint
@@ -162,12 +148,14 @@ func (p *Parser) extractInheritedEndpoints(class parser.Class, basePath string, 
 			continue
 		}
 
-		if endpoint := p.extractEndpoint(method, effectiveBasePath, class, typeResolver, mergedBindings); endpoint != nil {
+		// The method is declared in the superclass's compilation unit, so its
+		// parameter and return types resolve in that unit's scope.
+		if endpoint := p.extractEndpoint(method, effectiveBasePath, class, superClass, typeResolver, mergedBindings); endpoint != nil {
 			inherited = append(inherited, *endpoint)
 		}
 	}
 
-	grandparentEndpoints := p.extractInheritedEndpoints(superClass, effectiveBasePath, typeResolver, classRegistry, mergedBindings)
+	grandparentEndpoints := p.extractInheritedEndpoints(superClass, effectiveBasePath, typeResolver, mergedBindings)
 	inherited = append(inherited, grandparentEndpoints...)
 
 	return inherited
@@ -226,7 +214,11 @@ func (p *Parser) extractBasePath(annotations []parser.Annotation) string {
 	return ""
 }
 
-func (p *Parser) extractEndpoint(method parser.Method, basePath string, class parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string) *Endpoint {
+// extractEndpoint builds one endpoint. class names the owner of the endpoint;
+// source is the class whose declaration carries the method, which is the
+// superclass for inherited endpoints and supplies the scope its types resolve
+// in.
+func (p *Parser) extractEndpoint(method parser.Method, basePath string, class, source parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string) *Endpoint {
 	httpMethod, methodPath := p.extractMethodInfo(method.Annotations)
 	if httpMethod == "" {
 		return nil
@@ -257,13 +249,13 @@ func (p *Parser) extractEndpoint(method parser.Method, basePath string, class pa
 	}
 
 	if requestBodyType != "" {
-		endpoint.RequestBodySchema = typeResolver.Resolve(requestBodyType, typeBindings)
+		endpoint.RequestBodySchema = typeResolver.ResolveFrom(source, requestBodyType, typeBindings)
 	}
 
 	if method.ReturnType != "" && method.ReturnType != "void" && method.ReturnType != "Void" {
 		// A ResponseEntity<T> wrapper is unwrapped by the type resolver, the
 		// same way it handles a reactor publisher.
-		endpoint.ResponseSchema = typeResolver.Resolve(method.ReturnType, typeBindings)
+		endpoint.ResponseSchema = typeResolver.ResolveFrom(source, method.ReturnType, typeBindings)
 	}
 
 	return endpoint

@@ -17,6 +17,44 @@ func extractPackageName(node *tree_sitter.Node, source []byte) string {
 	return ""
 }
 
+// extractImports collects the import declarations of a compilation unit.
+//
+// The declaration is read off its text rather than its child nodes: the
+// grammar spells the trailing `.*` as an anonymous token, and `import static`
+// as a keyword, so node kinds differ between grammar versions while the
+// declaration text does not.
+func extractImports(root *tree_sitter.Node, source []byte) []Import {
+	var imports []Import
+
+	for i := uint(0); i < root.ChildCount(); i++ {
+		node := root.Child(i)
+		if node.Kind() != "import_declaration" {
+			continue
+		}
+
+		text := strings.TrimSpace(node.Utf8Text(source))
+		text = strings.TrimSuffix(text, ";")
+		text = strings.TrimSpace(strings.TrimPrefix(text, "import"))
+
+		imp := Import{}
+		if strings.HasPrefix(text, "static ") {
+			imp.Static = true
+			text = strings.TrimSpace(strings.TrimPrefix(text, "static"))
+		}
+		if strings.HasSuffix(text, ".*") {
+			imp.OnDemand = true
+			text = strings.TrimSuffix(text, ".*")
+		}
+		imp.Path = text
+		if imp.Path == "" {
+			continue
+		}
+		imports = append(imports, imp)
+	}
+
+	return imports
+}
+
 // extractClass extracts class information including annotations and methods.
 func extractClass(node *tree_sitter.Node, source []byte) Class {
 	class := Class{}

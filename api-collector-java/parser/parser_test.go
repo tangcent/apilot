@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -759,5 +760,78 @@ public class UserResource {
 	// A declaration has no body, which is not the same thing as an empty one.
 	if body := classes[0].Methods[1].Body; body != "" {
 		t.Errorf("Expected no body for a declaration, got %q", body)
+	}
+}
+
+func TestParser_ExtractsImports(t *testing.T) {
+	p, err := NewParser(ParserOptions{LogLevel: LogLevelError})
+	if err != nil {
+		t.Fatalf("Failed to create parser: %v", err)
+	}
+	defer p.Close()
+
+	source := []byte(`package com.example.client;
+
+import com.example.dto.Result;
+import com.example.dto.*;
+import static java.util.Collections.emptyList;
+import java.math.BigDecimal;
+
+public interface OrderClient {
+    RefundVO getRefundInfo(Long id);
+}
+
+class RefundVO {
+    private Long orderId;
+}
+`)
+	classes, err := p.ParseSource(source)
+	if err != nil {
+		t.Fatalf("Failed to parse source: %v", err)
+	}
+	if len(classes) != 2 {
+		t.Fatalf("Expected 2 classes, got %d", len(classes))
+	}
+
+	want := []Import{
+		{Path: "com.example.dto.Result"},
+		{Path: "com.example.dto", OnDemand: true},
+		{Path: "java.util.Collections.emptyList", Static: true},
+		{Path: "java.math.BigDecimal"},
+	}
+
+	// Every class of a compilation unit sees the same imports.
+	for _, class := range classes {
+		if !reflect.DeepEqual(class.Imports, want) {
+			t.Errorf("class %s: expected imports %v, got %v", class.Name, want, class.Imports)
+		}
+	}
+}
+
+func TestParser_ParseFile_RecordsCompilationUnit(t *testing.T) {
+	p, err := NewParser(ParserOptions{LogLevel: LogLevelError})
+	if err != nil {
+		t.Fatalf("Failed to create parser: %v", err)
+	}
+	defer p.Close()
+
+	path := "../testdata/UserController.java"
+	result, err := p.ParseFile(path)
+	if err != nil {
+		t.Fatalf("Failed to parse file: %v", err)
+	}
+	if len(result.Classes) == 0 {
+		t.Fatal("Expected at least one class")
+	}
+
+	// A class must be able to tell which file declared it: that is what makes
+	// a same-compilation-unit declaration distinguishable from an imported one.
+	for _, class := range result.Classes {
+		if class.FilePath != path {
+			t.Errorf("class %s: expected FilePath %q, got %q", class.Name, path, class.FilePath)
+		}
+		if len(class.Imports) == 0 {
+			t.Errorf("class %s: expected imports from the file, got none", class.Name)
+		}
 	}
 }

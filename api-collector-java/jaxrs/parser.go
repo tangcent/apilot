@@ -55,7 +55,6 @@ func (p *Parser) warnf(format string, args ...any) {
 func (p *Parser) ExtractResources(results []parser.ParseResult) []Resource {
 	p.warnings = nil
 
-	classRegistry := buildClassRegistry(results)
 	typeResolver := resolver.NewTypeResolver(flattenClasses(results))
 	if p.dependencyResolver != nil {
 		typeResolver.SetDependencyResolver(p.dependencyResolver)
@@ -70,25 +69,12 @@ func (p *Parser) ExtractResources(results []parser.ParseResult) []Resource {
 			continue
 		}
 		for _, class := range result.Classes {
-			if resource := p.extractResource(class, typeResolver, classRegistry); resource != nil {
+			if resource := p.extractResource(class, typeResolver); resource != nil {
 				resources = append(resources, *resource)
 			}
 		}
 	}
 	return resources
-}
-
-func buildClassRegistry(results []parser.ParseResult) map[string]parser.Class {
-	registry := make(map[string]parser.Class)
-	for _, result := range results {
-		if result.Error != nil {
-			continue
-		}
-		for _, class := range result.Classes {
-			registry[class.Name] = class
-		}
-	}
-	return registry
 }
 
 func flattenClasses(results []parser.ParseResult) []parser.Class {
@@ -102,12 +88,12 @@ func flattenClasses(results []parser.ParseResult) []parser.Class {
 	return classes
 }
 
-func buildTypeBindings(class parser.Class, classRegistry map[string]parser.Class) map[string]string {
+func buildTypeBindings(class parser.Class, typeResolver *resolver.TypeResolver) map[string]string {
 	if class.SuperClass == "" {
 		return nil
 	}
 
-	superClass, found := classRegistry[class.SuperClass]
+	superClass, found := typeResolver.Class(class, class.SuperClass)
 	if !found {
 		return nil
 	}
@@ -133,7 +119,7 @@ func mergeBindings(parent, child map[string]string) map[string]string {
 	return merged
 }
 
-func (p *Parser) extractResource(class parser.Class, typeResolver *resolver.TypeResolver, classRegistry map[string]parser.Class) *Resource {
+func (p *Parser) extractResource(class parser.Class, typeResolver *resolver.TypeResolver) *Resource {
 	basePath, hasPath := p.extractPath(class.Annotations)
 	if !hasPath {
 		return nil
@@ -142,11 +128,11 @@ func (p *Parser) extractResource(class parser.Class, typeResolver *resolver.Type
 	classProduces := p.extractMediaTypes(class.Annotations, "Produces")
 	classConsumes := p.extractMediaTypes(class.Annotations, "Consumes")
 
-	typeBindings := buildTypeBindings(class, classRegistry)
+	typeBindings := buildTypeBindings(class, typeResolver)
 
 	var endpoints []Endpoint
 	for _, method := range class.Methods {
-		ep := p.extractEndpoint(method, basePath, class, typeResolver, typeBindings, classRegistry)
+		ep := p.extractEndpoint(method, basePath, class, class, typeResolver, typeBindings)
 		if ep == nil {
 			continue
 		}
@@ -159,7 +145,7 @@ func (p *Parser) extractResource(class parser.Class, typeResolver *resolver.Type
 		endpoints = append(endpoints, *ep)
 	}
 
-	inheritedEndpoints := p.extractInheritedEndpoints(class, basePath, classProduces, classConsumes, typeResolver, classRegistry, typeBindings)
+	inheritedEndpoints := p.extractInheritedEndpoints(class, basePath, classProduces, classConsumes, typeResolver, typeBindings)
 	endpoints = append(endpoints, inheritedEndpoints...)
 
 	return &Resource{
@@ -172,17 +158,17 @@ func (p *Parser) extractResource(class parser.Class, typeResolver *resolver.Type
 	}
 }
 
-func (p *Parser) extractInheritedEndpoints(class parser.Class, basePath string, classProduces, classConsumes []string, typeResolver *resolver.TypeResolver, classRegistry map[string]parser.Class, typeBindings map[string]string) []Endpoint {
+func (p *Parser) extractInheritedEndpoints(class parser.Class, basePath string, classProduces, classConsumes []string, typeResolver *resolver.TypeResolver, typeBindings map[string]string) []Endpoint {
 	if class.SuperClass == "" {
 		return nil
 	}
 
-	superClass, found := classRegistry[class.SuperClass]
+	superClass, found := typeResolver.Class(class, class.SuperClass)
 	if !found {
 		return nil
 	}
 
-	parentTypeBindings := buildTypeBindings(superClass, classRegistry)
+	parentTypeBindings := buildTypeBindings(superClass, typeResolver)
 	mergedBindings := mergeBindings(parentTypeBindings, typeBindings)
 
 	parentBasePath, _ := p.extractPath(superClass.Annotations)
@@ -201,7 +187,9 @@ func (p *Parser) extractInheritedEndpoints(class parser.Class, basePath string, 
 			continue
 		}
 
-		ep := p.extractEndpoint(method, effectiveBasePath, class, typeResolver, mergedBindings, classRegistry)
+		// The method is declared in the superclass's compilation unit, so its
+		// parameter and return types resolve in that unit's scope.
+		ep := p.extractEndpoint(method, effectiveBasePath, class, superClass, typeResolver, mergedBindings)
 		if ep == nil {
 			continue
 		}
@@ -214,7 +202,7 @@ func (p *Parser) extractInheritedEndpoints(class parser.Class, basePath string, 
 		inherited = append(inherited, *ep)
 	}
 
-	grandparentEndpoints := p.extractInheritedEndpoints(superClass, effectiveBasePath, classProduces, classConsumes, typeResolver, classRegistry, mergedBindings)
+	grandparentEndpoints := p.extractInheritedEndpoints(superClass, effectiveBasePath, classProduces, classConsumes, typeResolver, mergedBindings)
 	inherited = append(inherited, grandparentEndpoints...)
 
 	return inherited
@@ -239,7 +227,11 @@ func (p *Parser) isMethodOverridden(methodName string, class parser.Class) bool 
 	return false
 }
 
-func (p *Parser) extractEndpoint(method parser.Method, basePath string, class parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string, classRegistry map[string]parser.Class) *Endpoint {
+// extractEndpoint builds one endpoint. class names the owner of the endpoint;
+// source is the class whose declaration carries the method, which is the
+// superclass for inherited endpoints and supplies the scope its types resolve
+// in.
+func (p *Parser) extractEndpoint(method parser.Method, basePath string, class, source parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string) *Endpoint {
 	httpMethod, ok := p.extractHTTPMethod(method.Annotations)
 	if !ok {
 		return nil
@@ -277,10 +269,10 @@ func (p *Parser) extractEndpoint(method parser.Method, basePath string, class pa
 	}
 
 	if requestBodyType != "" {
-		endpoint.RequestBodySchema = typeResolver.Resolve(requestBodyType, typeBindings)
+		endpoint.RequestBodySchema = typeResolver.ResolveFrom(source, requestBodyType, typeBindings)
 	}
 
-	if schema := p.responseSchema(method, class, typeResolver, typeBindings, classRegistry); schema != nil {
+	if schema := p.responseSchema(method, class, source, typeResolver, typeBindings); schema != nil {
 		endpoint.ResponseSchema = schema
 	}
 
@@ -429,22 +421,24 @@ func (p *Parser) extractMediaTypes(annotations []parser.Annotation, annName stri
 }
 
 // responseSchema resolves the response body of a method, or nil when the type
-// declares no response at all.
-func (p *Parser) responseSchema(method parser.Method, class parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string, classRegistry map[string]parser.Class) *model.ObjectModel {
+// declares no response at all. source is the class that declares the method,
+// which supplies the scope its type names resolve in.
+func (p *Parser) responseSchema(method parser.Method, class, source parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string) *model.ObjectModel {
 	if method.ReturnType == "" || method.ReturnType == "void" || method.ReturnType == "Void" {
 		return nil
 	}
 
 	if !isJaxrsResponse(method.ReturnType) {
-		return typeResolver.Resolve(method.ReturnType, typeBindings)
+		return typeResolver.ResolveFrom(source, method.ReturnType, typeBindings)
 	}
 
 	// Response is opaque: the payload is built in the body, so the body is the
 	// only place it can come from. Falling back to the declared type silently
 	// is what left whole exports without a response section.
-	payload, opaque := responsePayload(method.Body, parameterTypes(method), classRegistry)
+	lookup := func(name string) (parser.Class, bool) { return typeResolver.Class(source, name) }
+	payload, opaque := responsePayload(method.Body, parameterTypes(method), lookup)
 	if payload != "" {
-		return typeResolver.Resolve(payload, typeBindings)
+		return typeResolver.ResolveFrom(source, payload, typeBindings)
 	}
 
 	if opaque {

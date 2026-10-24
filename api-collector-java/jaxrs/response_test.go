@@ -25,9 +25,9 @@ func TestIsJaxrsResponse(t *testing.T) {
 	}
 }
 
-// registryOf builds a class registry from a class name to type parameter count
-// map. Only the count matters to body inspection.
-func registryOf(counts map[string]int) map[string]parser.Class {
+// lookupOf builds a type lookup from a class name to type parameter count map.
+// Only the count matters to body inspection.
+func lookupOf(counts map[string]int) typeLookup {
 	registry := make(map[string]parser.Class, len(counts))
 	for name, count := range counts {
 		params := make([]string, count)
@@ -36,12 +36,15 @@ func registryOf(counts map[string]int) map[string]parser.Class {
 		}
 		registry[name] = parser.Class{Name: name, TypeParameters: params}
 	}
-	return registry
+	return func(name string) (parser.Class, bool) {
+		class, found := registry[name]
+		return class, found
+	}
 }
 
 func TestResponsePayload(t *testing.T) {
 	params := map[string]string{"order": "Order", "id": "Long"}
-	registry := registryOf(map[string]int{"Result": 1, "PageResult": 1})
+	registry := lookupOf(map[string]int{"Result": 1, "PageResult": 1})
 
 	tests := []struct {
 		name       string
@@ -191,7 +194,7 @@ func TestResponsePayload_UnknownClassArity(t *testing.T) {
 	got, opaque := responsePayload(
 		"{ Order order = new Order(); return Response.ok(Factory.wrap(order)).build(); }",
 		nil,
-		registryOf(nil),
+		lookupOf(nil),
 	)
 	if got != "Factory" || opaque {
 		t.Errorf("responsePayload() = (%q, %v), want (%q, false)", got, opaque, "Factory")

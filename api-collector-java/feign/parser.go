@@ -40,7 +40,6 @@ func (p *Parser) SetUnresolved(u *collector.UnresolvedSet) {
 // It supports both Spring Cloud OpenFeign (Spring MVC annotations) and
 // Netflix Feign (@RequestLine annotations).
 func (p *Parser) ExtractClients(results []parser.ParseResult) []FeignClient {
-	classRegistry := buildClassRegistry(results)
 	typeResolver := resolver.NewTypeResolver(flattenClasses(results))
 	if p.dependencyResolver != nil {
 		typeResolver.SetDependencyResolver(p.dependencyResolver)
@@ -55,25 +54,12 @@ func (p *Parser) ExtractClients(results []parser.ParseResult) []FeignClient {
 			continue
 		}
 		for _, class := range result.Classes {
-			if client := p.extractClient(class, typeResolver, classRegistry); client != nil {
+			if client := p.extractClient(class, typeResolver); client != nil {
 				clients = append(clients, *client)
 			}
 		}
 	}
 	return clients
-}
-
-func buildClassRegistry(results []parser.ParseResult) map[string]parser.Class {
-	registry := make(map[string]parser.Class)
-	for _, result := range results {
-		if result.Error != nil {
-			continue
-		}
-		for _, class := range result.Classes {
-			registry[class.Name] = class
-		}
-	}
-	return registry
 }
 
 func flattenClasses(results []parser.ParseResult) []parser.Class {
@@ -87,12 +73,12 @@ func flattenClasses(results []parser.ParseResult) []parser.Class {
 	return classes
 }
 
-func buildTypeBindings(class parser.Class, classRegistry map[string]parser.Class) map[string]string {
+func buildTypeBindings(class parser.Class, typeResolver *resolver.TypeResolver) map[string]string {
 	if class.SuperClass == "" {
 		return nil
 	}
 
-	superClass, found := classRegistry[class.SuperClass]
+	superClass, found := typeResolver.Class(class, class.SuperClass)
 	if !found {
 		return nil
 	}
@@ -118,7 +104,7 @@ func mergeBindings(parent, child map[string]string) map[string]string {
 	return merged
 }
 
-func (p *Parser) extractClient(class parser.Class, typeResolver *resolver.TypeResolver, classRegistry map[string]parser.Class) *FeignClient {
+func (p *Parser) extractClient(class parser.Class, typeResolver *resolver.TypeResolver) *FeignClient {
 	ann := findAnnotation(class.Annotations, "FeignClient")
 	if ann != nil {
 		name := ann.Params["name"]
@@ -126,16 +112,16 @@ func (p *Parser) extractClient(class parser.Class, typeResolver *resolver.TypeRe
 			name = ann.Params["value"]
 		}
 
-		typeBindings := buildTypeBindings(class, classRegistry)
+		typeBindings := buildTypeBindings(class, typeResolver)
 
 		var endpoints []Endpoint
 		for _, method := range class.Methods {
-			if ep := p.extractEndpoint(method, class, typeResolver, typeBindings); ep != nil {
+			if ep := p.extractEndpoint(method, class, class, typeResolver, typeBindings); ep != nil {
 				endpoints = append(endpoints, *ep)
 			}
 		}
 
-		inheritedEndpoints := p.extractInheritedEndpoints(class, typeResolver, classRegistry, typeBindings)
+		inheritedEndpoints := p.extractInheritedEndpoints(class, typeResolver, typeBindings)
 		endpoints = append(endpoints, inheritedEndpoints...)
 
 		return &FeignClient{
@@ -148,16 +134,16 @@ func (p *Parser) extractClient(class parser.Class, typeResolver *resolver.TypeRe
 	}
 
 	if class.IsInterface && p.hasRequestLineMethods(class) {
-		typeBindings := buildTypeBindings(class, classRegistry)
+		typeBindings := buildTypeBindings(class, typeResolver)
 
 		var endpoints []Endpoint
 		for _, method := range class.Methods {
-			if ep := p.extractEndpoint(method, class, typeResolver, typeBindings); ep != nil {
+			if ep := p.extractEndpoint(method, class, class, typeResolver, typeBindings); ep != nil {
 				endpoints = append(endpoints, *ep)
 			}
 		}
 
-		inheritedEndpoints := p.extractInheritedEndpoints(class, typeResolver, classRegistry, typeBindings)
+		inheritedEndpoints := p.extractInheritedEndpoints(class, typeResolver, typeBindings)
 		endpoints = append(endpoints, inheritedEndpoints...)
 
 		if len(endpoints) > 0 {
@@ -172,17 +158,17 @@ func (p *Parser) extractClient(class parser.Class, typeResolver *resolver.TypeRe
 	return nil
 }
 
-func (p *Parser) extractInheritedEndpoints(class parser.Class, typeResolver *resolver.TypeResolver, classRegistry map[string]parser.Class, typeBindings map[string]string) []Endpoint {
+func (p *Parser) extractInheritedEndpoints(class parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string) []Endpoint {
 	if class.SuperClass == "" {
 		return nil
 	}
 
-	superClass, found := classRegistry[class.SuperClass]
+	superClass, found := typeResolver.Class(class, class.SuperClass)
 	if !found {
 		return nil
 	}
 
-	parentTypeBindings := buildTypeBindings(superClass, classRegistry)
+	parentTypeBindings := buildTypeBindings(superClass, typeResolver)
 	mergedBindings := mergeBindings(parentTypeBindings, typeBindings)
 
 	var inherited []Endpoint
@@ -190,12 +176,14 @@ func (p *Parser) extractInheritedEndpoints(class parser.Class, typeResolver *res
 		if p.isMethodOverridden(method.Name, class) {
 			continue
 		}
-		if ep := p.extractEndpoint(method, class, typeResolver, mergedBindings); ep != nil {
+		// The method is declared in the superclass's compilation unit, so its
+		// parameter and return types resolve in that unit's scope.
+		if ep := p.extractEndpoint(method, class, superClass, typeResolver, mergedBindings); ep != nil {
 			inherited = append(inherited, *ep)
 		}
 	}
 
-	grandparentEndpoints := p.extractInheritedEndpoints(superClass, typeResolver, classRegistry, mergedBindings)
+	grandparentEndpoints := p.extractInheritedEndpoints(superClass, typeResolver, mergedBindings)
 	inherited = append(inherited, grandparentEndpoints...)
 
 	return inherited
@@ -219,14 +207,18 @@ func (p *Parser) hasRequestLineMethods(class parser.Class) bool {
 	return false
 }
 
-func (p *Parser) extractEndpoint(method parser.Method, class parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string) *Endpoint {
-	if ep := p.extractSpringStyleEndpoint(method, class, typeResolver, typeBindings); ep != nil {
+// extractEndpoint builds one endpoint. class names the owner of the endpoint;
+// source is the class whose declaration carries the method, which is the
+// superclass for inherited endpoints and supplies the scope its types resolve
+// in.
+func (p *Parser) extractEndpoint(method parser.Method, class, source parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string) *Endpoint {
+	if ep := p.extractSpringStyleEndpoint(method, class, source, typeResolver, typeBindings); ep != nil {
 		return ep
 	}
-	return p.extractRequestLineEndpoint(method, class, typeResolver, typeBindings)
+	return p.extractRequestLineEndpoint(method, class, source, typeResolver, typeBindings)
 }
 
-func (p *Parser) extractSpringStyleEndpoint(method parser.Method, class parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string) *Endpoint {
+func (p *Parser) extractSpringStyleEndpoint(method parser.Method, class, source parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string) *Endpoint {
 	httpMethod, methodPath := p.extractSpringMappingInfo(method.Annotations)
 	if httpMethod == "" {
 		return nil
@@ -255,13 +247,13 @@ func (p *Parser) extractSpringStyleEndpoint(method parser.Method, class parser.C
 	}
 
 	if requestBodyType != "" {
-		endpoint.RequestBodySchema = typeResolver.Resolve(requestBodyType, typeBindings)
+		endpoint.RequestBodySchema = typeResolver.ResolveFrom(source, requestBodyType, typeBindings)
 	}
 
 	if method.ReturnType != "" && method.ReturnType != "void" && method.ReturnType != "Void" {
 		// A ResponseEntity<T> wrapper is unwrapped by the type resolver, the
 		// same way it handles a reactor publisher.
-		endpoint.ResponseSchema = typeResolver.Resolve(method.ReturnType, typeBindings)
+		endpoint.ResponseSchema = typeResolver.ResolveFrom(source, method.ReturnType, typeBindings)
 	}
 
 	return endpoint
@@ -405,7 +397,7 @@ func annotationValue(annotations []parser.Annotation, annName, key string) strin
 	return ""
 }
 
-func (p *Parser) extractRequestLineEndpoint(method parser.Method, class parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string) *Endpoint {
+func (p *Parser) extractRequestLineEndpoint(method parser.Method, class, source parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string) *Endpoint {
 	ann := findAnnotation(method.Annotations, "RequestLine")
 	if ann == nil {
 		return nil
@@ -436,11 +428,11 @@ func (p *Parser) extractRequestLineEndpoint(method parser.Method, class parser.C
 	}
 
 	if requestBodyType != "" {
-		endpoint.RequestBodySchema = typeResolver.Resolve(requestBodyType, typeBindings)
+		endpoint.RequestBodySchema = typeResolver.ResolveFrom(source, requestBodyType, typeBindings)
 	}
 
 	if method.ReturnType != "" && method.ReturnType != "void" && method.ReturnType != "Void" {
-		endpoint.ResponseSchema = typeResolver.Resolve(method.ReturnType, typeBindings)
+		endpoint.ResponseSchema = typeResolver.ResolveFrom(source, method.ReturnType, typeBindings)
 	}
 
 	return endpoint
