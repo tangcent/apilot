@@ -113,6 +113,13 @@ func testdataProject() string {
 	return filepath.Join(filepath.Dir(filename), "testdata", "goproject")
 }
 
+// testdataJavaProject is a Maven module whose sources parse cleanly and contain
+// no HTTP annotations, so a collection over it yields zero endpoints.
+func testdataJavaProject() string {
+	_, filename, _, _ := runtime.Caller(0)
+	return filepath.Join(filepath.Dir(filename), "testdata", "javaplain")
+}
+
 func goldenFile(name string) string {
 	return filepath.Join(testdataProject(), name+".golden")
 }
@@ -214,6 +221,10 @@ func TestHelpOutput(t *testing.T) {
 
 	if !strings.Contains(output, "--no-deps") {
 		t.Error("help output should contain --no-deps flag")
+	}
+
+	if !strings.Contains(output, "--allow-empty") {
+		t.Error("help output should contain --allow-empty flag")
 	}
 
 	if !strings.Contains(output, "Registered collectors:") {
@@ -496,6 +507,58 @@ func TestNoDepsFlag(t *testing.T) {
 
 	if !strings.Contains(stderr, "dependency type resolution disabled (--no-deps)") {
 		t.Errorf("stderr should confirm dependency resolution was disabled, got %q", stderr)
+	}
+}
+
+// TestEmptyCollectionFails is the end-to-end case from #161: a Java module that
+// parses fine but carries no HTTP annotations must fail the run, name the
+// collector and the source path, and emit no document.
+func TestEmptyCollectionFails(t *testing.T) {
+	stdout, stderr, exitCode := runCLISeparate(testdataJavaProject(), "--collector", "java")
+	if exitCode != 1 {
+		t.Fatalf("expected exit code 1 for a zero-endpoint collection, got %d\nstdout: %s\nstderr: %s", exitCode, stdout, stderr)
+	}
+
+	if stdout != "" {
+		t.Errorf("no document should be written on failure, got stdout: %q", stdout)
+	}
+	if !strings.Contains(stderr, "endpoints: 0") {
+		t.Errorf("stderr should state the endpoint count, got: %q", stderr)
+	}
+	if !strings.Contains(stderr, `collector "java"`) {
+		t.Errorf("stderr should name the collector, got: %q", stderr)
+	}
+	if !strings.Contains(stderr, filepath.Base(testdataJavaProject())) {
+		t.Errorf("stderr should name the source path, got: %q", stderr)
+	}
+}
+
+// TestEmptyCollectionAllowed covers the opt-out: the same input exits 0 and
+// still reports the count.
+func TestEmptyCollectionAllowed(t *testing.T) {
+	stdout, stderr, exitCode := runCLISeparate(testdataJavaProject(), "--collector", "java", "--allow-empty")
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0 with --allow-empty, got %d, stderr: %s", exitCode, stderr)
+	}
+
+	if !strings.Contains(stderr, "endpoints: 0") {
+		t.Errorf("stderr should report the count with --allow-empty, got: %q", stderr)
+	}
+	if !strings.Contains(stdout, "# API") {
+		t.Errorf("expected the empty document on stdout, got: %q", stdout)
+	}
+}
+
+// TestEndpointCountLogged pins the count line for a normal export so a pipeline
+// can assert it from logs.
+func TestEndpointCountLogged(t *testing.T) {
+	_, stderr, exitCode := runCLISeparate(testdataProject(), "--collector", "go")
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr: %s", exitCode, stderr)
+	}
+
+	if !strings.Contains(stderr, "endpoints: 5") {
+		t.Errorf("stderr should report the exported endpoint count, got: %q", stderr)
 	}
 }
 

@@ -28,10 +28,18 @@ type Config struct {
 	OutputPath     string
 	PluginRegistry string
 	NoDeps         bool
+	// AllowEmpty turns a zero-endpoint result into a success. Without it such a
+	// run is an error, because a document with no endpoints is far more often a
+	// collector gap than an intentional export.
+	AllowEmpty bool
 }
 
 func Run(cfg Config) error {
 	sourceDir := cfg.SourceDir
+	// The path as given by the caller. Error messages report this one: for a
+	// file-level export sourceDir is rewritten to the project root, which is not
+	// what the user asked to export.
+	requestedPath := cfg.SourceDir
 	var sourceFile string
 
 	info, err := os.Stat(sourceDir)
@@ -86,12 +94,26 @@ func Run(cfg Config) error {
 		reportUnresolved(os.Stderr, reporter.Unresolved())
 	}
 
+	collected := len(endpoints)
+
 	if sourceFile != "" {
 		endpoints = filterEndpointsByFile(endpoints, sourceFile)
 	}
 
 	if cfg.MethodFilter != "" {
 		endpoints = filterEndpointsByMethod(endpoints, cfg.MethodFilter)
+	}
+
+	// Print how many endpoints are about to be exported, every run, including a
+	// zero. A pipeline can then assert the count from logs instead of counting
+	// headings in the document. stderr keeps stdout byte-stable for the export.
+	fmt.Fprintf(os.Stderr, "endpoints: %d\n", len(endpoints))
+
+	// A collector that locks onto a project but extracts nothing used to exit 0
+	// with a document holding nothing but its heading, which made an unsupported
+	// framework indistinguishable from a successful export (#161).
+	if len(endpoints) == 0 && !cfg.AllowEmpty {
+		return emptyCollectionError(c.Name(), requestedPath, collected)
 	}
 
 	formatterName := cfg.FormatterName
@@ -141,6 +163,18 @@ func Run(cfg Config) error {
 	}
 
 	return writeOutput(cfg.OutputPath, output)
+}
+
+// emptyCollectionError explains a zero-endpoint run. Naming the collector and
+// the path is the whole point: "nothing was exported" only becomes actionable
+// once the user knows who looked and where.
+func emptyCollectionError(collectorName, path string, collected int) error {
+	const hint = "pass --allow-empty to export an empty document"
+	if collected == 0 {
+		return fmt.Errorf("collector %q extracted 0 endpoints from %q (%s)", collectorName, path, hint)
+	}
+	return fmt.Errorf("collector %q extracted %d endpoints from %q, none of which matched the file and method filters (%s)",
+		collectorName, collected, path, hint)
 }
 
 // reportUnresolved writes a summary of types the collector could not resolve.
@@ -482,6 +516,7 @@ func handleExport(args []string) {
 		methodFilter   string
 		projectRoot    string
 		noDeps         bool
+		allowEmpty     bool
 		listCollectors bool
 		listFormatters bool
 		showHelp       bool
@@ -497,6 +532,7 @@ func handleExport(args []string) {
 	fs.StringVar(&methodFilter, "method", "", "filter to a specific method name (used with file-level export)")
 	fs.StringVar(&projectRoot, "project-root", "", "override auto-detected project root directory")
 	fs.BoolVar(&noDeps, "no-deps", false, "disable resolving request/response types from dependencies")
+	fs.BoolVar(&allowEmpty, "allow-empty", false, "exit 0 when the collection yields no endpoints")
 	fs.BoolVar(&listCollectors, "list-collectors", false, "print registered collectors and exit")
 	fs.BoolVar(&listFormatters, "list-formatters", false, "print registered formatters and exit")
 	fs.BoolVar(&showHelp, "help", false, "print help and exit")
@@ -559,6 +595,7 @@ func handleExport(args []string) {
 		MethodFilter:   methodFilter,
 		ProjectRoot:    projectRoot,
 		NoDeps:         noDeps,
+		AllowEmpty:     allowEmpty,
 	}
 
 	if err := Run(cfg); err != nil {
@@ -617,6 +654,8 @@ func printExportHelp() {
 	fmt.Println("        override auto-detected project root directory")
 	fmt.Println("  --no-deps")
 	fmt.Println("        disable resolving request/response types from dependencies")
+	fmt.Println("  --allow-empty")
+	fmt.Println("        exit 0 when the collection yields no endpoints (default: fail)")
 	fmt.Println("  --params string")
 	fmt.Println("        formatter params as JSON (e.g. '{\"variant\":\"detailed\"}')")
 	fmt.Println("  --output string")

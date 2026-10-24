@@ -43,8 +43,11 @@ Scan source code and export API endpoints.
 - `--method <name>` — Filter to a specific method name (used with file-level export)
 - `--project-root <path>` — Override auto-detected project root directory
 - `--no-deps` — Disable resolving request/response types from dependencies
+- `--allow-empty` — Exit 0 when the collection yields no endpoints (default: fail)
 - `--params <json>` — Formatter-specific params as JSON
 - `--output <path>` — Output file path (default: stdout)
+
+**Exit code and endpoint count:** a run that yields zero endpoints fails with a non-zero exit and a message naming the collector and the source path, because an empty document usually means the framework is unsupported rather than that the service has no APIs. Every run prints `endpoints: N` to stderr, so the exported count can be asserted from logs. Pass `--allow-empty` when an empty document is the intended result.
 
 **Dependency type resolution:** request and response types declared in dependencies (shared modules, third-party libraries) are resolved when the language's prerequisite is present: `maven-indexer-cli` on PATH for Java, the `go` toolchain for Go, `npm install` having run for Node.js, and a discoverable Python environment (project venv, `CONDA_PREFIX`, or `python` on PATH) for Python. When a prerequisite is missing, stderr carries a warning naming it; when resolution runs, stderr reports how many types it expanded. Pass `--no-deps` to skip the capability explicitly.
 

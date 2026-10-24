@@ -154,6 +154,7 @@ Flags:
   --method         string   Filter to a specific method name (used with file-level export)
   --project-root   string   Override auto-detected project root directory
   --no-deps                 Disable resolving request/response types from dependencies
+  --allow-empty             Exit 0 when the collection yields no endpoints (default: fail)
   --output         string   Output file path (default: stdout)
   --list-collectors         Print available collectors and exit
   --list-formatters         Print available formatters and exit
@@ -203,6 +204,28 @@ known to be absent.
 ```bash
 apilot export ./backend --formatter markdown --no-deps
 ```
+
+### Empty exports
+
+A run that yields no endpoints fails instead of writing a document that holds
+only its heading. The failure names the collector and the path it looked at, so
+an unsupported framework or a filter that matched nothing is visible rather than
+silent:
+
+```
+endpoints: 0
+error: collector "java" extracted 0 endpoints from "./backend" (pass --allow-empty to export an empty document)
+```
+
+Every run reports the exported endpoint count on stderr, so a pipeline can assert
+the number from logs alone:
+
+```bash
+apilot export ./backend --output API.md 2>&1 | grep -qx 'endpoints: 244'
+```
+
+When an empty document is the intended result — a service that legitimately has
+no endpoints yet — pass `--allow-empty` to keep the run at exit 0.
 
 ### Three levels of granularity
 

@@ -127,7 +127,7 @@ func TestRun_FormatterNotFound(t *testing.T) {
 	RegisterCollector(&mockCollector{
 		name:             "test-collector",
 		supportedLangs:   []string{"test"},
-		collectEndpoints: []collector.ApiEndpoint{},
+		collectEndpoints: []collector.ApiEndpoint{{Name: "test-endpoint"}},
 	})
 
 	cfg := Config{
@@ -217,7 +217,7 @@ func TestRun_FormatterError(t *testing.T) {
 	RegisterCollector(&mockCollector{
 		name:             "test-collector",
 		supportedLangs:   []string{"test"},
-		collectEndpoints: []collector.ApiEndpoint{},
+		collectEndpoints: []collector.ApiEndpoint{{Name: "test-endpoint"}},
 	})
 
 	RegisterFormatter(&mockFormatter{
@@ -866,6 +866,179 @@ func TestRun_MethodFilter(t *testing.T) {
 	}
 	if capturedEndpoints[0].Name != "getUser" {
 		t.Errorf("Expected Name=getUser, got %q", capturedEndpoints[0].Name)
+	}
+}
+
+// captureStderr runs fn with os.Stderr redirected into a pipe and returns what
+// it wrote. Report lines land there, so they cannot be observed any other way.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	original := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Failed to create pipe: %v", err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = original }()
+
+	fn()
+
+	w.Close()
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	return buf.String()
+}
+
+// TestRun_EmptyCollectionFails pins the fix for #161: a collector that locks on
+// but extracts nothing must fail the run instead of exiting 0 with an empty
+// document, and the message must name the collector and the source path.
+func TestRun_EmptyCollectionFails(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	RegisterCollector(&mockCollector{
+		name:             "test-collector",
+		supportedLangs:   []string{"test"},
+		collectEndpoints: []collector.ApiEndpoint{},
+	})
+	RegisterFormatter(&mockFormatter{
+		name:         "test-formatter",
+		formatOutput: []byte("empty output"),
+	})
+
+	cfg := Config{
+		SourceDir:     tmpDir,
+		CollectorName: "test-collector",
+		FormatterName: "test-formatter",
+	}
+
+	var err error
+	stderr := captureStderr(t, func() { err = Run(cfg) })
+
+	if err == nil {
+		t.Fatalf("Expected an error for a zero-endpoint collection, got nil")
+	}
+	if !strings.Contains(err.Error(), `"test-collector"`) {
+		t.Errorf("Expected the collector name in the error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "extracted 0 endpoints") {
+		t.Errorf("Expected the endpoint count in the error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), filepath.Base(tmpDir)) {
+		t.Errorf("Expected the source path in the error, got: %v", err)
+	}
+	if !strings.Contains(stderr, "endpoints: 0") {
+		t.Errorf("Expected the count to be logged even on failure, got stderr: %q", stderr)
+	}
+}
+
+// TestRun_AllowEmpty verifies the opt-out: the same zero-endpoint input succeeds
+// and still reports the count.
+func TestRun_AllowEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	outputFile := filepath.Join(tmpDir, "output.md")
+
+	RegisterCollector(&mockCollector{
+		name:             "test-collector",
+		supportedLangs:   []string{"test"},
+		collectEndpoints: []collector.ApiEndpoint{},
+	})
+	RegisterFormatter(&mockFormatter{
+		name:         "test-formatter",
+		formatOutput: []byte("# API"),
+	})
+
+	cfg := Config{
+		SourceDir:     tmpDir,
+		CollectorName: "test-collector",
+		FormatterName: "test-formatter",
+		OutputPath:    outputFile,
+		AllowEmpty:    true,
+	}
+
+	var err error
+	stderr := captureStderr(t, func() { err = Run(cfg) })
+
+	if err != nil {
+		t.Fatalf("Expected --allow-empty to succeed, got: %v", err)
+	}
+	if !strings.Contains(stderr, "endpoints: 0") {
+		t.Errorf("Expected 'endpoints: 0' on stderr, got: %q", stderr)
+	}
+	if _, readErr := os.ReadFile(outputFile); readErr != nil {
+		t.Errorf("Expected the empty document to be written, got: %v", readErr)
+	}
+}
+
+// TestRun_EmptyAfterMethodFilter covers the other silent-empty shape: the
+// collector found endpoints, but the filter matched none of them.
+func TestRun_EmptyAfterMethodFilter(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	RegisterCollector(&mockCollector{
+		name:             "test-collector",
+		supportedLangs:   []string{"test"},
+		collectEndpoints: []collector.ApiEndpoint{{Name: "getUser"}, {Name: "createUser"}},
+	})
+	RegisterFormatter(&mockFormatter{
+		name:         "test-formatter",
+		formatOutput: []byte("empty output"),
+	})
+
+	cfg := Config{
+		SourceDir:     tmpDir,
+		CollectorName: "test-collector",
+		FormatterName: "test-formatter",
+		MethodFilter:  "deleteUser",
+	}
+
+	var err error
+	stderr := captureStderr(t, func() { err = Run(cfg) })
+
+	if err == nil {
+		t.Fatalf("Expected an error when the filter matches nothing, got nil")
+	}
+	if !strings.Contains(err.Error(), "extracted 2 endpoints") {
+		t.Errorf("Expected the pre-filter count in the error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "filters") {
+		t.Errorf("Expected the error to blame the filters, got: %v", err)
+	}
+	if !strings.Contains(stderr, "endpoints: 0") {
+		t.Errorf("Expected 'endpoints: 0' on stderr, got: %q", stderr)
+	}
+}
+
+// TestRun_EndpointCountLogged pins the reported count to the exported set, not
+// to what the collector happened to find.
+func TestRun_EndpointCountLogged(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	RegisterCollector(&mockCollector{
+		name:             "test-collector",
+		supportedLangs:   []string{"test"},
+		collectEndpoints: []collector.ApiEndpoint{{Name: "getUser"}, {Name: "createUser"}},
+	})
+	RegisterFormatter(&mockFormatter{
+		name:         "test-formatter",
+		formatOutput: []byte("output"),
+	})
+
+	cfg := Config{
+		SourceDir:     tmpDir,
+		CollectorName: "test-collector",
+		FormatterName: "test-formatter",
+		MethodFilter:  "getUser",
+	}
+
+	var err error
+	stderr := captureStderr(t, func() { err = Run(cfg) })
+
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+	if !strings.Contains(stderr, "endpoints: 1") {
+		t.Errorf("Expected 'endpoints: 1' for the filtered export, got: %q", stderr)
 	}
 }
 
