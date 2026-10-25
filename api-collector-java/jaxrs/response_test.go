@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/tangcent/apilot/api-collector-java/expr"
 	"github.com/tangcent/apilot/api-collector-java/parser"
 )
 
@@ -27,7 +28,7 @@ func TestIsJaxrsResponse(t *testing.T) {
 
 // lookupOf builds a type lookup from a class name to type parameter count map.
 // Only the count matters to body inspection.
-func lookupOf(counts map[string]int) typeLookup {
+func lookupOf(counts map[string]int) expr.Lookup {
 	registry := make(map[string]parser.Class, len(counts))
 	for name, count := range counts {
 		params := make([]string, count)
@@ -198,20 +199,5 @@ func TestResponsePayload_UnknownClassArity(t *testing.T) {
 	)
 	if got != "Factory" || opaque {
 		t.Errorf("responsePayload() = (%q, %v), want (%q, false)", got, opaque, "Factory")
-	}
-}
-
-func TestLocalVariableTypeIgnoresComparisonsAndAssignments(t *testing.T) {
-	body := `{
-		if (order == null) {
-			this.order = order;
-		}
-		Order order = new Order();
-		return Response.ok(order).build();
-	}`
-
-	got, ok := localVariableType(body, "order")
-	if !ok || got != "Order" {
-		t.Errorf("localVariableType() = (%q, %v), want (\"Order\", true)", got, ok)
 	}
 }

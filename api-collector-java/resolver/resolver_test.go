@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"strings"
 	"testing"
 
 	collector "github.com/tangcent/apilot/api-collector"
@@ -1339,5 +1340,152 @@ func TestResolve_CollectorDependencyResolverPreferredOverNone(t *testing.T) {
 	}
 	if result.TypeName != "DepClass" {
 		t.Errorf("Expected typeName 'DepClass', got '%s'", result.TypeName)
+	}
+}
+
+// TestResolve_WildcardTypeArgument covers the case from #167: `?` is a type
+// argument, not a type. It must never reach a type cell, and an open argument
+// is an empty object rather than an opaque scalar.
+func TestResolve_WildcardTypeArgument(t *testing.T) {
+	classes := []parser.Class{
+		{
+			Name:           "Result",
+			TypeParameters: []string{"T"},
+			Fields: []parser.Field{
+				{Name: "code", Type: "int"},
+				{Name: "data", Type: "T"},
+			},
+		},
+	}
+	r := NewTypeResolver(classes)
+
+	t.Run("open argument", func(t *testing.T) {
+		result := r.Resolve("Result<?>", nil)
+
+		data := result.Fields["data"]
+		if data == nil || data.Model == nil {
+			t.Fatal("Expected 'data' field")
+		}
+		if data.Model.Kind != model.KindObject {
+			t.Fatalf("Expected data to be an object, got %s (%q)", data.Model.Kind, data.Model.TypeName)
+		}
+		if data.Model.TypeName == "?" {
+			t.Error("A wildcard must never be exported as a type name")
+		}
+	})
+
+	t.Run("open element", func(t *testing.T) {
+		result := r.Resolve("List<?>", nil)
+
+		if result.Kind != model.KindArray || result.Items == nil {
+			t.Fatalf("Expected an array, got %+v", result)
+		}
+		if result.Items.Kind != model.KindObject {
+			t.Errorf("Expected an object element, got %s (%q)", result.Items.Kind, result.Items.TypeName)
+		}
+	})
+
+	t.Run("bounded argument", func(t *testing.T) {
+		result := r.Resolve("Result<? extends Order>", nil)
+
+		data := result.Fields["data"]
+		if data == nil || data.Model == nil {
+			t.Fatal("Expected 'data' field")
+		}
+		if data.Model.TypeName == "?" || strings.Contains(data.Model.TypeName, "?") {
+			t.Errorf("A wildcard must never be exported as a type name, got %q", data.Model.TypeName)
+		}
+	})
+
+	t.Run("Void argument is unchanged", func(t *testing.T) {
+		result := r.Resolve("Result<Void>", nil)
+
+		data := result.Fields["data"]
+		if data == nil || data.Model == nil || !data.Model.IsNull() {
+			t.Errorf("Expected data to stay null for Void, got %+v", data)
+		}
+	})
+}
+
+// TestResolve_ReturnTypeFillsWildcardFromBody covers the second half of #167:
+// when the body names the payload, the open argument resolves to it instead of
+// staying an empty object.
+func TestResolve_ReturnTypeFillsWildcardFromBody(t *testing.T) {
+	classes := []parser.Class{
+		{
+			Name:           "Result",
+			TypeParameters: []string{"T"},
+			Fields: []parser.Field{
+				{Name: "code", Type: "int"},
+				{Name: "data", Type: "T"},
+			},
+		},
+		{
+			Name:           "PageResult",
+			TypeParameters: []string{"T"},
+			Fields: []parser.Field{
+				{Name: "total", Type: "long"},
+				{Name: "records", Type: "List<T>"},
+			},
+		},
+	}
+	r := NewTypeResolver(classes)
+
+	method := parser.Method{
+		Name:       "page",
+		ReturnType: "Result<?>",
+		Body: `{
+			return Result.success(new PageResult<>());
+		}`,
+	}
+
+	result := r.ResolveReturn(parser.Class{}, method, nil)
+
+	data := result.Fields["data"]
+	if data == nil || data.Model == nil {
+		t.Fatal("Expected 'data' field")
+	}
+	if data.Model.Kind != model.KindObject {
+		t.Fatalf("Expected data to expand PageResult, got %s (%q)", data.Model.Kind, data.Model.TypeName)
+	}
+	if data.Model.TypeName != "PageResult" {
+		t.Errorf("Expected data typeName 'PageResult', got %q", data.Model.TypeName)
+	}
+	for _, fieldName := range []string{"total", "records"} {
+		if data.Model.Fields[fieldName] == nil {
+			t.Errorf("Expected PageResult field %q under data", fieldName)
+		}
+	}
+}
+
+// TestResolve_ReturnTypeKeepsOpenWildcardWithoutEvidence pins the fallback: a
+// body that names no type leaves the argument open, and the export says
+// object rather than "?".
+func TestResolve_ReturnTypeKeepsOpenWildcardWithoutEvidence(t *testing.T) {
+	classes := []parser.Class{
+		{
+			Name:           "Result",
+			TypeParameters: []string{"T"},
+			Fields: []parser.Field{
+				{Name: "data", Type: "T"},
+			},
+		},
+	}
+	r := NewTypeResolver(classes)
+
+	method := parser.Method{
+		Name:       "page",
+		ReturnType: "Result<?>",
+		Body:       "{ return Result.success(service.pageOrders(request)); }",
+	}
+
+	result := r.ResolveReturn(parser.Class{}, method, nil)
+
+	data := result.Fields["data"]
+	if data == nil || data.Model == nil {
+		t.Fatal("Expected 'data' field")
+	}
+	if data.Model.Kind != model.KindObject {
+		t.Errorf("Expected an open object, got %s (%q)", data.Model.Kind, data.Model.TypeName)
 	}
 }

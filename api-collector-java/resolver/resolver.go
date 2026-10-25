@@ -6,6 +6,7 @@ import (
 
 	collector "github.com/tangcent/apilot/api-collector"
 	javadoc "github.com/tangcent/apilot/api-collector-java/doc"
+	"github.com/tangcent/apilot/api-collector-java/expr"
 	"github.com/tangcent/apilot/api-collector-java/parser"
 	model "github.com/tangcent/apilot/api-model"
 )
@@ -368,6 +369,15 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 		}
 	}
 
+	// A wildcard is a type argument, not a type. `Result<?>` declares an open
+	// payload type, and rendering the argument as the payload name produced a
+	// table that said the type was literally "?" with an empty demo (issue
+	// #167). Without evidence of a concrete type the argument stays open, so
+	// the schema carries an empty object.
+	if isWildcard(rawType) {
+		return model.EmptyObject()
+	}
+
 	if jsonType, ok := primitiveTypes[rawType]; ok {
 		return model.SingleModel(jsonType)
 	}
@@ -473,6 +483,71 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 
 	r.recordUnresolved(rawType)
 	return model.SingleModel(rawType)
+}
+
+// ResolveReturn resolves the declared return type of method as written in
+// source.
+//
+// A wildcard type argument (`Result<?>`) names no payload type by itself, but
+// the method body usually does: `Result.success(new PageResult<>())` says the
+// open argument was a PageResult. When the returns in the body agree on a type
+// that fits the declared shape, that type fills the argument; otherwise the
+// declared type resolves with the argument left open (see ResolveFrom).
+func (r *TypeResolver) ResolveReturn(source parser.Class, method parser.Method, typeBindings map[string]string) *model.ObjectModel {
+	if !hasWildcardArg(method.ReturnType) {
+		return r.ResolveFrom(source, method.ReturnType, typeBindings)
+	}
+
+	bodyType, found := expr.ReturnedType(method, func(name string) (parser.Class, bool) {
+		return r.Class(source, name)
+	})
+	if found {
+		if filled, ok := fillWildcardArgs(method.ReturnType, bodyType); ok {
+			return r.ResolveFrom(source, filled, typeBindings)
+		}
+	}
+	return r.ResolveFrom(source, method.ReturnType, typeBindings)
+}
+
+// hasWildcardArg reports whether a type spelling carries a wildcard type
+// argument. "?" cannot occur in a Java type name any other way.
+func hasWildcardArg(rawType string) bool {
+	return strings.Contains(rawType, "?")
+}
+
+// isWildcard reports whether a type spelling is a wildcard type argument,
+// bounded (`? extends Order`) or not.
+func isWildcard(typeName string) bool {
+	return strings.HasPrefix(strings.TrimSpace(typeName), "?")
+}
+
+// fillWildcardArgs replaces the open type arguments of declared with the
+// corresponding arguments of inferred, and only when both spell the same base
+// type: `Result<?>` filled from `Result<PageResult>` is `Result<PageResult>`.
+func fillWildcardArgs(declared, inferred string) (string, bool) {
+	declBase, declArgs := parseGenericType(declared)
+	infBase, infArgs := parseGenericType(inferred)
+	if len(declArgs) == 0 || len(declArgs) != len(infArgs) {
+		return "", false
+	}
+	if lastSegment(declBase) != lastSegment(infBase) {
+		return "", false
+	}
+
+	args := make([]string, len(declArgs))
+	changed := false
+	for i, arg := range declArgs {
+		if isWildcard(arg) && !isWildcard(infArgs[i]) {
+			args[i] = infArgs[i]
+			changed = true
+			continue
+		}
+		args[i] = arg
+	}
+	if !changed {
+		return "", false
+	}
+	return declBase + "<" + strings.Join(args, ", ") + ">", true
 }
 
 // resolveClass expands one declaration into an object model.

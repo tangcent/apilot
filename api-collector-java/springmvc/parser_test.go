@@ -430,3 +430,103 @@ func TestParser_NonControllerClass(t *testing.T) {
 		t.Errorf("Expected 0 controllers, got %d", len(controllers))
 	}
 }
+
+// TestParser_WildcardReturnType covers issue #167: a handler declared with
+// `Result<?>` must never export "?" as the payload type, and the body's
+// construction fills the open argument when it names one.
+func TestParser_WildcardReturnType(t *testing.T) {
+	p := NewParser()
+
+	jp, err := parser.NewParser(parser.ParserOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create java parser: %v", err)
+	}
+	defer jp.Close()
+
+	source := []byte(`package com.example.api;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/orders")
+public class OrderPageController {
+
+    @GetMapping("/page")
+    public Result<?> page(@RequestParam(defaultValue = "1") int page,
+                          @RequestParam(defaultValue = "10") int size) {
+        return Result.success(new PageResult<>());
+    }
+
+    @GetMapping("/open")
+    public Result<?> open() {
+        return Result.success(service.pageOrders(new PageRequest(1, 10)));
+    }
+}
+
+class Result<T> {
+    private int code;
+    private String message;
+    private T data;
+}
+
+class PageResult<T> {
+    private long total;
+    private int page;
+    private int size;
+    private List<T> records;
+}
+
+class PageRequest {
+    private int page;
+    private int size;
+}
+`)
+
+	classes, err := jp.ParseSource(source)
+	if err != nil {
+		t.Fatalf("Failed to parse source: %v", err)
+	}
+
+	controllers := p.ExtractControllers([]parser.ParseResult{
+		{FilePath: "OrderPageController.java", Classes: classes},
+	})
+	if len(controllers) != 1 || len(controllers[0].Endpoints) != 2 {
+		t.Fatalf("Expected one controller with 2 endpoints, got %#v", controllers)
+	}
+
+	// The body builds `new PageResult<>()`, so the open argument is PageResult.
+	paged := controllers[0].Endpoints[0].ResponseSchema
+	if paged == nil || !paged.IsObject() {
+		t.Fatalf("Expected an object response, got %+v", paged)
+	}
+	data := paged.Fields["data"]
+	if data == nil || data.Model == nil || !data.Model.IsObject() {
+		t.Fatalf("Expected data to expand PageResult, got %+v", data)
+	}
+	if data.Model.TypeName != "PageResult" {
+		t.Errorf("Expected data typeName 'PageResult', got %q", data.Model.TypeName)
+	}
+	for _, fieldName := range []string{"total", "page", "size"} {
+		if data.Model.Fields[fieldName] == nil {
+			t.Errorf("Expected PageResult field %q under data", fieldName)
+		}
+	}
+
+	// The body names no payload, so the argument stays open. An open argument
+	// is an empty object, never the literal "?".
+	open := controllers[0].Endpoints[1].ResponseSchema
+	if open == nil || !open.IsObject() {
+		t.Fatalf("Expected an object response, got %+v", open)
+	}
+	openData := open.Fields["data"]
+	if openData == nil || openData.Model == nil || !openData.Model.IsObject() {
+		t.Fatalf("Expected data to be an open object, got %+v", openData)
+	}
+	if openData.Model.TypeName != "object" {
+		t.Errorf("Expected data typeName 'object', got %q", openData.Model.TypeName)
+	}
+}

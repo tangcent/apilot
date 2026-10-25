@@ -1329,3 +1329,140 @@ func TestCollect_ReportsOpaqueResponses(t *testing.T) {
 		t.Errorf("Expected a warning for ResponseResource.update, got %v", reporter.Warnings())
 	}
 }
+
+// TestCollect_WildcardReturnType covers #167 end to end: a `Result<?>` handler
+// exports the payload the body names, and an open argument never reaches the
+// exported model as the type name "?".
+func TestCollect_WildcardReturnType(t *testing.T) {
+	dir := t.TempDir()
+
+	writeJava(t, dir, "Result.java", `package com.example.api;
+
+public class Result<T> {
+    private int code;
+    private String message;
+    private T data;
+
+    public static <T> Result<T> success(T data) {
+        Result<T> result = new Result<>();
+        result.data = data;
+        return result;
+    }
+}
+`)
+
+	writeJava(t, dir, "PageResult.java", `package com.example.api;
+
+import java.util.List;
+
+public class PageResult {
+    private long total;
+    private int page;
+    private int size;
+    private int pages;
+    private List<String> records;
+}
+`)
+
+	writeJava(t, dir, "OrderPageController.java", `package com.example.api;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/api/orders")
+public class OrderPageController {
+
+    @GetMapping("/page")
+    public Result<?> page() {
+        return Result.success(new PageResult());
+    }
+
+    @GetMapping("/open")
+    public Result<?> open() {
+        return Result.success(service.pageOrders(new PageRequest(1, 10)));
+    }
+}
+`)
+
+	c := New()
+	endpoints, err := c.Collect(collector.CollectContext{
+		SourceDir:  dir,
+		Frameworks: []string{"springmvc"},
+	})
+	if err != nil {
+		t.Fatalf("Collect failed: %v", err)
+	}
+	if len(endpoints) != 2 {
+		t.Fatalf("Expected 2 endpoints, got %d", len(endpoints))
+	}
+
+	// The body builds `new PageResult()`, so the open argument is PageResult.
+	paged := findEndpoint(t, endpoints, "page")
+	if paged.Response == nil || paged.Response.Body == nil || !paged.Response.Body.IsObject() {
+		t.Fatalf("Expected an object response, got %+v", paged.Response)
+	}
+	data := paged.Response.Body.Fields["data"]
+	if data == nil || data.Model == nil || !data.Model.IsObject() {
+		t.Fatalf("Expected data to expand PageResult, got %+v", data)
+	}
+	if data.Model.TypeName != "PageResult" {
+		t.Errorf("Expected data typeName 'PageResult', got %q", data.Model.TypeName)
+	}
+	for _, fieldName := range []string{"records", "total", "page", "size", "pages"} {
+		if data.Model.Fields[fieldName] == nil {
+			t.Errorf("Expected PageResult field %q under data", fieldName)
+		}
+	}
+
+	// The body names no payload, so the argument stays open: an empty object,
+	// not the literal "?" and not the empty string a "?" demo produced.
+	open := findEndpoint(t, endpoints, "open")
+	if open.Response == nil || open.Response.Body == nil || !open.Response.Body.IsObject() {
+		t.Fatalf("Expected an object response, got %+v", open.Response)
+	}
+	openData := open.Response.Body.Fields["data"]
+	if openData == nil || openData.Model == nil || !openData.Model.IsObject() {
+		t.Fatalf("Expected data to be an open object, got %+v", openData)
+	}
+	if openData.Model.TypeName != "object" {
+		t.Errorf("Expected data typeName 'object', got %q", openData.Model.TypeName)
+	}
+
+	// Nothing anywhere in the exported schemas may present a wildcard as a
+	// type name; it is an argument, and open payloads are objects.
+	for _, endpoint := range endpoints {
+		if endpoint.RequestBody != nil {
+			assertNoWildcardTypeNames(t, endpoint.RequestBody.Body)
+		}
+		if endpoint.Response != nil {
+			assertNoWildcardTypeNames(t, endpoint.Response.Body)
+		}
+	}
+}
+
+// assertNoWildcardTypeNames walks a model and fails on any type name that
+// still carries a wildcard.
+func assertNoWildcardTypeNames(t *testing.T, m *model.ObjectModel) {
+	t.Helper()
+	if m == nil {
+		return
+	}
+	if strings.Contains(m.TypeName, "?") {
+		t.Errorf("Exported type name %q still carries a wildcard", m.TypeName)
+	}
+	if m.KeyModel != nil {
+		assertNoWildcardTypeNames(t, m.KeyModel)
+	}
+	if m.ValueModel != nil {
+		assertNoWildcardTypeNames(t, m.ValueModel)
+	}
+	assertNoWildcardTypeNames(t, m.Items)
+	for _, field := range m.Fields {
+		if field == nil {
+			continue
+		}
+		assertNoWildcardTypeNames(t, field.Model)
+	}
+}
