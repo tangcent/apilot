@@ -513,13 +513,15 @@ func TestApiEndpoint(t *testing.T) {
 		Method:      "GET",
 		Protocol:    "http",
 		Parameters: []ApiParameter{
-			{Name: "id", Type: "text", Required: true, In: "path"},
+			{Name: "id", Type: "text", TypeName: "Long", Required: true, In: "path"},
 		},
 		Headers: []ApiHeader{
 			{Name: "Authorization", Value: "Bearer token", Required: true},
 		},
 		RequestBody: &ApiBody{MediaType: "application/json"},
 		Response:    &ApiBody{MediaType: "application/json", Body: SingleModel("User")},
+		Consumes:    []string{"application/json"},
+		Produces:    []string{"application/json"},
 		Metadata:    map[string]any{"version": "1.0"},
 	}
 
@@ -538,12 +540,19 @@ func TestApiEndpoint(t *testing.T) {
 	if ep.Metadata["version"] != "1.0" {
 		t.Error("Expected Metadata version=1.0")
 	}
+	if len(ep.Consumes) != 1 || ep.Consumes[0] != "application/json" {
+		t.Errorf("Expected Consumes ['application/json'], got %v", ep.Consumes)
+	}
+	if len(ep.Produces) != 1 || ep.Produces[0] != "application/json" {
+		t.Errorf("Expected Produces ['application/json'], got %v", ep.Produces)
+	}
 }
 
 func TestApiParameter(t *testing.T) {
 	p := ApiParameter{
 		Name:        "id",
 		Type:        "text",
+		TypeName:    "Long",
 		Required:    true,
 		In:          "path",
 		Default:     "1",
@@ -557,6 +566,9 @@ func TestApiParameter(t *testing.T) {
 	}
 	if p.Type != "text" {
 		t.Errorf("Expected Type 'text', got %s", p.Type)
+	}
+	if p.TypeName != "Long" {
+		t.Errorf("Expected TypeName 'Long', got %s", p.TypeName)
 	}
 	if !p.Required {
 		t.Error("Expected Required true")

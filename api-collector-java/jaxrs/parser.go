@@ -409,11 +409,14 @@ func defaultValueFrom(annotations []parser.Annotation) string {
 	return ""
 }
 
+// extractMediaTypes reads the media types a @Consumes / @Produces annotation
+// declares. The value is resolved to wire media types, so
+// @Consumes(MediaType.MULTIPART_FORM_DATA) yields multipart/form-data.
 func (p *Parser) extractMediaTypes(annotations []parser.Annotation, annName string) []string {
 	for _, ann := range annotations {
 		if ann.Name == annName {
 			if value, ok := ann.Params["value"]; ok {
-				return []string{strings.Trim(value, "\"'")}
+				return parser.MediaTypes(value)
 			}
 		}
 	}

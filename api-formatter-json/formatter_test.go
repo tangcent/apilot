@@ -358,3 +358,65 @@ func mustFormat(t *testing.T, endpoints []model.ApiEndpoint) []byte {
 	}
 	return out
 }
+
+// TestFormat_DeclaredTypeAndMediaTypes covers the fields a pipeline gates on
+// for issue #169: the declared parameter type, so a Long id is distinguishable
+// from a String id, and the declared media types, which are absent rather than
+// defaulted when the source declares none.
+func TestFormat_DeclaredTypeAndMediaTypes(t *testing.T) {
+	endpoints := []model.ApiEndpoint{
+		{
+			Name: "upload", Path: "/files", Method: "POST", Protocol: "http",
+			Parameters: []model.ApiParameter{
+				{Name: "file", In: "form", Type: "file", TypeName: "MultipartFile", Required: true},
+				{Name: "ownerId", In: "query", Type: "text", TypeName: "Long"},
+			},
+			Consumes: []string{"multipart/form-data"},
+			Produces: []string{"application/json"},
+		},
+	}
+
+	out := mustFormat(t, endpoints)
+	doc := struct {
+		Endpoints []struct {
+			Consumes []string `json:"consumes"`
+			Produces []string `json:"produces"`
+			Request  struct {
+				Parameters struct {
+					Query []struct {
+						Name     string `json:"name"`
+						TypeName string `json:"typeName"`
+					} `json:"query"`
+					Form []struct {
+						Name     string `json:"name"`
+						Type     string `json:"type"`
+						TypeName string `json:"typeName"`
+					} `json:"form"`
+				} `json:"parameters"`
+			} `json:"request"`
+		} `json:"endpoints"`
+	}{}
+	if err := stdjson.Unmarshal(out, &doc); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	if len(doc.Endpoints) != 1 {
+		t.Fatalf("endpoints length = %d, want 1", len(doc.Endpoints))
+	}
+
+	ep := doc.Endpoints[0]
+	if len(ep.Consumes) != 1 || ep.Consumes[0] != "multipart/form-data" {
+		t.Errorf("consumes = %v, want [multipart/form-data]", ep.Consumes)
+	}
+	if len(ep.Produces) != 1 || ep.Produces[0] != "application/json" {
+		t.Errorf("produces = %v, want [application/json]", ep.Produces)
+	}
+	if len(ep.Request.Parameters.Query) != 1 || ep.Request.Parameters.Query[0].TypeName != "Long" {
+		t.Errorf("query typeName = %+v, want Long", ep.Request.Parameters.Query)
+	}
+	if len(ep.Request.Parameters.Form) != 1 {
+		t.Fatalf("form parameters = %+v, want one file part", ep.Request.Parameters.Form)
+	}
+	if ep.Request.Parameters.Form[0].Type != "file" || ep.Request.Parameters.Form[0].TypeName != "MultipartFile" {
+		t.Errorf("form parameter = %+v, want type file with typeName MultipartFile", ep.Request.Parameters.Form[0])
+	}
+}

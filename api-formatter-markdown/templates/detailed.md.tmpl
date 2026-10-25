@@ -25,6 +25,14 @@
 **Path:** {{ .Path }}
 
 **Method:** {{ .Method }}
+{{- if .ContentType }}
+
+**Content-Type:** {{ .ContentType }}
+{{- end }}
+{{- if .Accept }}
+
+**Accept:** {{ .Accept }}
+{{- end }}
 {{- end }}
 {{- if .Description }}
 
@@ -39,27 +47,27 @@
 
 **Path Params:**
 
-| name | value | required | desc |
-| ------------ | ------------ | ------------ | ------------ |
-{{ range .PathParams }}| {{ .Name }} | {{ .Value }} | {{ .Required }} | {{ .Description }} |
+| name | value | required | type | desc |
+| ------------ | ------------ | ------------ | ------------ | ------------ |
+{{ range .PathParams }}| {{ .Name }} | {{ .Value }} | {{ .Required }} | {{ .Type }} | {{ .Description }} |
 {{ end }}
 {{- end }}
 {{- if .QueryParams }}
 
 **Query:**
 
-| name | value | required | desc |
-| ------------ | ------------ | ------------ | ------------ |
-{{ range .QueryParams }}| {{ .Name }} | {{ .Value }} | {{ .Required }} | {{ .Description }} |
+| name | value | required | type | desc |
+| ------------ | ------------ | ------------ | ------------ | ------------ |
+{{ range .QueryParams }}| {{ .Name }} | {{ .Value }} | {{ .Required }} | {{ .Type }} | {{ .Description }} |
 {{ end }}
 {{- end }}
 {{- if .Headers }}
 
 **Headers:**
 
-| name | value | required | desc |
-| ------------ | ------------ | ------------ | ------------ |
-{{ range .Headers }}| {{ .Name }} | {{ .Value }} | {{ .Required }} | {{ .Description }} |
+| name | value | required | type | desc |
+| ------------ | ------------ | ------------ | ------------ | ------------ |
+{{ range .Headers }}| {{ .Name }} | {{ .Value }} | {{ .Required }} | {{ .Type }} | {{ .Description }} |
 {{ end }}
 {{- end }}
 {{- if .FormParams }}

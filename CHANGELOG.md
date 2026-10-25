@@ -114,6 +114,12 @@
 
 ## Unreleased
 
+- fix(markdown): export the parameter type and the declared media types (#169)
+  - Query, Path Params and Headers tables carry a `type` column, mirroring Form, so a `Long id` is distinguishable from a `String id` (Java collectors propagate the declared type; other collectors leave the cell empty rather than guessing)
+  - `Content-Type` (`@Consumes`) and `Accept` (`@Produces`) render near the method when the source declares them; `MediaType.*` constant references resolve to wire media types
+  - `MultipartFile` parameters export under Form with `type: file` instead of Query, and `@RequestPart` is recognized as a form part
+  - The JSON formatter exposes `typeName` plus `consumes`/`produces` for CI gates; `ApiParameter`/`ApiEndpoint` gain the matching fields
+  - Output changes for every project with parameters: committed exports need a refresh (golden files updated)
 - Initial release — migrated from [easy-api](https://github.com/tangcent/easy-api) Go engine layer
 - Renamed project to APilot
 - Added support for Java (Spring MVC, JAX-RS, Feign), Go (Gin, Echo, Fiber), Node.js (Express, Fastify, NestJS), Python (FastAPI, Django REST, Flask)

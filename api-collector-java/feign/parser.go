@@ -352,6 +352,10 @@ func detectSpringParameterType(annotations []parser.Annotation) (string, bool) {
 			return "body", true
 		case "RequestHeader":
 			return "header", true
+		case "RequestPart":
+			// A part of a multipart request is a form field, never a query
+			// argument.
+			return "form", true
 		case "SpringQueryMap":
 			return "body", true
 		}

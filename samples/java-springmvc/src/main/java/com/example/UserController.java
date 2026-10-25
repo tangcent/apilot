@@ -1,6 +1,7 @@
 package com.example;
 
 import org.springframework.web.bind.annotation.*;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.multipart.MultipartFile;
 import com.example.model.User;
@@ -39,6 +40,14 @@ public class UserController {
     @DeleteMapping("/{id}")
     public Result<Void> deleteUser(@PathVariable Long id) {
         return Result.success(null);
+    }
+
+    @PostMapping(value = "/{id}/avatar",
+            consumes = MediaType.MULTIPART_FORM_DATA,
+            produces = MediaType.APPLICATION_JSON)
+    public Result<String> uploadAvatar(@PathVariable Long id,
+                                       @RequestParam("file") MultipartFile file) {
+        return Result.success(file.getOriginalFilename());
     }
 
     @PostMapping("/login")

@@ -530,3 +530,107 @@ class PageRequest {
 		t.Errorf("Expected data typeName 'object', got %q", openData.Model.TypeName)
 	}
 }
+
+// TestParser_MediaTypesFromMapping covers the consumes/produces attributes of
+// a mapping annotation: the declared media types reach the endpoint as wire
+// media types, and a mapping that declares none leaves them empty.
+func TestParser_MediaTypesFromMapping(t *testing.T) {
+	results := []parser.ParseResult{
+		{
+			Classes: []parser.Class{
+				{
+					Name: "UploadController",
+					Annotations: []parser.Annotation{
+						{Name: "RestController"},
+					},
+					Methods: []parser.Method{
+						{
+							Name: "upload",
+							Annotations: []parser.Annotation{
+								{Name: "PostMapping", Params: map[string]string{
+									"value":    "/upload",
+									"consumes": "MediaType.MULTIPART_FORM_DATA",
+									"produces": "MediaType.APPLICATION_JSON",
+								}},
+							},
+							ReturnType: "String",
+						},
+						{
+							Name: "plain",
+							Annotations: []parser.Annotation{
+								{Name: "PostMapping", Params: map[string]string{"value": "/plain"}},
+							},
+							ReturnType: "String",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	controllers := NewParser().ExtractControllers(results)
+	if len(controllers) != 1 || len(controllers[0].Endpoints) != 2 {
+		t.Fatalf("Expected 1 controller with 2 endpoints, got %+v", controllers)
+	}
+
+	upload := controllers[0].Endpoints[0]
+	if len(upload.Consumes) != 1 || upload.Consumes[0] != "multipart/form-data" {
+		t.Errorf("upload consumes = %v, want [multipart/form-data]", upload.Consumes)
+	}
+	if len(upload.Produces) != 1 || upload.Produces[0] != "application/json" {
+		t.Errorf("upload produces = %v, want [application/json]", upload.Produces)
+	}
+
+	plain := controllers[0].Endpoints[1]
+	if len(plain.Consumes) != 0 || len(plain.Produces) != 0 {
+		t.Errorf("plain media types = %v / %v, want none", plain.Consumes, plain.Produces)
+	}
+}
+
+// TestParser_RequestPartIsFormParam covers the multipart binding @RequestPart:
+// a part of a multipart request is a form field, not a query argument.
+func TestParser_RequestPartIsFormParam(t *testing.T) {
+	results := []parser.ParseResult{
+		{
+			Classes: []parser.Class{
+				{
+					Name: "UploadController",
+					Annotations: []parser.Annotation{
+						{Name: "RestController"},
+					},
+					Methods: []parser.Method{
+						{
+							Name: "uploadParts",
+							Annotations: []parser.Annotation{
+								{Name: "PostMapping", Params: map[string]string{"value": "/parts"}},
+							},
+							Parameters: []parser.Parameter{
+								{
+									Name: "avatar",
+									Type: "MultipartFile",
+									Annotations: []parser.Annotation{
+										{Name: "RequestPart", Params: map[string]string{"value": "avatar"}},
+									},
+								},
+							},
+							ReturnType: "String",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	controllers := NewParser().ExtractControllers(results)
+	if len(controllers) != 1 || len(controllers[0].Endpoints) != 1 {
+		t.Fatalf("Expected 1 controller with 1 endpoint, got %+v", controllers)
+	}
+
+	params := controllers[0].Endpoints[0].Parameters
+	if len(params) != 1 {
+		t.Fatalf("Expected 1 parameter, got %+v", params)
+	}
+	if params[0].ParamType != "form" {
+		t.Errorf("avatar paramType = %q, want form", params[0].ParamType)
+	}
+}

@@ -45,6 +45,11 @@ type endpoint struct {
 	Folder      string   `json:"folder,omitempty"`
 	Request     *request `json:"request,omitempty"`
 	Response    *body    `json:"response,omitempty"`
+	// Consumes and Produces carry the media types the source declares; they
+	// are absent when it declares none, unlike the body media type a
+	// collector may default.
+	Consumes []string `json:"consumes,omitempty"`
+	Produces []string `json:"produces,omitempty"`
 }
 
 type request struct {
@@ -65,8 +70,12 @@ type parameters struct {
 }
 
 type parameter struct {
-	Name        string   `json:"name"`
-	Type        string   `json:"type"`
+	Name string `json:"name"`
+	Type string `json:"type"`
+	// TypeName is the declared type in the source language, e.g. "Long".
+	// Empty when the collector cannot name it, so a pipeline gating on it
+	// sees the gap instead of a placeholder.
+	TypeName    string   `json:"typeName,omitempty"`
 	Required    bool     `json:"required"`
 	Default     string   `json:"default,omitempty"`
 	Description string   `json:"description,omitempty"`
@@ -141,6 +150,8 @@ func buildEndpoint(ep model.ApiEndpoint) endpoint {
 		Description: ep.Description,
 		Request:     buildRequest(ep),
 		Response:    buildBody(ep.Response),
+		Consumes:    ep.Consumes,
+		Produces:    ep.Produces,
 	}
 }
 
@@ -160,6 +171,7 @@ func buildParameters(ep model.ApiEndpoint) *parameters {
 		entry := parameter{
 			Name:        p.Name,
 			Type:        p.Type,
+			TypeName:    p.TypeName,
 			Required:    p.Required,
 			Default:     p.Default,
 			Description: p.Description,

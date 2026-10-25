@@ -1557,3 +1557,166 @@ public class UserController {
 		}
 	}
 }
+
+// TestCollect_ParameterTypeName covers issue #169's core gap: the declared
+// Java type travels to the canonical model, so a caller can tell a Long id
+// from a String id.
+func TestCollect_ParameterTypeName(t *testing.T) {
+	c := New()
+	testdataDir, _ := filepath.Abs("testdata")
+
+	endpoints, err := c.Collect(collector.CollectContext{
+		SourceDir:  testdataDir,
+		Frameworks: []string{"spring-mvc"},
+	})
+	if err != nil {
+		t.Fatalf("Collect failed: %v", err)
+	}
+
+	getUser := findEndpoint(t, endpoints, "getUser")
+	id := findParameter(t, getUser, "id")
+	if id.TypeName != "Long" {
+		t.Errorf("getUser id typeName = %q, want Long", id.TypeName)
+	}
+	if id.Type != "text" {
+		t.Errorf("getUser id type = %q, want text", id.Type)
+	}
+
+	listUsers := findEndpoint(t, endpoints, "listUsers")
+	page := findParameter(t, listUsers, "page")
+	if page.TypeName != "int" {
+		t.Errorf("listUsers page typeName = %q, want int", page.TypeName)
+	}
+}
+
+// TestCollect_MultipartFileIsFormParam covers the correctness half of issue
+// #169: a MultipartFile argument rides in a multipart form body, so it is a
+// form parameter with kind file — never a query parameter, where a reader
+// following the document would send ?file=.
+func TestCollect_MultipartFileIsFormParam(t *testing.T) {
+	c := New()
+	testdataDir, _ := filepath.Abs("testdata")
+
+	endpoints, err := c.Collect(collector.CollectContext{
+		SourceDir: testdataDir,
+	})
+	if err != nil {
+		t.Fatalf("Collect failed: %v", err)
+	}
+
+	upload := findEndpoint(t, endpoints, "upload")
+	if len(upload.Parameters) != 2 {
+		t.Fatalf("upload parameters = %+v, want the file part and the description", upload.Parameters)
+	}
+	file := findParameter(t, upload, "file")
+	if file.In != "form" {
+		t.Errorf("upload file in = %q, want form", file.In)
+	}
+	if file.Type != "file" {
+		t.Errorf("upload file type = %q, want file", file.Type)
+	}
+	if file.TypeName != "MultipartFile" {
+		t.Errorf("upload file typeName = %q, want MultipartFile", file.TypeName)
+	}
+	if !file.Required {
+		t.Error("upload file should stay required: @RequestParam defaults to required")
+	}
+	// A plain @RequestParam next to the file is not a file part, and Spring
+	// binds it from the query string as readily as from the form, so it stays
+	// where the binding annotation puts it.
+	description := findParameter(t, upload, "description")
+	if description.In != "query" || description.Type != "text" {
+		t.Errorf("upload description = %+v, want a text query parameter", description)
+	}
+
+	// @RequestPart is the other multipart binding; it is a form part too.
+	uploadParts := findEndpoint(t, endpoints, "uploadParts")
+	if len(uploadParts.Parameters) != 2 {
+		t.Fatalf("uploadParts parameters = %+v, want the avatar part and the bio part", uploadParts.Parameters)
+	}
+	avatar := findParameter(t, uploadParts, "avatar")
+	if avatar.In != "form" || avatar.Type != "file" {
+		t.Errorf("uploadParts avatar = %+v, want a form file parameter", avatar)
+	}
+	bio := findParameter(t, uploadParts, "bio")
+	if bio.In != "form" || bio.Type != "text" {
+		t.Errorf("uploadParts bio = %+v, want a form text parameter", bio)
+	}
+}
+
+// TestCollect_DeclaredMediaTypes covers the media type half of issue #169: the
+// media types the source declares reach the model as wire media types — the
+// MediaType constant reference is resolved, not exported verbatim — and an
+// endpoint that declares none stays empty.
+func TestCollect_DeclaredMediaTypes(t *testing.T) {
+	c := New()
+	testdataDir, _ := filepath.Abs("testdata")
+
+	endpoints, err := c.Collect(collector.CollectContext{
+		SourceDir: testdataDir,
+	})
+	if err != nil {
+		t.Fatalf("Collect failed: %v", err)
+	}
+
+	// Spring: the mapping annotation declares both directions.
+	upload := findEndpoint(t, endpoints, "upload")
+	if len(upload.Consumes) != 1 || upload.Consumes[0] != "multipart/form-data" {
+		t.Errorf("upload consumes = %v, want [multipart/form-data]", upload.Consumes)
+	}
+	if len(upload.Produces) != 1 || upload.Produces[0] != "application/json" {
+		t.Errorf("upload produces = %v, want [application/json]", upload.Produces)
+	}
+
+	// Spring: a literal value is taken as written.
+	uploadParts := findEndpoint(t, endpoints, "uploadParts")
+	if len(uploadParts.Consumes) != 1 || uploadParts.Consumes[0] != "multipart/form-data" {
+		t.Errorf("uploadParts consumes = %v, want [multipart/form-data]", uploadParts.Consumes)
+	}
+	if len(uploadParts.Produces) != 0 {
+		t.Errorf("uploadParts produces = %v, want none", uploadParts.Produces)
+	}
+
+	// JAX-RS: the class-level declaration is inherited by every method, and a
+	// method declaration overrides it.
+	byFolder := make(map[string]collector.ApiEndpoint)
+	for _, ep := range endpoints {
+		if ep.Folder == "UploadResource" {
+			byFolder[ep.Name] = ep
+		}
+	}
+	form, ok := byFolder["upload"]
+	if !ok {
+		t.Fatal("Expected the JAX-RS upload endpoint")
+	}
+	if len(form.Consumes) != 1 || form.Consumes[0] != "multipart/form-data" {
+		t.Errorf("jaxrs upload consumes = %v, want [multipart/form-data]", form.Consumes)
+	}
+	if len(form.Produces) != 1 || form.Produces[0] != "application/json" {
+		t.Errorf("jaxrs upload produces = %v, want [application/json]", form.Produces)
+	}
+	if file := findParameter(t, &form, "file"); file.In != "form" || file.Type != "file" {
+		t.Errorf("jaxrs upload file = %+v, want a form file parameter", file)
+	}
+
+	plain, ok := byFolder["uploadPlain"]
+	if !ok {
+		t.Fatal("Expected the JAX-RS uploadPlain endpoint")
+	}
+	if len(plain.Consumes) != 1 || plain.Consumes[0] != "application/x-www-form-urlencoded" {
+		t.Errorf("uploadPlain consumes = %v, want [application/x-www-form-urlencoded]", plain.Consumes)
+	}
+	if len(plain.Produces) != 1 || plain.Produces[0] != "text/plain" {
+		t.Errorf("uploadPlain produces = %v, want [text/plain]", plain.Produces)
+	}
+	if plain.Response == nil || plain.Response.MediaType != "text/plain" {
+		t.Errorf("uploadPlain response media type = %v, want text/plain", plain.Response)
+	}
+
+	// A handler whose mapping declares nothing gets nothing: no media type is
+	// invented on the caller's behalf.
+	getUser := findEndpoint(t, endpoints, "getUser")
+	if len(getUser.Consumes) != 0 || len(getUser.Produces) != 0 {
+		t.Errorf("getUser media types = %v / %v, want none declared", getUser.Consumes, getUser.Produces)
+	}
+}

@@ -14,18 +14,18 @@
 
 {{ if .PathParams }}**Path Params:**
 
-| name | value | required | desc |
-| ------------ | ------------ | ------------ | ------------ |
-{{ range .PathParams }}| {{ .Name }} | {{ .Value }} | {{ .Required }} | {{ .Description }} |
+| name | value | required | type | desc |
+| ------------ | ------------ | ------------ | ------------ | ------------ |
+{{ range .PathParams }}| {{ .Name }} | {{ .Value }} | {{ .Required }} | {{ .Type }} | {{ .Description }} |
 {{ end }}
 {{ end }}
 {{- if .QueryParams }}
 
 **Query:**
 
-| name | value | required | desc |
-| ------------ | ------------ | ------------ | ------------ |
-{{ range .QueryParams }}| {{ .Name }} | {{ .Value }} | {{ .Required }} | {{ .Description }} |
+| name | value | required | type | desc |
+| ------------ | ------------ | ------------ | ------------ | ------------ |
+{{ range .QueryParams }}| {{ .Name }} | {{ .Value }} | {{ .Required }} | {{ .Type }} | {{ .Description }} |
 {{ end }}
 {{ end }}
 {{- end }}

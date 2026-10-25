@@ -75,13 +75,13 @@ func TestFormat_SimpleFormat(t *testing.T) {
 	if !strings.Contains(outputStr, "**Path Params:**") {
 		t.Error("Output should contain Path Params section")
 	}
-	if !strings.Contains(outputStr, "| id |  | YES | User ID |") {
+	if !strings.Contains(outputStr, "| id |  | YES |  | User ID |") {
 		t.Error("Output should contain path parameter row")
 	}
 	if !strings.Contains(outputStr, "**Query:**") {
 		t.Error("Output should contain Query section")
 	}
-	if !strings.Contains(outputStr, "| include |  | NO | Include related data |") {
+	if !strings.Contains(outputStr, "| include |  | NO |  | Include related data |") {
 		t.Error("Output should contain query parameter row")
 	}
 }
@@ -158,7 +158,7 @@ func TestFormat_DetailedFormat(t *testing.T) {
 	if !strings.Contains(outputStr, "**Headers:**") {
 		t.Error("Output should contain Headers section")
 	}
-	if !strings.Contains(outputStr, "| X-Request-ID | auto-generated | NO | Request ID for tracing |") {
+	if !strings.Contains(outputStr, "| X-Request-ID | auto-generated | NO |  | Request ID for tracing |") {
 		t.Error("Output should contain header row")
 	}
 	if !strings.Contains(outputStr, "**Request Demo:**") {
@@ -361,11 +361,11 @@ func TestFormat_AllFields(t *testing.T) {
 		"> BASIC",
 		"> REQUEST",
 		"**Path Params:**",
-		"| id | 123 | YES | Resource ID |",
+		"| id | 123 | YES |  | Resource ID |",
 		"**Query:**",
-		"| filter | all | NO | Filter type |",
+		"| filter | all | NO |  | Filter type |",
 		"**Headers:**",
-		"| Authorization | Bearer token | YES | Auth header |",
+		"| Authorization | Bearer token | YES |  | Auth header |",
 		"**Request Body:**",
 		"| name | string |  |",
 		"**Request Demo:**",
@@ -789,5 +789,167 @@ func TestBuildEndpointView_BodyRows(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestFormat_ParameterTypeColumn covers the type column the Path Params, Query
+// and Headers tables share with Form: the declared type travels to the table,
+// so a caller can tell a Long id from a String id. A parameter whose type the
+// collector could not name renders an empty cell rather than a guess.
+func TestFormat_ParameterTypeColumn(t *testing.T) {
+	f := New()
+	endpoints := []model.ApiEndpoint{
+		{
+			Name:     "Update Status",
+			Path:     "/orders/{id}/status/{status}",
+			Method:   "PUT",
+			Protocol: "http",
+			Parameters: []model.ApiParameter{
+				{Name: "id", In: "path", Type: "text", TypeName: "Long", Required: true},
+				{Name: "status", In: "path", Type: "text", TypeName: "String", Required: true},
+				{Name: "traceId", In: "query", Type: "text", TypeName: "String"},
+				{Name: "X-Tenant", In: "header", Type: "text", TypeName: "String", Default: "default"},
+			},
+		},
+	}
+
+	params := Params{Variant: "detailed"}
+	paramsJSON, _ := json.Marshal(params)
+	output, err := f.Format(endpoints, formatter.FormatOptions{Params: paramsJSON})
+	if err != nil {
+		t.Fatalf("Format() error = %v, want nil", err)
+	}
+
+	outputStr := string(output)
+	for _, header := range []string{
+		"| name | value | required | type | desc |",
+	} {
+		if got := strings.Count(outputStr, header); got != 3 {
+			t.Errorf("table header %q appears %d times, want 3 (path, query, headers)", header, got)
+		}
+	}
+	for _, row := range []string{
+		"| id |  | YES | Long |  |",
+		"| status |  | YES | String |  |",
+		"| traceId |  | NO | String |  |",
+		"| X-Tenant | default | NO | String |  |",
+	} {
+		if !strings.Contains(outputStr, row) {
+			t.Errorf("Output should contain %q", row)
+		}
+	}
+}
+
+// TestFormat_MultipartFileIsFormParam covers the routing half of the fix: a
+// MultipartFile argument is a multipart form part, so it belongs under Form
+// with type file. Under Query a reader would send ?file=.
+func TestFormat_MultipartFileIsFormParam(t *testing.T) {
+	f := New()
+	endpoints := []model.ApiEndpoint{
+		{
+			Name:     "Upload",
+			Path:     "/upload",
+			Method:   "POST",
+			Protocol: "http",
+			Parameters: []model.ApiParameter{
+				{Name: "file", In: "form", Type: "file", TypeName: "MultipartFile", Required: true, Description: "File to upload"},
+				{Name: "description", In: "form", Type: "text", Required: false, Description: "File description"},
+			},
+		},
+	}
+
+	params := Params{Variant: "detailed"}
+	paramsJSON, _ := json.Marshal(params)
+	output, err := f.Format(endpoints, formatter.FormatOptions{Params: paramsJSON})
+	if err != nil {
+		t.Fatalf("Format() error = %v, want nil", err)
+	}
+
+	outputStr := string(output)
+	if !strings.Contains(outputStr, "**Form:**") {
+		t.Error("Output should contain Form section")
+	}
+	if !strings.Contains(outputStr, "| file |  | YES | file | File to upload |") {
+		t.Error("Output should contain the file part with type file")
+	}
+	if strings.Contains(outputStr, "**Query:**") {
+		t.Error("Output should not route a multipart file part into Query")
+	}
+}
+
+// TestFormat_MediaTypes covers the Content-Type / Accept lines: they come from
+// the media types the source declares, and an endpoint that declares none
+// renders neither line.
+func TestFormat_MediaTypes(t *testing.T) {
+	f := New()
+	endpoints := []model.ApiEndpoint{
+		{
+			Name:        "Upload",
+			Path:        "/upload",
+			Method:      "POST",
+			Protocol:    "http",
+			Consumes:    []string{"multipart/form-data"},
+			Produces:    []string{"application/json"},
+			RequestBody: &model.ApiBody{MediaType: "multipart/form-data"},
+			Response:    &model.ApiBody{MediaType: "application/json"},
+		},
+		{
+			Name:     "Health",
+			Path:     "/health",
+			Method:   "GET",
+			Protocol: "http",
+		},
+	}
+
+	params := Params{Variant: "detailed"}
+	paramsJSON, _ := json.Marshal(params)
+	output, err := f.Format(endpoints, formatter.FormatOptions{Params: paramsJSON})
+	if err != nil {
+		t.Fatalf("Format() error = %v, want nil", err)
+	}
+
+	outputStr := string(output)
+	if !strings.Contains(outputStr, "**Content-Type:** multipart/form-data") {
+		t.Error("Output should contain the declared content type")
+	}
+	if !strings.Contains(outputStr, "**Accept:** application/json") {
+		t.Error("Output should contain the declared accept type")
+	}
+	if got := strings.Count(outputStr, "**Content-Type:**"); got != 1 {
+		t.Errorf("Content-Type appears %d times, want 1 (only the declaring endpoint)", got)
+	}
+	if got := strings.Count(outputStr, "**Accept:**"); got != 1 {
+		t.Errorf("Accept appears %d times, want 1 (only the declaring endpoint)", got)
+	}
+}
+
+// TestFormat_MediaTypesMultiple covers an endpoint declaring several media
+// types: they render as one line rather than one line per type.
+func TestFormat_MediaTypesMultiple(t *testing.T) {
+	f := New()
+	endpoints := []model.ApiEndpoint{
+		{
+			Name:     "Create",
+			Path:     "/create",
+			Method:   "POST",
+			Protocol: "http",
+			Consumes: []string{"application/json", "application/xml"},
+			Produces: []string{"application/json", "text/plain"},
+		},
+	}
+
+	params := Params{Variant: "detailed"}
+	paramsJSON, _ := json.Marshal(params)
+	output, err := f.Format(endpoints, formatter.FormatOptions{Params: paramsJSON})
+	if err != nil {
+		t.Fatalf("Format() error = %v, want nil", err)
+	}
+
+	outputStr := string(output)
+	if !strings.Contains(outputStr, "**Content-Type:** application/json, application/xml") {
+		t.Error("Output should join the declared content types")
+	}
+	if !strings.Contains(outputStr, "**Accept:** application/json, text/plain") {
+		t.Error("Output should join the declared accept types")
 	}
 }

@@ -20,10 +20,10 @@ listUsers returns a filtered page of users.
 
 **Query:**
 
-| name | value | required | desc |
-| ------------ | ------------ | ------------ | ------------ |
-| keyword |  | YES |  |
-| page | 1 | NO |  |
+| name | value | required | type | desc |
+| ------------ | ------------ | ------------ | ------------ | ------------ |
+| keyword |  | YES |  |  |
+| page | 1 | NO |  |  |
 
 
 > RESPONSE
@@ -126,16 +126,16 @@ getUser returns a single user by id.
 
 **Path Params:**
 
-| name | value | required | desc |
-| ------------ | ------------ | ------------ | ------------ |
-| id |  | YES |  |
+| name | value | required | type | desc |
+| ------------ | ------------ | ------------ | ------------ | ------------ |
+| id |  | YES |  |  |
 
 
 **Headers:**
 
-| name | value | required | desc |
-| ------------ | ------------ | ------------ | ------------ |
-| X-Request-Id |  | NO |  |
+| name | value | required | type | desc |
+| ------------ | ------------ | ------------ | ------------ | ------------ |
+| X-Request-Id |  | NO |  |  |
 
 
 > RESPONSE
@@ -180,9 +180,9 @@ updateUser updates an existing user.
 
 **Path Params:**
 
-| name | value | required | desc |
-| ------------ | ------------ | ------------ | ------------ |
-| id |  | YES |  |
+| name | value | required | type | desc |
+| ------------ | ------------ | ------------ | ------------ | ------------ |
+| id |  | YES |  |  |
 
 
 **Request Body:**
@@ -244,7 +244,7 @@ deleteUser removes a user by id.
 
 **Path Params:**
 
-| name | value | required | desc |
-| ------------ | ------------ | ------------ | ------------ |
-| id |  | YES |  |
+| name | value | required | type | desc |
+| ------------ | ------------ | ------------ | ------------ | ------------ |
+| id |  | YES |  |  |
 

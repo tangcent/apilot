@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	collector "github.com/tangcent/apilot/api-collector"
@@ -268,10 +269,24 @@ func springmvcEndpointToAPI(ep springmvc.Endpoint, folder string) collector.ApiE
 		Path:        ep.Path,
 		Method:      string(ep.Method),
 		Protocol:    "http",
+		Consumes:    ep.Consumes,
+		Produces:    ep.Produces,
 	}
 	for _, p := range ep.Parameters {
 		if p.ParamType == "body" {
 			out.RequestBody = &collector.ApiBody{Name: p.Name, MediaType: "application/json"}
+		} else if isMultipartFile(p.Type) {
+			out.Parameters = append(out.Parameters, collector.ApiParameter{
+				Name:        p.Name,
+				Type:        "file",
+				TypeName:    p.Type,
+				In:          "form",
+				Required:    p.Required,
+				Default:     p.DefaultValue,
+				Description: p.Description,
+				Example:     p.Example,
+				Enum:        p.Enum,
+			})
 		} else if p.ParamType == "header" {
 			out.Headers = append(out.Headers, collector.ApiHeader{
 				Name:        p.Name,
@@ -284,6 +299,7 @@ func springmvcEndpointToAPI(ep springmvc.Endpoint, folder string) collector.ApiE
 			out.Parameters = append(out.Parameters, collector.ApiParameter{
 				Name:        p.Name,
 				Type:        "text",
+				TypeName:    p.Type,
 				In:          p.ParamType,
 				Required:    p.Required,
 				Default:     p.DefaultValue,
@@ -306,11 +322,6 @@ func springmvcEndpointToAPI(ep springmvc.Endpoint, folder string) collector.ApiE
 }
 
 func jaxrsEndpointToAPI(ep jaxrs.Endpoint, folder string) collector.ApiEndpoint {
-	mediaType := ""
-	if len(ep.Consumes) > 0 {
-		mediaType = ep.Consumes[0]
-	}
-
 	out := collector.ApiEndpoint{
 		Name:        ep.MethodName,
 		Folder:      folder,
@@ -319,10 +330,24 @@ func jaxrsEndpointToAPI(ep jaxrs.Endpoint, folder string) collector.ApiEndpoint 
 		Path:        ep.Path,
 		Method:      string(ep.Method),
 		Protocol:    "http",
+		Consumes:    ep.Consumes,
+		Produces:    ep.Produces,
 	}
 	for _, p := range ep.Parameters {
 		if p.ParamType == "body" {
-			out.RequestBody = &collector.ApiBody{Name: p.Name, MediaType: mediaType}
+			out.RequestBody = &collector.ApiBody{Name: p.Name, MediaType: firstMediaType(ep.Consumes)}
+		} else if isMultipartFile(p.Type) {
+			out.Parameters = append(out.Parameters, collector.ApiParameter{
+				Name:        p.Name,
+				Type:        "file",
+				TypeName:    p.Type,
+				In:          "form",
+				Required:    p.Required,
+				Default:     p.DefaultValue,
+				Description: p.Description,
+				Example:     p.Example,
+				Enum:        p.Enum,
+			})
 		} else if p.ParamType == "header" {
 			out.Headers = append(out.Headers, collector.ApiHeader{
 				Name:        p.Name,
@@ -335,6 +360,7 @@ func jaxrsEndpointToAPI(ep jaxrs.Endpoint, folder string) collector.ApiEndpoint 
 			out.Parameters = append(out.Parameters, collector.ApiParameter{
 				Name:        p.Name,
 				Type:        "text",
+				TypeName:    p.Type,
 				In:          p.ParamType,
 				Required:    p.Required,
 				Default:     p.DefaultValue,
@@ -348,12 +374,8 @@ func jaxrsEndpointToAPI(ep jaxrs.Endpoint, folder string) collector.ApiEndpoint 
 		out.RequestBody.Body = ep.RequestBodySchema
 	}
 	if ep.ResponseSchema != nil {
-		respMediaType := "application/json"
-		if len(ep.Produces) > 0 {
-			respMediaType = ep.Produces[0]
-		}
 		out.Response = &collector.ApiBody{
-			MediaType: respMediaType,
+			MediaType: firstMediaType(ep.Produces, "application/json"),
 			Body:      ep.ResponseSchema,
 		}
 	}
@@ -373,6 +395,18 @@ func feignEndpointToAPI(ep feign.Endpoint, folder string) collector.ApiEndpoint 
 	for _, p := range ep.Parameters {
 		if p.ParamType == "body" {
 			out.RequestBody = &collector.ApiBody{Name: p.Name, MediaType: "application/json"}
+		} else if isMultipartFile(p.Type) {
+			out.Parameters = append(out.Parameters, collector.ApiParameter{
+				Name:        p.Name,
+				Type:        "file",
+				TypeName:    p.Type,
+				In:          "form",
+				Required:    p.Required,
+				Default:     p.DefaultValue,
+				Description: p.Description,
+				Example:     p.Example,
+				Enum:        p.Enum,
+			})
 		} else if p.ParamType == "header" {
 			out.Headers = append(out.Headers, collector.ApiHeader{
 				Name:        p.Name,
@@ -385,6 +419,7 @@ func feignEndpointToAPI(ep feign.Endpoint, folder string) collector.ApiEndpoint 
 			out.Parameters = append(out.Parameters, collector.ApiParameter{
 				Name:        p.Name,
 				Type:        "text",
+				TypeName:    p.Type,
 				In:          p.ParamType,
 				Required:    p.Required,
 				Default:     p.DefaultValue,
@@ -404,4 +439,23 @@ func feignEndpointToAPI(ep feign.Endpoint, folder string) collector.ApiEndpoint 
 		}
 	}
 	return out
+}
+
+// isMultipartFile reports whether a declared Java type is a multipart file
+// part. The parameter travels in a multipart form body, so it is a form
+// parameter: documenting it under Query would tell a reader to send ?file=.
+func isMultipartFile(javaType string) bool {
+	return javaType == "MultipartFile" || strings.HasSuffix(javaType, ".MultipartFile")
+}
+
+// firstMediaType returns the first declared media type, or fallback when the
+// source declares none.
+func firstMediaType(mediaTypes []string, fallback ...string) string {
+	if len(mediaTypes) > 0 {
+		return mediaTypes[0]
+	}
+	if len(fallback) > 0 {
+		return fallback[0]
+	}
+	return ""
 }

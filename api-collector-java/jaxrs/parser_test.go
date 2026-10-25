@@ -835,3 +835,78 @@ func TestParser_JavaDocDocumentationFallback(t *testing.T) {
 		t.Errorf("Expected JavaDoc param fallback, got %q", endpoint.Parameters[0].Description)
 	}
 }
+
+// TestParser_MediaTypeConstants covers issue #169's media type plumbing: the
+// @Consumes / @Produces values are resolved to wire media types, so
+// @Consumes(MediaType.MULTIPART_FORM_DATA) exports multipart/form-data rather
+// than the Java constant reference.
+func TestParser_MediaTypeConstants(t *testing.T) {
+	results := []parser.ParseResult{
+		{
+			Classes: []parser.Class{
+				{
+					Name: "UploadResource",
+					Annotations: []parser.Annotation{
+						{Name: "Path", Params: map[string]string{"value": "/uploads"}},
+						{Name: "Consumes", Params: map[string]string{"value": "MediaType.MULTIPART_FORM_DATA"}},
+						{Name: "Produces", Params: map[string]string{"value": "MediaType.APPLICATION_JSON"}},
+					},
+					Methods: []parser.Method{
+						{
+							Name: "upload",
+							Annotations: []parser.Annotation{
+								{Name: "POST"},
+							},
+							Parameters: []parser.Parameter{
+								{
+									Name: "file",
+									Type: "MultipartFile",
+									Annotations: []parser.Annotation{
+										{Name: "FormParam", Params: map[string]string{"value": "file"}},
+									},
+								},
+							},
+							ReturnType: "String",
+						},
+						{
+							Name: "uploadPlain",
+							Annotations: []parser.Annotation{
+								{Name: "POST"},
+								{Name: "Path", Params: map[string]string{"value": "/plain"}},
+								{Name: "Consumes", Params: map[string]string{"value": "MediaType.APPLICATION_FORM_URLENCODED"}},
+								{Name: "Produces", Params: map[string]string{"value": "MediaType.TEXT_PLAIN"}},
+							},
+							ReturnType: "String",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	resources := NewParser().ExtractResources(results)
+	if len(resources) != 1 || len(resources[0].Endpoints) != 2 {
+		t.Fatalf("Expected 1 resource with 2 endpoints, got %+v", resources)
+	}
+
+	byName := make(map[string]Endpoint, len(resources[0].Endpoints))
+	for _, ep := range resources[0].Endpoints {
+		byName[ep.MethodName] = ep
+	}
+
+	upload := byName["upload"]
+	if len(upload.Consumes) != 1 || upload.Consumes[0] != "multipart/form-data" {
+		t.Errorf("upload consumes = %v, want [multipart/form-data]", upload.Consumes)
+	}
+	if len(upload.Produces) != 1 || upload.Produces[0] != "application/json" {
+		t.Errorf("upload produces = %v, want [application/json]", upload.Produces)
+	}
+
+	plain := byName["uploadPlain"]
+	if len(plain.Consumes) != 1 || plain.Consumes[0] != "application/x-www-form-urlencoded" {
+		t.Errorf("uploadPlain consumes = %v, want [application/x-www-form-urlencoded]", plain.Consumes)
+	}
+	if len(plain.Produces) != 1 || plain.Produces[0] != "text/plain" {
+		t.Errorf("uploadPlain produces = %v, want [text/plain]", plain.Produces)
+	}
+}

@@ -11,10 +11,10 @@ listUsers returns a filtered page of users.
 
 **Query:**
 
-| name | value | required | desc |
-| ------------ | ------------ | ------------ | ------------ |
-| keyword |  | YES |  |
-| page | 1 | NO |  |
+| name | value | required | type | desc |
+| ------------ | ------------ | ------------ | ------------ | ------------ |
+| keyword |  | YES |  |  |
+| page | 1 | NO |  |  |
 
 
 
@@ -34,9 +34,9 @@ getUser returns a single user by id.
 
 **Path Params:**
 
-| name | value | required | desc |
-| ------------ | ------------ | ------------ | ------------ |
-| id |  | YES |  |
+| name | value | required | type | desc |
+| ------------ | ------------ | ------------ | ------------ | ------------ |
+| id |  | YES |  |  |
 
 
 
@@ -48,9 +48,9 @@ updateUser updates an existing user.
 
 **Path Params:**
 
-| name | value | required | desc |
-| ------------ | ------------ | ------------ | ------------ |
-| id |  | YES |  |
+| name | value | required | type | desc |
+| ------------ | ------------ | ------------ | ------------ | ------------ |
+| id |  | YES |  |  |
 
 
 
@@ -62,8 +62,8 @@ deleteUser removes a user by id.
 
 **Path Params:**
 
-| name | value | required | desc |
-| ------------ | ------------ | ------------ | ------------ |
-| id |  | YES |  |
+| name | value | required | type | desc |
+| ------------ | ------------ | ------------ | ------------ | ------------ |
+| id |  | YES |  |  |
 
 

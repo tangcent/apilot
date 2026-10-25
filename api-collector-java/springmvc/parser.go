@@ -219,7 +219,7 @@ func (p *Parser) extractBasePath(annotations []parser.Annotation) string {
 // superclass for inherited endpoints and supplies the scope its types resolve
 // in.
 func (p *Parser) extractEndpoint(method parser.Method, basePath string, class, source parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string) *Endpoint {
-	httpMethod, methodPath := p.extractMethodInfo(method.Annotations)
+	httpMethod, methodPath, consumes, produces := p.extractMethodInfo(method.Annotations)
 	if httpMethod == "" {
 		return nil
 	}
@@ -244,6 +244,8 @@ func (p *Parser) extractEndpoint(method parser.Method, basePath string, class, s
 		Description: javadoc.EndpointDescription(method.Annotations, method.JavaDoc),
 		Parameters:  params,
 		ReturnType:  method.ReturnType,
+		Consumes:    consumes,
+		Produces:    produces,
 		ClassName:   class.Name,
 		Package:     class.Package,
 	}
@@ -264,26 +266,34 @@ func (p *Parser) extractEndpoint(method parser.Method, basePath string, class, s
 	return endpoint
 }
 
-func (p *Parser) extractMethodInfo(annotations []parser.Annotation) (HTTPMethod, string) {
+// extractMethodInfo reads the mapping annotation of a handler method: the HTTP
+// method, the path, and the media types its consumes/produces attributes
+// declare. A mapping annotation that declares neither media type leaves them
+// nil, so the export can tell "declared nothing" from "declared json".
+func (p *Parser) extractMethodInfo(annotations []parser.Annotation) (HTTPMethod, string, []string, []string) {
 	for _, ann := range annotations {
+		var method HTTPMethod
 		switch ann.Name {
 		case "GetMapping":
-			return GET, p.extractPathFromMapping(ann)
+			method = GET
 		case "PostMapping":
-			return POST, p.extractPathFromMapping(ann)
+			method = POST
 		case "PutMapping":
-			return PUT, p.extractPathFromMapping(ann)
+			method = PUT
 		case "DeleteMapping":
-			return DELETE, p.extractPathFromMapping(ann)
+			method = DELETE
 		case "PatchMapping":
-			return PATCH, p.extractPathFromMapping(ann)
+			method = PATCH
 		case "RequestMapping":
-			method := p.extractHTTPMethodFromRequestMapping(ann, annotations)
-			path := p.extractPathFromMapping(ann)
-			return method, path
+			method = p.extractHTTPMethodFromRequestMapping(ann, annotations)
+		default:
+			continue
 		}
+		return method, p.extractPathFromMapping(ann),
+			parser.MediaTypes(ann.Params["consumes"]),
+			parser.MediaTypes(ann.Params["produces"])
 	}
-	return "", ""
+	return "", "", nil, nil
 }
 
 func (p *Parser) extractPathFromMapping(ann parser.Annotation) string {
@@ -399,6 +409,10 @@ func (p *Parser) detectParameterType(annotations []parser.Annotation) string {
 			return "header"
 		case "RequestParam":
 			return "query"
+		case "RequestPart":
+			// A part of a multipart request is a form field, never a query
+			// argument.
+			return "form"
 		}
 	}
 	// @ApiParam as fallback: treat as query parameter when no explicit

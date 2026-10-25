@@ -31,6 +31,12 @@ type EndpointView struct {
 	Streaming string
 	FullPath  string
 
+	// ContentType and Accept carry the media types the source declares
+	// (@Consumes / @Produces). Empty when it declares none, so a collector
+	// default never poses as a declaration.
+	ContentType string
+	Accept      string
+
 	PathParams  []ParamRow
 	QueryParams []ParamRow
 	Headers     []HeaderRow
@@ -49,6 +55,7 @@ type ParamRow struct {
 	Name        string
 	Value       string
 	Required    string
+	Type        string
 	Description string
 }
 
@@ -56,6 +63,7 @@ type HeaderRow struct {
 	Name        string
 	Value       string
 	Required    string
+	Type        string
 	Description string
 }
 
@@ -125,6 +133,8 @@ func buildEndpointView(ep model.ApiEndpoint, outputDemo bool, maxVisits int) End
 		Description: ep.Description,
 		Path:        ep.Path,
 		Method:      ep.Method,
+		ContentType: joinMediaTypes(ep.Consumes),
+		Accept:      joinMediaTypes(ep.Produces),
 	}
 
 	if ep.Protocol == "grpc" {
@@ -138,6 +148,7 @@ func buildEndpointView(ep model.ApiEndpoint, outputDemo bool, maxVisits int) End
 			Name:        mdEscape(p.Name),
 			Value:       mdEscape(paramValue(p)),
 			Required:    boolToStr(p.Required),
+			Type:        mdEscape(p.TypeName),
 			Description: mdEscape(p.Description),
 		}
 		switch p.In {
@@ -147,10 +158,11 @@ func buildEndpointView(ep model.ApiEndpoint, outputDemo bool, maxVisits int) End
 			view.QueryParams = append(view.QueryParams, row)
 		case "header":
 			view.Headers = append(view.Headers, HeaderRow{
-				Name:        mdEscape(p.Name),
-				Value:       mdEscape(paramValue(p)),
-				Required:    boolToStr(p.Required),
-				Description: mdEscape(p.Description),
+				Name:        row.Name,
+				Value:       row.Value,
+				Required:    row.Required,
+				Type:        row.Type,
+				Description: row.Description,
 			})
 		case "form":
 			view.FormParams = append(view.FormParams, FormRow{
@@ -209,6 +221,13 @@ func paramValue(p model.ApiParameter) string {
 		return p.Example
 	}
 	return ""
+}
+
+// joinMediaTypes renders the declared media types of an endpoint as one cell
+// value. An endpoint that declares none renders nothing: a collector default
+// must not pose as a declaration.
+func joinMediaTypes(mediaTypes []string) string {
+	return strings.Join(mediaTypes, ", ")
 }
 
 func strVal(m map[string]any, key string) string {

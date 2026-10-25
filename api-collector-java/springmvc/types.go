@@ -34,6 +34,11 @@ type Endpoint struct {
 	Description       string
 	Parameters        []EndpointParameter
 	ReturnType        string
+	// Consumes and Produces hold the media types the mapping annotation
+	// declares (`@PostMapping(consumes = "multipart/form-data")`), resolved
+	// to wire media types. Empty when the annotation declares none.
+	Consumes          []string
+	Produces          []string
 	ClassName         string
 	Package           string
 	RequestBodySchema *model.ObjectModel

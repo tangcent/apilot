@@ -16,16 +16,29 @@ type ApiEndpoint struct {
 	Headers     []ApiHeader    `json:"headers,omitempty"`
 	RequestBody *ApiBody       `json:"requestBody,omitempty"`
 	Response    *ApiBody       `json:"response,omitempty"`
+	// Consumes lists the request media types the endpoint declares (JAX-RS
+	// @Consumes, Spring consumes=...). Empty when the source declares none, so
+	// a formatter can tell a declared content type from a collector default.
+	Consumes []string `json:"consumes,omitempty"`
+	// Produces lists the response media types the endpoint declares (JAX-RS
+	// @Produces, Spring produces=...). Empty when the source declares none.
+	Produces []string `json:"produces,omitempty"`
 	// Metadata holds protocol-specific extensions without polluting the core struct.
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 // ApiParameter describes a single input parameter of an endpoint.
 type ApiParameter struct {
-	Name        string   `json:"name"`
-	Type        string   `json:"type"` // "text" | "file"
-	Required    bool     `json:"required"`
-	In          string   `json:"in"` // "query" | "path" | "header" | "cookie" | "body" | "form"
+	Name string `json:"name"`
+	// Type is the parameter kind: "text" or "file". A file parameter is a
+	// multipart part, never a query argument.
+	Type     string `json:"type"` // "text" | "file"
+	Required bool   `json:"required"`
+	In       string `json:"in"` // "query" | "path" | "header" | "cookie" | "body" | "form"
+	// TypeName is the declared type in the source language, e.g. "Long" or
+	// "String", so a caller can tell them apart. Empty when the collector
+	// cannot name the type.
+	TypeName    string   `json:"typeName,omitempty"`
 	Default     string   `json:"default,omitempty"`
 	Description string   `json:"description,omitempty"`
 	Example     string   `json:"example,omitempty"`

@@ -48,6 +48,7 @@ EXPECTED_ROUTES=(
     "/api/categories/{id}/cache"
     "/api/payments/callback"
     "/api/payments/batch-cancel"
+    "/api/uploads"
 )
 
 EXPECTED_FIELDS=(
@@ -66,6 +67,15 @@ EXPECTED_FIELDS=(
     # A raw collection keeps its name and reports the element type: ids[0]
     # with long, never [0] with long[].
     "| ids[0] | long |"
+    # The declared Java type rides in the type column, so a Long id is
+    # distinguishable from a String id (issue #169).
+    "| id |  | YES | Long |"
+    # A multipart file part is a form parameter with type file, never a query
+    # parameter; the media type comes from the class-level @Consumes.
+    "| file |  | NO | file |"
+    "| description |  | NO | text |"
+    "**Content-Type:** multipart/form-data"
+    "**Accept:** application/json"
 )
 
 failures=()

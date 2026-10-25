@@ -19,6 +19,8 @@ This document describes the canonical JSON representation of `ApiEndpoint` — t
 | `headers` | ApiHeader[] | no | HTTP headers |
 | `requestBody` | ApiBody | no | Request body schema |
 | `response` | ApiBody | no | Response body schema |
+| `consumes` | string[] | no | Request media types declared by the source (e.g. `@Consumes`); empty when none |
+| `produces` | string[] | no | Response media types declared by the source (e.g. `@Produces`); empty when none |
 | `metadata` | object | no | Protocol-specific extensions (arbitrary key-value) |
 
 ---
@@ -31,6 +33,7 @@ This document describes the canonical JSON representation of `ApiEndpoint` — t
 | `type` | string | yes | `"text"` or `"file"` |
 | `required` | boolean | yes | Whether the parameter is required |
 | `in` | string | yes | Location: `"query"`, `"path"`, `"header"`, `"cookie"`, `"body"`, `"form"` |
+| `typeName` | string | no | Declared type in the source language (e.g. `"Long"`); empty when the collector cannot name it |
 | `default` | string | no | Default value |
 | `description` | string | no | Parameter description |
 | `example` | string | no | Example value |

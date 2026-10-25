@@ -43,6 +43,7 @@ MIN_ENDPOINTS=110
 EXPECTED_ROUTES=(
     "/users"
     "/users/{id}"
+    "/users/{id}/avatar"
     "/api/payments/callback"
 )
 
@@ -59,6 +60,15 @@ EXPECTED_FIELDS=(
     # A collection of scalars keeps the parameter name and reports the element
     # type on an indexed row: ids[0] with long, never [0] with long[].
     "| ids[0] | long |"
+    # The declared Java type rides in the type column, so a Long id is
+    # distinguishable from a String id (issue #169).
+    "| id |  | YES | Long |"
+    "| keyword |  | NO | String |"
+    # A MultipartFile argument is a multipart form part: it belongs under Form
+    # with type file, and the mapping declares the request media type.
+    "| file |  | YES | file |"
+    "**Content-Type:** multipart/form-data"
+    "**Accept:** application/json"
 )
 
 failures=()
