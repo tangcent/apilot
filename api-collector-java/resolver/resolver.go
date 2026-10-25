@@ -601,6 +601,12 @@ func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []s
 		fields[f.Name] = fm
 	}
 
+	// A property may come from code rather than from a field: Jackson
+	// serialises `isSuccess()` as `success` even when no field backs it.
+	// Declared fields are added first, so a getter for a field that already
+	// exists cannot add a second copy under the same name.
+	r.addGetterProperties(class, localBindings, typeParamSet, fields)
+
 	r.resolveInheritedFields(class, localBindings, fields)
 
 	return &model.ObjectModel{
@@ -628,6 +634,111 @@ func (r *TypeResolver) resolveField(source parser.Class, f parser.Field, localBi
 		fm.Generic = true
 	}
 	return fm
+}
+
+// addGetterProperties records the properties a class exposes through
+// zero-argument getters. Jackson serialises `getX()` as `x` and `isX()` as `x`
+// for a boolean return type, whether or not a field backs them, so a response
+// envelope's computed flags belong in the exported schema.
+//
+// Names already present in fields win: a getter paired with its field is that
+// same property, not a second one. @JsonIgnore drops the property and
+// @JsonProperty("other") renames it.
+func (r *TypeResolver) addGetterProperties(source parser.Class, localBindings map[string]string, typeParamSet map[string]bool, fields map[string]*model.FieldModel) {
+	for _, m := range source.Methods {
+		property, ok := getterPropertyName(m)
+		if !ok || isJsonIgnored(m.Annotations) {
+			continue
+		}
+		if renamed := jsonPropertyName(m.Annotations); renamed != "" {
+			property = renamed
+		}
+		if _, exists := fields[property]; exists {
+			continue
+		}
+
+		fm := r.resolveField(source, parser.Field{
+			Name:        property,
+			Type:        m.ReturnType,
+			Annotations: m.Annotations,
+			JavaDoc:     m.JavaDoc,
+		}, localBindings, typeParamSet)
+
+		// A derived boolean is computed state rather than stored data. The
+		// example shows the enabling case — `"success": true` for an
+		// `isSuccess()` — because a `false` example would document the outcome
+		// the envelope exists to confirm.
+		if fm.Model != nil && fm.Model.IsSingle() && fm.Model.TypeName == model.JsonTypeBoolean {
+			fm.Demo = "true"
+		}
+
+		fields[property] = fm
+	}
+}
+
+// getterPropertyName maps a method to the JSON property it exposes, if it is a
+// state getter: zero arguments, a non-void return type, and a `get`/`is` name.
+// Static methods are not instance state and are rejected.
+func getterPropertyName(m parser.Method) (string, bool) {
+	if m.IsStatic || len(m.Parameters) > 0 {
+		return "", false
+	}
+	returnType := strings.TrimSpace(m.ReturnType)
+	if simpleTypeName(returnType) == "" || simpleTypeName(returnType) == "void" {
+		return "", false
+	}
+
+	if len(m.Name) > 3 && strings.HasPrefix(m.Name, "get") {
+		if property := decapitalize(m.Name[3:]); property != "" {
+			return property, true
+		}
+	}
+	// `isX` names boolean state only. A helper such as `isValid(String)` is
+	// rejected above by its argument, and one returning something else is not
+	// a state accessor.
+	if len(m.Name) > 2 && strings.HasPrefix(m.Name, "is") && simpleTypeName(returnType) == "boolean" {
+		if property := decapitalize(m.Name[2:]); property != "" {
+			return property, true
+		}
+	}
+	return "", false
+}
+
+// decapitalize lowercases the leading run of capitals, which is how Jackson
+// turns `getURL()` into `url`.
+func decapitalize(name string) string {
+	i := 0
+	for i < len(name) && name[i] >= 'A' && name[i] <= 'Z' {
+		i++
+	}
+	if i == 0 {
+		return name
+	}
+	return strings.ToLower(name[:i]) + name[i:]
+}
+
+// jsonPropertyName returns the name @JsonProperty binds the member to, or ""
+// when the annotation is absent or names nothing.
+func jsonPropertyName(annotations []parser.Annotation) string {
+	for _, ann := range annotations {
+		if lastSegment(ann.Name) != "JsonProperty" {
+			continue
+		}
+		return strings.TrimSpace(ann.Params["value"])
+	}
+	return ""
+}
+
+// isJsonIgnored reports whether @JsonIgnore suppresses the member. The
+// annotation's own value can re-enable it: @JsonIgnore(false).
+func isJsonIgnored(annotations []parser.Annotation) bool {
+	for _, ann := range annotations {
+		if lastSegment(ann.Name) != "JsonIgnore" {
+			continue
+		}
+		return strings.TrimSpace(ann.Params["value"]) != "false"
+	}
+	return false
 }
 
 func (r *TypeResolver) isUnboundTypeParam(typeName string, localBindings map[string]string, typeParamSet map[string]bool) bool {
@@ -682,6 +793,10 @@ func (r *TypeResolver) resolveInheritedFields(class parser.Class, localBindings 
 			fields[f.Name] = fm
 		}
 	}
+
+	// The superclass's getters are part of the subclass's wire format too, and
+	// are resolved in the compilation unit that declared them.
+	r.addGetterProperties(superClass, superBindings, superTypeParamSet, fields)
 
 	r.resolveInheritedFields(superClass, superBindings, fields)
 }

@@ -1466,3 +1466,94 @@ func assertNoWildcardTypeNames(t *testing.T, m *model.ObjectModel) {
 		assertNoWildcardTypeNames(t, field.Model)
 	}
 }
+
+// TestCollect_GetterDerivedResponseProperty covers #168 end to end: a response
+// wrapper that derives part of its wire format from a getter exports that
+// property on every endpoint, and the field-backed properties stay single.
+func TestCollect_GetterDerivedResponseProperty(t *testing.T) {
+	dir := t.TempDir()
+
+	writeJava(t, dir, "Result.java", `package com.example.api;
+
+public class Result<T> {
+    private Integer code;
+    private String message;
+    private T data;
+
+    public Integer getCode() { return code; }
+    public String getMessage() { return message; }
+    public T getData() { return data; }
+
+    public boolean isSuccess() { return code != null && code == 200; }
+}
+`)
+
+	writeJava(t, dir, "User.java", `package com.example.api;
+
+public class User {
+    private Long id;
+    private String name;
+}
+`)
+
+	writeJava(t, dir, "UserController.java", `package com.example.api;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/api/users")
+public class UserController {
+
+    @GetMapping("/{id}")
+    public Result<User> get(@PathVariable Long id) {
+        return null;
+    }
+
+    @GetMapping("/current")
+    public Result<User> current() {
+        return null;
+    }
+}
+`)
+
+	c := New()
+	endpoints, err := c.Collect(collector.CollectContext{
+		SourceDir:  dir,
+		Frameworks: []string{"springmvc"},
+	})
+	if err != nil {
+		t.Fatalf("Collect failed: %v", err)
+	}
+	if len(endpoints) != 2 {
+		t.Fatalf("Expected 2 endpoints, got %d", len(endpoints))
+	}
+
+	for _, ep := range endpoints {
+		if ep.Response == nil || ep.Response.Body == nil || !ep.Response.Body.IsObject() {
+			t.Fatalf("%s: expected an object response, got %+v", ep.Name, ep.Response)
+		}
+		fields := ep.Response.Body.Fields
+		if len(fields) != 4 {
+			t.Errorf("%s: expected code/message/data/success, got %d fields", ep.Name, len(fields))
+		}
+		success := fields["success"]
+		if success == nil || success.Model == nil {
+			t.Errorf("%s: expected a 'success' property derived from isSuccess()", ep.Name)
+			continue
+		}
+		if success.Model.TypeName != model.JsonTypeBoolean {
+			t.Errorf("%s: success type = %q, want boolean", ep.Name, success.Model.TypeName)
+		}
+		if success.Demo != "true" {
+			t.Errorf("%s: success demo = %q, want the enabling case", ep.Name, success.Demo)
+		}
+		for _, name := range []string{"code", "message", "data"} {
+			if fields[name] == nil {
+				t.Errorf("%s: expected declared property %q", ep.Name, name)
+			}
+		}
+	}
+}

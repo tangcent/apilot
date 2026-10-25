@@ -20,6 +20,9 @@ type Method struct {
 	// whose response payload is built inside the body rather than declared in
 	// the return type need it to recover the payload.
 	Body string
+	// IsStatic reports a `static` modifier. A static method is not instance
+	// state, so it never contributes a serialised property.
+	IsStatic bool
 }
 
 // Parameter represents a method parameter.

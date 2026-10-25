@@ -763,6 +763,41 @@ public class UserResource {
 	}
 }
 
+func TestParser_ExtractsMethodModifiers(t *testing.T) {
+	p, err := NewParser(ParserOptions{LogLevel: LogLevelError})
+	if err != nil {
+		t.Fatalf("Failed to create parser: %v", err)
+	}
+	defer p.Close()
+
+	classes, err := p.ParseSource([]byte(`package com.example;
+
+public class Result {
+    public static Result ok() {
+        return null;
+    }
+
+    public boolean isSuccess() {
+        return true;
+    }
+}`))
+	if err != nil {
+		t.Fatalf("Failed to parse source: %v", err)
+	}
+	if len(classes) != 1 || len(classes[0].Methods) != 2 {
+		t.Fatalf("Expected 1 class with 2 methods, got %d", len(classes[0].Methods))
+	}
+
+	// A static factory is not instance state, so the resolver must be able to
+	// tell it apart from a getter.
+	if !classes[0].Methods[0].IsStatic {
+		t.Error("Expected the static factory to be flagged as static")
+	}
+	if classes[0].Methods[1].IsStatic {
+		t.Error("Expected an instance getter not to be flagged as static")
+	}
+}
+
 func TestParser_ExtractsImports(t *testing.T) {
 	p, err := NewParser(ParserOptions{LogLevel: LogLevelError})
 	if err != nil {

@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"sort"
 	"strings"
 	"testing"
 
@@ -1488,4 +1489,217 @@ func TestResolve_ReturnTypeKeepsOpenWildcardWithoutEvidence(t *testing.T) {
 	if data.Model.Kind != model.KindObject {
 		t.Errorf("Expected an open object, got %s (%q)", data.Model.Kind, data.Model.TypeName)
 	}
+}
+
+// TestResolve_GetterDerivedProperties covers #168: Spring Boot's default
+// Jackson configuration serialises `isSuccess()` as `success` even though the
+// envelope declares no such field.
+func TestResolve_GetterDerivedProperties(t *testing.T) {
+	classes := []parser.Class{
+		{
+			Name: "Result",
+			Fields: []parser.Field{
+				{Name: "code", Type: "Integer"},
+				{Name: "message", Type: "String"},
+				{Name: "data", Type: "Object"},
+			},
+			Methods: []parser.Method{
+				{Name: "getCode", ReturnType: "Integer"},
+				{Name: "getMessage", ReturnType: "String"},
+				{Name: "getData", ReturnType: "Object"},
+				{Name: "isSuccess", ReturnType: "boolean"},
+			},
+		},
+	}
+	r := NewTypeResolver(classes)
+
+	result := r.Resolve("Result", nil)
+
+	// The three getters pair with declared fields, so they add nothing; only
+	// `isSuccess` contributes a new property.
+	if len(result.Fields) != 4 {
+		t.Fatalf("Expected 4 properties, got %d", len(result.Fields))
+	}
+	success := result.Fields["success"]
+	if success == nil || success.Model == nil {
+		t.Fatal("Expected 'success' to be derived from isSuccess()")
+	}
+	if success.Model.TypeName != model.JsonTypeBoolean {
+		t.Errorf("Expected success type 'boolean', got %q", success.Model.TypeName)
+	}
+	if !success.Required {
+		t.Error("Expected success to be required")
+	}
+	if success.Demo != "true" {
+		t.Errorf("Expected the example to show the enabling case, got demo %q", success.Demo)
+	}
+	for _, name := range []string{"code", "message", "data"} {
+		if result.Fields[name] == nil {
+			t.Errorf("Expected declared property %q to survive", name)
+		}
+	}
+}
+
+// TestResolve_GetterAnnotations covers the Jackson annotations a getter uses to
+// rename or suppress the property it exposes.
+func TestResolve_GetterAnnotations(t *testing.T) {
+	classes := []parser.Class{
+		{
+			Name: "Profile",
+			Fields: []parser.Field{
+				{Name: "firstName", Type: "String"},
+			},
+			Methods: []parser.Method{
+				{Name: "getFirstName", ReturnType: "String"},
+				{
+					Name:       "getDisplayName",
+					ReturnType: "String",
+					Annotations: []parser.Annotation{
+						{Name: "JsonProperty", Params: map[string]string{"value": "display_name"}},
+					},
+				},
+				{
+					Name:       "isInternal",
+					ReturnType: "boolean",
+					Annotations: []parser.Annotation{
+						{Name: "JsonIgnore", Params: map[string]string{}},
+					},
+				},
+				{
+					Name:       "isFlagged",
+					ReturnType: "boolean",
+					Annotations: []parser.Annotation{
+						{Name: "com.fasterxml.jackson.annotation.JsonIgnore", Params: map[string]string{}},
+					},
+				},
+				{
+					Name:       "isVisible",
+					ReturnType: "boolean",
+					Annotations: []parser.Annotation{
+						// @JsonIgnore(false) deliberately re-enables the member.
+						{Name: "JsonIgnore", Params: map[string]string{"value": "false"}},
+					},
+				},
+			},
+		},
+	}
+	r := NewTypeResolver(classes)
+
+	result := r.Resolve("Profile", nil)
+
+	if result.Fields["firstName"] == nil {
+		t.Error("Expected declared field 'firstName'")
+	}
+	if result.Fields["display_name"] == nil {
+		t.Errorf("Expected @JsonProperty to rename the getter; got %v", fieldNames(result))
+	}
+	if result.Fields["displayName"] != nil {
+		t.Error("Expected the Java name not to appear once @JsonProperty renamed it")
+	}
+	if result.Fields["internal"] != nil || result.Fields["flagged"] != nil {
+		t.Errorf("Expected @JsonIgnore to suppress the property; got %v", fieldNames(result))
+	}
+	if result.Fields["visible"] == nil {
+		t.Errorf("Expected @JsonIgnore(false) to keep the property; got %v", fieldNames(result))
+	}
+}
+
+// TestResolve_GetterRejectsNonState pins the shape a getter must have: a
+// zero-argument, non-static method that returns a value. Helper methods that
+// merely start with `get` or `is` are not properties.
+func TestResolve_GetterRejectsNonState(t *testing.T) {
+	classes := []parser.Class{
+		{
+			Name: "Report",
+			Fields: []parser.Field{
+				{Name: "id", Type: "Long"},
+			},
+			Methods: []parser.Method{
+				{Name: "getSummary", ReturnType: "String", Parameters: []parser.Parameter{{Name: "locale", Type: "String"}}},
+				{Name: "getGenerated", ReturnType: "String", IsStatic: true},
+				{Name: "getSideEffect", ReturnType: "void"},
+				{Name: "isReady", ReturnType: "String"},
+				{Name: "get", ReturnType: "String"},
+				{Name: "is", ReturnType: "boolean"},
+				{Name: "getURL", ReturnType: "String"},
+			},
+		},
+	}
+	r := NewTypeResolver(classes)
+
+	result := r.Resolve("Report", nil)
+
+	for _, name := range []string{"summary", "generated", "sideEffect", "ready"} {
+		if result.Fields[name] != nil {
+			t.Errorf("Expected %q not to be a property", name)
+		}
+	}
+	if result.Fields["url"] == nil {
+		t.Errorf("Expected getURL() to expose 'url'; got %v", fieldNames(result))
+	}
+}
+
+// TestResolve_InheritedGetterProperty checks that state a superclass exposes
+// through a getter reaches the subclass schema, as Jackson serialises it.
+func TestResolve_InheritedGetterProperty(t *testing.T) {
+	classes := []parser.Class{
+		{
+			Name:    "BaseResult",
+			Methods: []parser.Method{{Name: "isDeleted", ReturnType: "boolean"}},
+		},
+		{
+			Name:       "OrderResult",
+			SuperClass: "BaseResult",
+			Fields:     []parser.Field{{Name: "id", Type: "Long"}},
+		},
+	}
+	r := NewTypeResolver(classes)
+
+	result := r.Resolve("OrderResult", nil)
+
+	if result.Fields["id"] == nil {
+		t.Error("Expected declared field 'id'")
+	}
+	if result.Fields["deleted"] == nil {
+		t.Errorf("Expected inherited getter property 'deleted'; got %v", fieldNames(result))
+	}
+}
+
+// TestResolve_GetterDerivedGenericProperty checks that a getter's return type is
+// resolved with the type arguments bound at the use site.
+func TestResolve_GetterDerivedGenericProperty(t *testing.T) {
+	classes := []parser.Class{
+		{
+			Name:   "Order",
+			Fields: []parser.Field{{Name: "id", Type: "Long"}},
+		},
+		{
+			Name:           "Envelope",
+			TypeParameters: []string{"T"},
+			Methods:        []parser.Method{{Name: "getPayload", ReturnType: "T"}},
+		},
+	}
+	r := NewTypeResolver(classes)
+
+	result := r.Resolve("Envelope<Order>", nil)
+
+	payload := result.Fields["payload"]
+	if payload == nil || payload.Model == nil {
+		t.Fatal("Expected 'payload' to be derived from getPayload()")
+	}
+	if !payload.Model.IsObject() || payload.Model.TypeName != "Order" {
+		t.Errorf("Expected payload to expand Order, got %s (%q)", payload.Model.Kind, payload.Model.TypeName)
+	}
+	if payload.Generic {
+		t.Error("Expected a bound type argument not to be generic")
+	}
+}
+
+func fieldNames(m *model.ObjectModel) []string {
+	names := make([]string, 0, len(m.Fields))
+	for name := range m.Fields {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
