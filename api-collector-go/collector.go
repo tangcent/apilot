@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"sync"
 
 	"github.com/tangcent/apilot/api-collector"
@@ -21,6 +22,7 @@ type GoCollector struct {
 	mu                 sync.Mutex
 	unresolved         map[string]int
 	depResolution      collector.DependencyResolution
+	frameworks         []string
 }
 
 // goOnPath reports whether the go toolchain is available. It is a variable so
@@ -64,6 +66,13 @@ func (c *GoCollector) DependencyResolution() collector.DependencyResolution {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.depResolution
+}
+
+// Frameworks reports the frameworks the last Collect call found endpoints for.
+func (c *GoCollector) Frameworks() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.frameworks...)
 }
 
 // Collect walks the source directory and extracts endpoints from Gin, Echo,
@@ -113,13 +122,22 @@ func (c *GoCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEndp
 	}()
 
 	var all []collector.ApiEndpoint
+	var frameworks []string
 	for res := range ch {
 		if res.err != nil {
 			log.Printf("warning: %s parser failed: %v", res.framework, res.err)
 			continue
 		}
+		// Only a framework that produced endpoints was actually in use: a
+		// project written for Gin still has its Echo parser run over it.
+		if len(res.endpoints) > 0 {
+			frameworks = append(frameworks, res.framework)
+		}
 		all = append(all, res.endpoints...)
 	}
+	// The parsers run concurrently, so arrival order is not stable; sorting
+	// keeps the same project naming itself the same way in every export.
+	sort.Strings(frameworks)
 
 	c.mu.Lock()
 	c.unresolved = unresolved.Counts()
@@ -127,6 +145,7 @@ func (c *GoCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEndp
 		depResolution.ResolvedTypes = rc.ResolvedCount()
 	}
 	c.depResolution = depResolution
+	c.frameworks = frameworks
 	c.mu.Unlock()
 
 	if len(all) == 0 {

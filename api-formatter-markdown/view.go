@@ -10,9 +10,27 @@ import (
 	model "github.com/tangcent/apilot/api-model"
 )
 
+// DocMeta carries what the pipeline knows about the export as a whole. A
+// document is otherwise unidentifiable: the filename is the only thing naming
+// it, and an export to stdout has not even that (#170).
+type DocMeta struct {
+	// ProjectName is the project root the endpoints were collected from.
+	ProjectName string
+	// Collector is the collector that read the source, e.g. "java".
+	Collector string
+	// Frameworks are the frameworks the collector actually matched, e.g.
+	// ["spring-mvc"]. Empty when the collector cannot tell.
+	Frameworks []string
+}
+
+// MarkdownDoc is the template's data. Title is the H1 text and Summary is the
+// metadata that follows it on the same line; both are computed in Go rather
+// than assembled in the template, so the punctuation and the plural of
+// "endpoint" are testable.
 type MarkdownDoc struct {
-	ModuleName string
-	Groups     []EndpointGroup
+	Title   string
+	Summary string
+	Groups  []EndpointGroup
 }
 
 type EndpointGroup struct {
@@ -21,6 +39,14 @@ type EndpointGroup struct {
 }
 
 type EndpointView struct {
+	// Heading is the endpoint heading, unique within the document. The name
+	// alone is not: resources that share method names produce identical `###`
+	// headings, so no anchor can address one of them (#170).
+	Heading string
+	// RouteHeading is the same, built from the method and path. The simple
+	// variant headings on the route rather than on the name.
+	RouteHeading string
+
 	Name        string
 	Protocol    string
 	Description string
@@ -81,7 +107,19 @@ type BodyRow struct {
 	Desc string
 }
 
-func buildMarkdownDoc(endpoints []model.ApiEndpoint, moduleName string, outputDemo bool, maxVisits int) MarkdownDoc {
+// renderOptions collects the choices that shape the rendered tables.
+type renderOptions struct {
+	outputDemo bool
+	maxVisits  int
+	// sortFields renders object fields alphabetically instead of in the order
+	// the source declares them. Opt-in: declaration order is the default
+	// because it is what the source says, because the Query and Path tables
+	// already keep it, and because a field added at the end of a DTO should
+	// appear at the end of the table in review (#170).
+	sortFields bool
+}
+
+func buildMarkdownDoc(endpoints []model.ApiEndpoint, moduleName string, meta DocMeta, opts renderOptions) MarkdownDoc {
 	grouped := groupByFolder(endpoints)
 	groups := make([]EndpointGroup, 0, len(grouped))
 
@@ -99,11 +137,25 @@ func buildMarkdownDoc(endpoints []model.ApiEndpoint, moduleName string, outputDe
 		return folderOrder[i] < folderOrder[j]
 	})
 
+	// placed holds every view with the folder it sits under, so the headings
+	// can be assigned after the whole document is known: a name that repeats
+	// anywhere is qualified everywhere, rather than the first occurrence
+	// keeping the bare name and the rest carrying a qualification.
+	type placed struct {
+		view   *EndpointView
+		folder string
+	}
+	var all []placed
+
 	for _, folder := range folderOrder {
 		eps := grouped[folder]
-		views := make([]EndpointView, 0, len(eps))
-		for _, ep := range eps {
-			views = append(views, buildEndpointView(ep, outputDemo, maxVisits))
+		// Sized up front: the views are addressed by pointer below, and a
+		// slice that grows out of its array would leave earlier pointers
+		// pointing at the old one.
+		views := make([]EndpointView, len(eps))
+		for i, ep := range eps {
+			views[i] = buildEndpointView(ep, opts)
+			all = append(all, placed{view: &views[i], folder: folder})
 		}
 		groups = append(groups, EndpointGroup{
 			Folder:    folder,
@@ -111,10 +163,140 @@ func buildMarkdownDoc(endpoints []model.ApiEndpoint, moduleName string, outputDe
 		})
 	}
 
-	return MarkdownDoc{
-		ModuleName: moduleName,
-		Groups:     groups,
+	nameCount := make(map[string]int, len(all))
+	routeCount := make(map[string]int, len(all))
+	for _, p := range all {
+		nameCount[endpointLabel(p.view)]++
+		routeCount[routeText(p.view)]++
 	}
+
+	// One deduplicator per heading namespace. The document is walked in output
+	// order, so the assignment is stable across runs.
+	nameHeadings := newHeadingDeduplicator()
+	routeHeadings := newHeadingDeduplicator()
+	for _, p := range all {
+		label := endpointLabel(p.view)
+		route := routeText(p.view)
+		p.view.Heading = nameHeadings.assign(
+			headingCandidates(label, p.folder, route, nameCount[label] > 1)...)
+		p.view.RouteHeading = routeHeadings.assign(
+			headingCandidates(route, p.folder, label, routeCount[route] > 1)...)
+	}
+
+	return MarkdownDoc{
+		Title:   docTitle(moduleName, meta),
+		Summary: docSummary(len(endpoints), meta),
+		Groups:  groups,
+	}
+}
+
+// routeText is the "METHOD /path" label of an endpoint. A gRPC endpoint has no
+// method, so its path is the label.
+func routeText(view *EndpointView) string {
+	return strings.TrimSpace(view.Method + " " + view.Path)
+}
+
+// endpointLabel is the name an endpoint is headed by. An endpoint the source
+// did not name is headed by its route.
+func endpointLabel(view *EndpointView) string {
+	if view.Name != "" {
+		return view.Name
+	}
+	return routeText(view)
+}
+
+// headingCandidates lists a heading from the bare one to the most qualified
+// one. The folder comes before the route: a name repeated across resources is
+// told apart by the resource first, which is what a reader looks for.
+// duplicated drops the bare candidate, so every endpoint sharing a name is
+// qualified the same way rather than one of them staying bare.
+func headingCandidates(primary, folder, secondary string, duplicated bool) []string {
+	if primary == "" {
+		primary = secondary
+	}
+	if primary == "" {
+		primary = "endpoint"
+	}
+	var candidates []string
+	if !duplicated {
+		candidates = append(candidates, primary)
+	}
+	if folder != "" {
+		candidates = append(candidates, folder+" / "+primary)
+	}
+	if secondary != "" && secondary != primary {
+		candidates = append(candidates, secondary+" / "+primary)
+	}
+	return candidates
+}
+
+// headingDeduplicator hands out headings that are unique within one document.
+type headingDeduplicator struct {
+	used map[string]bool
+}
+
+func newHeadingDeduplicator() *headingDeduplicator {
+	return &headingDeduplicator{used: make(map[string]bool)}
+}
+
+// assign returns the first candidate nobody has taken. When every candidate is
+// taken — the same name in the same resource — the most qualified one gets a
+// counter, which keeps the heading unique and guessable.
+func (d *headingDeduplicator) assign(candidates ...string) string {
+	for _, c := range candidates {
+		if c == "" || d.used[c] {
+			continue
+		}
+		d.used[c] = true
+		return c
+	}
+	last := "endpoint"
+	for _, c := range candidates {
+		if c != "" {
+			last = c
+		}
+	}
+	for i := 2; ; i++ {
+		c := fmt.Sprintf("%s (%d)", last, i)
+		if !d.used[c] {
+			d.used[c] = true
+			return c
+		}
+	}
+}
+
+// docTitle is the H1 text. An explicit module name wins; otherwise the project
+// the endpoints were collected from names the document.
+func docTitle(moduleName string, meta DocMeta) string {
+	if moduleName != "" {
+		return moduleName
+	}
+	if meta.ProjectName != "" {
+		return meta.ProjectName + " API"
+	}
+	return "API"
+}
+
+// docSummary is the metadata after the title: where the document came from and
+// how much of the project it covers. Empty when the pipeline supplied nothing,
+// so a document rendered without it is unchanged.
+func docSummary(endpointCount int, meta DocMeta) string {
+	var parts []string
+	if meta.Collector != "" {
+		source := meta.Collector
+		if len(meta.Frameworks) > 0 {
+			source += " / " + strings.Join(meta.Frameworks, ", ")
+		}
+		parts = append(parts, source)
+	}
+	if endpointCount > 0 {
+		noun := "endpoints"
+		if endpointCount == 1 {
+			noun = "endpoint"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s", endpointCount, noun))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func groupByFolder(endpoints []model.ApiEndpoint) map[string][]model.ApiEndpoint {
@@ -126,7 +308,7 @@ func groupByFolder(endpoints []model.ApiEndpoint) map[string][]model.ApiEndpoint
 	return result
 }
 
-func buildEndpointView(ep model.ApiEndpoint, outputDemo bool, maxVisits int) EndpointView {
+func buildEndpointView(ep model.ApiEndpoint, opts renderOptions) EndpointView {
 	view := EndpointView{
 		Name:        ep.Name,
 		Protocol:    ep.Protocol,
@@ -186,18 +368,18 @@ func buildEndpointView(ep model.ApiEndpoint, outputDemo bool, maxVisits int) End
 
 	if ep.RequestBody != nil {
 		if ep.RequestBody.Body != nil {
-			view.BodyRows = flattenObjectModel(ep.RequestBody.Body, ep.RequestBody.Name, maxVisits)
+			view.BodyRows = flattenObjectModel(ep.RequestBody.Body, ep.RequestBody.Name, opts)
 		}
-		if outputDemo {
+		if opts.outputDemo {
 			view.BodyDemo = generateDemo(ep.RequestBody)
 		}
 	}
 
 	if ep.Response != nil {
 		if ep.Response.Body != nil {
-			view.ResponseBodyRows = flattenObjectModel(ep.Response.Body, "", maxVisits)
+			view.ResponseBodyRows = flattenObjectModel(ep.Response.Body, "", opts)
 		}
-		if outputDemo {
+		if opts.outputDemo {
 			view.ResponseDemo = generateDemo(ep.Response)
 		}
 	}
@@ -260,21 +442,30 @@ func mdEscape(s string) string {
 // ignores name: the field rows speak for themselves at the top level. A body
 // without fields keeps it, because otherwise nothing in the table says which
 // payload the endpoint expects.
-func flattenObjectModel(m *model.ObjectModel, name string, maxVisits int) []BodyRow {
+func flattenObjectModel(m *model.ObjectModel, name string, opts renderOptions) []BodyRow {
 	if m == nil {
 		return nil
 	}
 	visitCounts := make(map[uintptr]int)
 	var rows []BodyRow
-	flattenModel(m, name, 0, &rows, visitCounts, maxVisits)
+	flattenModel(m, name, 0, &rows, visitCounts, opts)
 	return rows
+}
+
+// fieldNames lists the fields of an object in the order the table renders
+// them: declaration order, or alphabetical when sortFields is set.
+func fieldNames(m *model.ObjectModel, opts renderOptions) []string {
+	if opts.sortFields {
+		return sortedFieldNames(m.Fields)
+	}
+	return m.OrderedFieldNames()
 }
 
 func objPtr(m *model.ObjectModel) uintptr {
 	return uintptr(unsafe.Pointer(m))
 }
 
-func flattenModel(m *model.ObjectModel, name string, depth int, rows *[]BodyRow, visitCounts map[uintptr]int, maxVisits int) {
+func flattenModel(m *model.ObjectModel, name string, depth int, rows *[]BodyRow, visitCounts map[uintptr]int, opts renderOptions) {
 	if m == nil {
 		return
 	}
@@ -282,14 +473,13 @@ func flattenModel(m *model.ObjectModel, name string, depth int, rows *[]BodyRow,
 	switch m.Kind {
 	case model.KindObject:
 		id := objPtr(m)
-		if visitCounts[id] >= maxVisits {
+		if visitCounts[id] >= opts.maxVisits {
 			return
 		}
 		visitCounts[id]++
-		names := sortedFieldNames(m.Fields)
-		for _, fieldName := range names {
+		for _, fieldName := range fieldNames(m, opts) {
 			fm := m.Fields[fieldName]
-			flattenFieldRow(fieldName, fm, depth, rows, visitCounts, maxVisits)
+			flattenFieldRow(fieldName, fm, depth, rows, visitCounts, opts)
 		}
 		visitCounts[id]--
 
@@ -298,7 +488,7 @@ func flattenModel(m *model.ObjectModel, name string, depth int, rows *[]BodyRow,
 		// the index picks one element out of it: rows are ids[0] with long,
 		// never [0] with long[]. An unnamed collection keeps the bare index.
 		if m.Items != nil {
-			flattenArrayItem(m.Items, name+"[0]", depth, rows, visitCounts, maxVisits)
+			flattenArrayItem(m.Items, name+"[0]", depth, rows, visitCounts, opts)
 		}
 
 	case model.KindSingle:
@@ -325,7 +515,7 @@ func flattenModel(m *model.ObjectModel, name string, depth int, rows *[]BodyRow,
 	}
 }
 
-func flattenArrayItem(item *model.ObjectModel, prefix string, depth int, rows *[]BodyRow, visitCounts map[uintptr]int, maxVisits int) {
+func flattenArrayItem(item *model.ObjectModel, prefix string, depth int, rows *[]BodyRow, visitCounts map[uintptr]int, opts renderOptions) {
 	if item == nil {
 		return
 	}
@@ -333,20 +523,19 @@ func flattenArrayItem(item *model.ObjectModel, prefix string, depth int, rows *[
 	switch item.Kind {
 	case model.KindObject:
 		id := objPtr(item)
-		if visitCounts[id] >= maxVisits {
+		if visitCounts[id] >= opts.maxVisits {
 			return
 		}
 		visitCounts[id]++
-		names := sortedFieldNames(item.Fields)
-		for _, name := range names {
+		for _, name := range fieldNames(item, opts) {
 			fm := item.Fields[name]
-			flattenFieldRow(prefix+"."+name, fm, depth, rows, visitCounts, maxVisits)
+			flattenFieldRow(prefix+"."+name, fm, depth, rows, visitCounts, opts)
 		}
 		visitCounts[id]--
 
 	case model.KindArray:
 		if item.Items != nil {
-			flattenArrayItem(item.Items, prefix+"[0]", depth, rows, visitCounts, maxVisits)
+			flattenArrayItem(item.Items, prefix+"[0]", depth, rows, visitCounts, opts)
 		}
 
 	case model.KindSingle:
@@ -376,7 +565,7 @@ func flattenArrayItem(item *model.ObjectModel, prefix string, depth int, rows *[
 	}
 }
 
-func flattenFieldRow(fieldName string, fm *model.FieldModel, depth int, rows *[]BodyRow, visitCounts map[uintptr]int, maxVisits int) {
+func flattenFieldRow(fieldName string, fm *model.FieldModel, depth int, rows *[]BodyRow, visitCounts map[uintptr]int, opts renderOptions) {
 	if fm == nil || fm.Model == nil {
 		return
 	}
@@ -397,27 +586,25 @@ func flattenFieldRow(fieldName string, fm *model.FieldModel, depth int, rows *[]
 
 	if fm.Model.Kind == model.KindObject {
 		id := objPtr(fm.Model)
-		if visitCounts[id] >= maxVisits {
+		if visitCounts[id] >= opts.maxVisits {
 			return
 		}
 		visitCounts[id]++
-		names := sortedFieldNames(fm.Model.Fields)
-		for _, name := range names {
+		for _, name := range fieldNames(fm.Model, opts) {
 			nestedFM := fm.Model.Fields[name]
-			flattenFieldRow(name, nestedFM, depth+1, rows, visitCounts, maxVisits)
+			flattenFieldRow(name, nestedFM, depth+1, rows, visitCounts, opts)
 		}
 		visitCounts[id]--
 	} else if fm.Model.Kind == model.KindArray && fm.Model.Items != nil {
 		if fm.Model.Items.Kind == model.KindObject {
 			id := objPtr(fm.Model.Items)
-			if visitCounts[id] >= maxVisits {
+			if visitCounts[id] >= opts.maxVisits {
 				return
 			}
 			visitCounts[id]++
-			names := sortedFieldNames(fm.Model.Items.Fields)
-			for _, name := range names {
+			for _, name := range fieldNames(fm.Model.Items, opts) {
 				nestedFM := fm.Model.Items.Fields[name]
-				flattenFieldRow(name, nestedFM, depth+1, rows, visitCounts, maxVisits)
+				flattenFieldRow(name, nestedFM, depth+1, rows, visitCounts, opts)
 			}
 			visitCounts[id]--
 		}
@@ -549,8 +736,9 @@ func objectModelValue(m *model.ObjectModel) any {
 		return map[string]any{}
 	}
 	obj := make(map[string]any, len(m.Fields))
-	names := sortedFieldNames(m.Fields)
-	for _, name := range names {
+	// The demo follows the table: a reader comparing them should meet the same
+	// fields in the same order.
+	for _, name := range m.OrderedFieldNames() {
 		fm := m.Fields[name]
 		obj[name] = fieldModelValue(fm)
 	}

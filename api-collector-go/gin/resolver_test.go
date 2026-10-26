@@ -236,6 +236,41 @@ func TestResolve_EmbeddedStruct(t *testing.T) {
 	}
 }
 
+// TestResolve_FieldOrder covers the record of declaration order: Fields is a
+// map, so FieldOrder is the only thing that lets a formatter render a struct
+// the way it is written rather than alphabetically (#170).
+func TestResolve_FieldOrder(t *testing.T) {
+	structs := map[string]StructDef{
+		"Base": {
+			Name: "Base",
+			Fields: []StructField{
+				{Name: "ID", Type: "int64", JsonTag: "id"},
+			},
+		},
+		"Result": {
+			Name:          "Result",
+			EmbeddedTypes: []string{"Base"},
+			Fields: []StructField{
+				{Name: "Code", Type: "int", JsonTag: "code"},
+				{Name: "Message", Type: "string", JsonTag: "message"},
+				{Name: "Data", Type: "string", JsonTag: "data"},
+			},
+		},
+	}
+
+	got := NewTypeResolver(structs).Resolve("Result").OrderedFieldNames()
+	want := []string{"code", "message", "data", "id"}
+
+	if len(got) != len(want) {
+		t.Fatalf("field order = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("field order = %v, want %v", got, want)
+		}
+	}
+}
+
 func TestResolve_CircularReference(t *testing.T) {
 	structs := map[string]StructDef{
 		"Node": {

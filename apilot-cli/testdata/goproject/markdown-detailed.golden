@@ -1,12 +1,9 @@
-# API
+# goproject API — go / gin, 5 endpoints
 
 
 ---
 
 ### listUsers
-
-> BASIC
-
 
 **Path:** /users
 
@@ -48,9 +45,6 @@ listUsers returns a filtered page of users.
 
 ### createUser
 
-> BASIC
-
-
 **Path:** /users
 
 **Method:** POST
@@ -65,8 +59,8 @@ createUser registers a new account.
 
 | name | type | desc |
 | ------------ | ------------ | ------------ |
-| email | string |  |
 | name | string |  |
+| email | string |  |
 | password | string |  |
 | tags | string[] |  |
 
@@ -90,10 +84,10 @@ createUser registers a new account.
 
 | name | type | desc |
 | ------------ | ------------ | ------------ |
-| age | int |  |
-| email | string |  |
 | id | long |  |
 | name | string |  |
+| email | string |  |
+| age | int |  |
 
 
 **Response Demo:**
@@ -110,9 +104,6 @@ createUser registers a new account.
 ---
 
 ### getUser
-
-> BASIC
-
 
 **Path:** /users/:id
 
@@ -144,10 +135,10 @@ getUser returns a single user by id.
 
 | name | type | desc |
 | ------------ | ------------ | ------------ |
-| age | int |  |
-| email | string |  |
 | id | long |  |
 | name | string |  |
+| email | string |  |
+| age | int |  |
 
 
 **Response Demo:**
@@ -164,9 +155,6 @@ getUser returns a single user by id.
 ---
 
 ### updateUser
-
-> BASIC
-
 
 **Path:** /users/:id
 
@@ -189,8 +177,8 @@ updateUser updates an existing user.
 
 | name | type | desc |
 | ------------ | ------------ | ------------ |
-| email | string |  |
 | name | string |  |
+| email | string |  |
 
 
 **Request Demo:**
@@ -208,10 +196,10 @@ updateUser updates an existing user.
 
 | name | type | desc |
 | ------------ | ------------ | ------------ |
-| age | int |  |
-| email | string |  |
 | id | long |  |
 | name | string |  |
+| email | string |  |
+| age | int |  |
 
 
 **Response Demo:**
@@ -228,9 +216,6 @@ updateUser updates an existing user.
 ---
 
 ### deleteUser
-
-> BASIC
-
 
 **Path:** /users/:id
 

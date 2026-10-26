@@ -690,8 +690,10 @@ func TestEmptyCollectionAllowed(t *testing.T) {
 	if !strings.Contains(stderr, "endpoints: 0") {
 		t.Errorf("stderr should report the count with --allow-empty, got: %q", stderr)
 	}
-	if !strings.Contains(stdout, "# API") {
-		t.Errorf("expected the empty document on stdout, got: %q", stdout)
+	// Even with nothing to list, the document names the project it came from:
+	// an empty export is otherwise indistinguishable from any other (#170).
+	if !strings.Contains(stdout, "# "+filepath.Base(testdataJavaProject())+" API") {
+		t.Errorf("expected the empty document to name the project on stdout, got: %q", stdout)
 	}
 }
 

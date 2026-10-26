@@ -1,4 +1,4 @@
-# {{ .ModuleName }}
+# {{ .Title }}{{ if .Summary }} — {{ .Summary }}{{ end }}
 {{- range .Groups }}
 {{ if .Folder }}
 
@@ -8,11 +8,9 @@
 
 ---
 
-### {{ if .Name }}{{ .Name }}{{ else }}{{ .Method }} {{ .Path }}{{ end }}
-
-> BASIC
-
-{{ if eq .Protocol "grpc" }}**Protocol:** gRPC
+### {{ .Heading }}
+{{ if eq .Protocol "grpc" }}
+**Protocol:** gRPC
 
 **Service:** {{ .Service }}
 

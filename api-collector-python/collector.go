@@ -4,6 +4,7 @@ package pycollector
 
 import (
 	"log"
+	"sort"
 	"sync"
 
 	"github.com/tangcent/apilot/api-collector"
@@ -19,6 +20,7 @@ type PythonCollector struct {
 	mu                 sync.Mutex
 	unresolved         map[string]int
 	depResolution      collector.DependencyResolution
+	frameworks         []string
 }
 
 // findSitePackages locates the Python environment to read dependency types
@@ -60,6 +62,13 @@ func (c *PythonCollector) DependencyResolution() collector.DependencyResolution 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.depResolution
+}
+
+// Frameworks reports the frameworks the last Collect call found endpoints for.
+func (c *PythonCollector) Frameworks() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.frameworks...)
 }
 
 // Collect walks the source directory and extracts endpoints from FastAPI, Django REST, and Flask sources.
@@ -112,13 +121,22 @@ func (c *PythonCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 	}()
 
 	var all []collector.ApiEndpoint
+	var frameworks []string
 	for res := range ch {
 		if res.err != nil {
 			log.Printf("warning: %s parser failed: %v", res.framework, res.err)
 			continue
 		}
+		// Only a framework that produced endpoints was actually in use: a
+		// project written for FastAPI still has its Flask parser run over it.
+		if len(res.endpoints) > 0 {
+			frameworks = append(frameworks, res.framework)
+		}
 		all = append(all, res.endpoints...)
 	}
+	// The parsers run concurrently, so arrival order is not stable; sorting
+	// keeps the same project naming itself the same way in every export.
+	sort.Strings(frameworks)
 
 	c.mu.Lock()
 	c.unresolved = unresolved.Counts()
@@ -126,6 +144,7 @@ func (c *PythonCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 		depResolution.ResolvedTypes = rc.ResolvedCount()
 	}
 	c.depResolution = depResolution
+	c.frameworks = frameworks
 	c.mu.Unlock()
 
 	if len(all) == 0 {

@@ -3,6 +3,8 @@
 // This is the only module both sides of the pipeline need to import for types.
 package model
 
+import "sort"
+
 // ApiEndpoint is the canonical, language-agnostic model for a single API endpoint.
 type ApiEndpoint struct {
 	Name        string         `json:"name"`
@@ -76,8 +78,15 @@ const (
 )
 
 type ObjectModel struct {
-	Kind       ObjectModelKind        `json:"kind"`
-	TypeName   string                 `json:"typeName"`
+	Kind     ObjectModelKind `json:"kind"`
+	TypeName string          `json:"typeName"`
+	// FieldOrder lists the field names in the order the source declares them.
+	// Fields is a map, so this is the only record of that order: without it a
+	// formatter can only render fields alphabetically, which contradicts the
+	// Query and Path tables (they keep source order) and hides field order
+	// changes in review (#170). Empty when the collector did not record one,
+	// in which case OrderedFieldNames falls back to alphabetical.
+	FieldOrder []string               `json:"fieldOrder,omitempty"`
 	Fields     map[string]*FieldModel `json:"fields,omitempty"`
 	Items      *ObjectModel           `json:"items,omitempty"`
 	KeyModel   *ObjectModel           `json:"keyModel,omitempty"`
@@ -135,6 +144,48 @@ func (m *ObjectModel) IsMap() bool    { return m != nil && m.Kind == KindMap }
 func (m *ObjectModel) IsRef() bool    { return m != nil && m.Kind == KindRef }
 func (m *ObjectModel) IsNull() bool   { return m == nil || (m.Kind == KindSingle && m.TypeName == JsonTypeNull) }
 
+// SetField records a field under name and appends it to FieldOrder when the
+// name is new. Collectors that build an object field by field use it so the
+// declaration order stays in step with the map.
+func (m *ObjectModel) SetField(name string, fm *FieldModel) {
+	if m.Fields == nil {
+		m.Fields = make(map[string]*FieldModel)
+	}
+	if _, exists := m.Fields[name]; !exists {
+		m.FieldOrder = append(m.FieldOrder, name)
+	}
+	m.Fields[name] = fm
+}
+
+// OrderedFieldNames returns the field names of an object in the order the
+// source declares them. Fields absent from FieldOrder — a collector that did
+// not record one, or a field merged in after it was built — follow
+// alphabetically, so no field is dropped.
+func (m *ObjectModel) OrderedFieldNames() []string {
+	if m == nil || len(m.Fields) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(m.Fields))
+	seen := make(map[string]bool, len(m.Fields))
+	for _, name := range m.FieldOrder {
+		if _, ok := m.Fields[name]; ok && !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	if len(names) == len(m.Fields) {
+		return names
+	}
+	rest := make([]string, 0, len(m.Fields)-len(names))
+	for name := range m.Fields {
+		if !seen[name] {
+			rest = append(rest, name)
+		}
+	}
+	sort.Strings(rest)
+	return append(names, rest...)
+}
+
 type FieldOpt func(*FieldModel)
 
 func WithComment(c string) FieldOpt {
@@ -159,6 +210,7 @@ func WithGeneric(g bool) FieldOpt {
 
 type ObjectModelBuilder struct {
 	fields map[string]*FieldModel
+	order  []string
 }
 
 func NewObjectModelBuilder() *ObjectModelBuilder {
@@ -169,6 +221,9 @@ func (b *ObjectModelBuilder) Field(name string, model *ObjectModel, opts ...Fiel
 	fm := &FieldModel{Model: model}
 	for _, opt := range opts {
 		opt(fm)
+	}
+	if _, exists := b.fields[name]; !exists {
+		b.order = append(b.order, name)
 	}
 	b.fields[name] = fm
 	return b
@@ -215,7 +270,7 @@ func (b *ObjectModelBuilder) Build() *ObjectModel {
 	for k, v := range b.fields {
 		fields[k] = v
 	}
-	return &ObjectModel{Kind: KindObject, TypeName: "object", Fields: fields}
+	return &ObjectModel{Kind: KindObject, TypeName: "object", FieldOrder: b.order, Fields: fields}
 }
 
 // ApiBody describes the request or response body of an endpoint.

@@ -20,7 +20,19 @@ type Params struct {
 	Variant    string `json:"variant"`
 	OutputDemo *bool  `json:"outputDemo,omitempty"`
 	MaxVisits  int    `json:"maxVisits,omitempty"`
+	// ModuleName overrides the document title. Left empty, the title comes
+	// from ProjectName, and failing that is just "API".
 	ModuleName string `json:"moduleName,omitempty"`
+	// ProjectName is the project the endpoints were collected from, injected
+	// by the engine. It names the document so two exports can be told apart.
+	ProjectName string `json:"projectName,omitempty"`
+	// Collector is the collector that read the source, e.g. "java".
+	Collector string `json:"collector,omitempty"`
+	// Frameworks are the frameworks the collector matched, e.g. ["spring-mvc"].
+	Frameworks []string `json:"frameworks,omitempty"`
+	// SortFields renders object fields alphabetically instead of in the order
+	// the source declares them.
+	SortFields bool `json:"sortFields,omitempty"`
 }
 
 type MarkdownFormatter struct{}
@@ -40,14 +52,13 @@ func (f *MarkdownFormatter) Format(endpoints []model.ApiEndpoint, opts formatter
 		outputDemo = *p.OutputDemo
 	}
 
-	maxVisits := p.MaxVisits
-	if maxVisits <= 0 {
-		maxVisits = 2
+	render := renderOptions{
+		outputDemo: outputDemo,
+		maxVisits:  p.MaxVisits,
+		sortFields: p.SortFields,
 	}
-
-	moduleName := p.ModuleName
-	if moduleName == "" {
-		moduleName = "API"
+	if render.maxVisits <= 0 {
+		render.maxVisits = 2
 	}
 
 	var tmplSrc string
@@ -69,7 +80,11 @@ func (f *MarkdownFormatter) Format(endpoints []model.ApiEndpoint, opts formatter
 		return nil, err
 	}
 
-	doc := buildMarkdownDoc(endpoints, moduleName, outputDemo, maxVisits)
+	doc := buildMarkdownDoc(endpoints, p.ModuleName, DocMeta{
+		ProjectName: p.ProjectName,
+		Collector:   p.Collector,
+		Frameworks:  p.Frameworks,
+	}, render)
 
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, doc); err != nil {
