@@ -716,28 +716,30 @@ func (r *PythonTypeResolver) Resolve(typeText string) *model.ObjectModel {
 		r.resolving[baseName] = true
 		defer func() { delete(r.resolving, baseName) }()
 
-		fields := make(map[string]*model.FieldModel, len(md.Fields))
+		obj := &model.ObjectModel{
+			Kind:     model.KindObject,
+			TypeName: baseName,
+			Fields:   make(map[string]*model.FieldModel, len(md.Fields)),
+		}
 		for _, f := range md.Fields {
 			fieldModel := r.resolveFieldModel(f)
-			fields[f.Name] = fieldModel
+			obj.SetField(f.Name, fieldModel)
 		}
 
 		for _, embedded := range md.EmbeddedTypes {
 			embeddedModel := r.Resolve(embedded)
 			if embeddedModel != nil && embeddedModel.IsObject() {
-				for k, v := range embeddedModel.Fields {
-					if _, exists := fields[k]; !exists {
-						fields[k] = v
+				// An embedded model contributes what the model itself does not
+				// declare, after it, in the embedded type's own order.
+				for _, k := range embeddedModel.OrderedFieldNames() {
+					if _, exists := obj.Fields[k]; !exists {
+						obj.SetField(k, embeddedModel.Fields[k])
 					}
 				}
 			}
 		}
 
-		return &model.ObjectModel{
-			Kind:     model.KindObject,
-			TypeName: baseName,
-			Fields:   fields,
-		}
+		return obj
 	}
 
 	if r.dependencyResolver != nil {

@@ -98,28 +98,30 @@ func (r *FlaskTypeResolver) resolveMarshmallowSchema(name string, md Marshmallow
 	r.resolving[name] = true
 	defer func() { delete(r.resolving, name) }()
 
-	fields := make(map[string]*model.FieldModel, len(md.Fields))
+	obj := &model.ObjectModel{
+		Kind:     model.KindObject,
+		TypeName: name,
+		Fields:   make(map[string]*model.FieldModel, len(md.Fields)),
+	}
 	for _, f := range md.Fields {
 		fieldModel := r.resolveMarshmallowField(f)
-		fields[f.Name] = fieldModel
+		obj.SetField(f.Name, fieldModel)
 	}
 
 	for _, embedded := range md.EmbeddedTypes {
 		embeddedModel := r.Resolve(embedded)
 		if embeddedModel != nil && embeddedModel.IsObject() {
-			for k, v := range embeddedModel.Fields {
-				if _, exists := fields[k]; !exists {
-					fields[k] = v
+			// An embedded schema contributes what the schema itself does not
+			// declare, after it, in the embedded type's own order.
+			for _, k := range embeddedModel.OrderedFieldNames() {
+				if _, exists := obj.Fields[k]; !exists {
+					obj.SetField(k, embeddedModel.Fields[k])
 				}
 			}
 		}
 	}
 
-	return &model.ObjectModel{
-		Kind:     model.KindObject,
-		TypeName: name,
-		Fields:   fields,
-	}
+	return obj
 }
 
 func (r *FlaskTypeResolver) resolveMarshmallowField(f MarshmallowField) *model.FieldModel {

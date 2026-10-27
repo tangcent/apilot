@@ -22,6 +22,7 @@ type JavaCollector struct {
 	mu            sync.Mutex
 	unresolved    map[string]int
 	warnings      []string
+	frameworks    []string
 	depResolution collector.DependencyResolution
 }
 
@@ -66,6 +67,14 @@ func (c *JavaCollector) DependencyResolution() collector.DependencyResolution {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.depResolution
+}
+
+// Frameworks reports the frameworks the last Collect call found endpoints for.
+// The parsers run in a fixed order, so the report is stable across runs.
+func (c *JavaCollector) Frameworks() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.frameworks...)
 }
 
 // Collect walks the source directory and extracts endpoints from Spring MVC, JAX-RS, and Feign sources.
@@ -119,6 +128,9 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 	frameworks := resolveFrameworks(ctx)
 	var endpoints []collector.ApiEndpoint
 	var warnings []string
+	// Only a framework that produced endpoints was actually in use: a project
+	// written for Spring MVC still has its JAX-RS parser run over it.
+	var matched []string
 
 	// Shared across framework parsers: a type may be referenced by endpoints
 	// from more than one framework.
@@ -130,10 +142,14 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 			sm.SetDependencyResolver(depResolver)
 		}
 		sm.SetUnresolved(unresolved)
+		before := len(endpoints)
 		for _, ctrl := range sm.ExtractControllers(results) {
 			for _, ep := range ctrl.Endpoints {
 				endpoints = append(endpoints, springmvcEndpointToAPI(ep, ctrl.Name))
 			}
+		}
+		if len(endpoints) > before {
+			matched = append(matched, "spring-mvc")
 		}
 	}
 
@@ -143,10 +159,14 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 			jr.SetDependencyResolver(depResolver)
 		}
 		jr.SetUnresolved(unresolved)
+		before := len(endpoints)
 		for _, res := range jr.ExtractResources(results) {
 			for _, ep := range res.Endpoints {
 				endpoints = append(endpoints, jaxrsEndpointToAPI(ep, res.Name))
 			}
+		}
+		if len(endpoints) > before {
+			matched = append(matched, "jaxrs")
 		}
 		warnings = append(warnings, jr.Warnings()...)
 	}
@@ -157,10 +177,14 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 			fg.SetDependencyResolver(depResolver)
 		}
 		fg.SetUnresolved(unresolved)
+		before := len(endpoints)
 		for _, client := range fg.ExtractClients(results) {
 			for _, ep := range client.Endpoints {
 				endpoints = append(endpoints, feignEndpointToAPI(ep, client.Name))
 			}
+		}
+		if len(endpoints) > before {
+			matched = append(matched, "feign")
 		}
 	}
 
@@ -169,6 +193,7 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 	c.warnings = warnings
 	depResolution.ResolvedTypes = depResolverCount(depResolver)
 	c.depResolution = depResolution
+	c.frameworks = matched
 	c.mu.Unlock()
 
 	// Deduplicate endpoints by (Folder, Path, Method, Name) to avoid

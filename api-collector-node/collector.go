@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 
 	collector "github.com/tangcent/apilot/api-collector"
@@ -21,6 +22,7 @@ type NodeCollector struct {
 	mu                 sync.Mutex
 	unresolved         map[string]int
 	depResolution      collector.DependencyResolution
+	frameworks         []string
 }
 
 // resolvedCounter is implemented by dependency resolvers that can report how
@@ -57,6 +59,13 @@ func (c *NodeCollector) DependencyResolution() collector.DependencyResolution {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.depResolution
+}
+
+// Frameworks reports the frameworks the last Collect call found endpoints for.
+func (c *NodeCollector) Frameworks() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.frameworks...)
 }
 
 // Collect walks the source directory and extracts endpoints from Express, Fastify, and NestJS sources.
@@ -109,13 +118,22 @@ func (c *NodeCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 	}()
 
 	var all []collector.ApiEndpoint
+	var frameworks []string
 	for res := range ch {
 		if res.err != nil {
 			log.Printf("warning: %s parser failed: %v", res.framework, res.err)
 			continue
 		}
+		// Only a framework that produced endpoints was actually in use: a
+		// project written for Express still has its NestJS parser run over it.
+		if len(res.endpoints) > 0 {
+			frameworks = append(frameworks, res.framework)
+		}
 		all = append(all, res.endpoints...)
 	}
+	// The parsers run concurrently, so arrival order is not stable; sorting
+	// keeps the same project naming itself the same way in every export.
+	sort.Strings(frameworks)
 
 	c.mu.Lock()
 	c.unresolved = unresolved.Counts()
@@ -123,6 +141,7 @@ func (c *NodeCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 		depResolution.ResolvedTypes = rc.ResolvedCount()
 	}
 	c.depResolution = depResolution
+	c.frameworks = frameworks
 	c.mu.Unlock()
 
 	if len(all) == 0 {

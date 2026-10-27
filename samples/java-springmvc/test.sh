@@ -78,6 +78,41 @@ if [ "$endpoint_count" -lt "$MIN_ENDPOINTS" ]; then
     failures+=("expected at least $MIN_ENDPOINTS endpoints, found $endpoint_count")
 fi
 
+# The document has to say what it is: outside its own directory an export
+# carrying just "# API" cannot be told apart from any other (issue #170).
+first_line=$(head -1 "$OUTPUT_FILE")
+if [[ "$first_line" != *"# $SAMPLE_NAME API"* ]]; then
+    failures+=("heading should name the project, got: $first_line")
+fi
+if [[ "$first_line" != *"java / spring-mvc"* ]]; then
+    failures+=("heading should name the collector and framework, got: $first_line")
+fi
+if [[ "$first_line" != *"$endpoint_count endpoints"* ]]; then
+    failures+=("heading should carry the endpoint count, got: $first_line")
+fi
+
+# Resources share method names here, so a heading built from the name alone
+# repeats. Every ### has to be addressable on its own (issue #170).
+duplicate_headings=$(grep '^### ' "$OUTPUT_FILE" | sort | uniq -d)
+if [ -n "$duplicate_headings" ]; then
+    failures+=("endpoint headings are not unique: $duplicate_headings")
+fi
+
+# The > BASIC marker was emitted once per endpoint carrying nothing.
+if grep -q '^> BASIC' "$OUTPUT_FILE"; then
+    failures+=("the inert '> BASIC' marker should no longer be exported")
+fi
+
+# Fields follow declaration order, so a wrapper declared code, message, data
+# is exported that way round and not as code, data, message (issue #170).
+message_line=$(grep -n -m1 -F '| message | string |' "$OUTPUT_FILE" | cut -d: -f1)
+data_line=$(grep -n -m1 -F '| data | object |' "$OUTPUT_FILE" | cut -d: -f1)
+if [ -z "$message_line" ] || [ -z "$data_line" ]; then
+    failures+=("expected the code/message/data wrapper rows to be exported")
+elif [ "$message_line" -ge "$data_line" ]; then
+    failures+=("fields should follow declaration order: message before data, got message at $message_line and data at $data_line")
+fi
+
 for route in "${EXPECTED_ROUTES[@]}"; do
     if ! grep -q "^\*\*Path:\*\* ${route}$" "$OUTPUT_FILE"; then
         failures+=("route not exported: $route")

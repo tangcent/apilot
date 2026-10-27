@@ -312,7 +312,11 @@ func (r *TypeResolver) Resolve(typeName string) *model.ObjectModel {
 	r.resolving[typeName] = true
 	defer func() { delete(r.resolving, typeName) }()
 
-	fields := make(map[string]*model.FieldModel)
+	obj := &model.ObjectModel{
+		Kind:     model.KindObject,
+		TypeName: typeName,
+		Fields:   make(map[string]*model.FieldModel),
+	}
 
 	for _, f := range structDef.Fields {
 		fieldName := f.Name
@@ -329,25 +333,23 @@ func (r *TypeResolver) Resolve(typeName string) *model.ObjectModel {
 			Required: required,
 		}
 		godoc.Extract(f.Comment, reflect.StructTag(f.Tag)).ApplyTo(fm)
-		fields[fieldName] = fm
+		obj.SetField(fieldName, fm)
 	}
 
+	// An embedded struct contributes the fields the struct itself does not
+	// declare, after them, in the order the embedded type declares them.
 	for _, embedded := range structDef.EmbeddedTypes {
 		embeddedModel := r.Resolve(strings.TrimPrefix(embedded, "*"))
 		if embeddedModel != nil && embeddedModel.IsObject() {
-			for k, v := range embeddedModel.Fields {
-				if _, exists := fields[k]; !exists {
-					fields[k] = v
+			for _, k := range embeddedModel.OrderedFieldNames() {
+				if _, exists := obj.Fields[k]; !exists {
+					obj.SetField(k, embeddedModel.Fields[k])
 				}
 			}
 		}
 	}
 
-	return &model.ObjectModel{
-		Kind:     model.KindObject,
-		TypeName: typeName,
-		Fields:   fields,
-	}
+	return obj
 }
 
 func parseMapType(typeName string) (string, string) {

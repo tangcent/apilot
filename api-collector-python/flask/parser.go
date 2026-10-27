@@ -460,7 +460,13 @@ func buildEndpoint(raw rawEndpointInfo, typeResolver *FlaskTypeResolver) *collec
 			}
 		}
 	} else if len(bodyParams) > 1 {
-		fields := make(map[string]*model.FieldModel)
+		// Several body parameters become one object; the parameters keep the
+		// order the handler declares them in.
+		body := &model.ObjectModel{
+			Kind:     model.KindObject,
+			TypeName: "object",
+			Fields:   make(map[string]*model.FieldModel, len(bodyParams)),
+		}
 		for _, bp := range bodyParams {
 			var fieldModel *model.ObjectModel
 			if bp.typeAnnotation != "" {
@@ -468,18 +474,14 @@ func buildEndpoint(raw rawEndpointInfo, typeResolver *FlaskTypeResolver) *collec
 			} else {
 				fieldModel = model.SingleModel(model.JsonTypeString)
 			}
-			fields[bp.name] = &model.FieldModel{
+			body.SetField(bp.name, &model.FieldModel{
 				Model:    fieldModel,
 				Required: bp.required,
-			}
+			})
 		}
 		ep.RequestBody = &collector.ApiBody{
 			MediaType: "application/json",
-			Body: &model.ObjectModel{
-				Kind:     model.KindObject,
-				TypeName: "object",
-				Fields:   fields,
-			},
+			Body:      body,
 		}
 	}
 

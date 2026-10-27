@@ -137,7 +137,15 @@ func Run(cfg Config) error {
 		return checkErr
 	}
 
+	// What the export is: the project it came from, the collector that read it,
+	// and the framework that collector matched. A document that does not name
+	// these is unidentifiable once it leaves the directory it was made in
+	// (#170).
 	projectName := resolveProjectName(sourceDir)
+	var frameworks []string
+	if fr, ok := c.(collector.FrameworkReporter); ok {
+		frameworks = fr.Frameworks()
+	}
 
 	opts := formatter.FormatOptions{
 		Settings:    settings,
@@ -146,7 +154,7 @@ func Run(cfg Config) error {
 	if cfg.FormatParams != "" {
 		opts.Params = []byte(cfg.FormatParams)
 	}
-	if projectName != "" || cfg.OutputPath != "" {
+	if projectName != "" || cfg.OutputPath != "" || len(frameworks) > 0 {
 		var existing map[string]any
 		if len(opts.Params) > 0 {
 			_ = json.Unmarshal(opts.Params, &existing)
@@ -156,6 +164,13 @@ func Run(cfg Config) error {
 		}
 		if projectName != "" {
 			existing["projectName"] = projectName
+		}
+		// The collector is always known: it is the one that produced the
+		// endpoints. It is injected unconditionally so the count that follows
+		// it in a formatter's header has something to sit next to.
+		existing["collector"] = c.Name()
+		if len(frameworks) > 0 {
+			existing["frameworks"] = frameworks
 		}
 		if cfg.OutputPath != "" {
 			existing["outputPath"] = cfg.OutputPath

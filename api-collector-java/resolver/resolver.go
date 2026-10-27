@@ -587,7 +587,11 @@ func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []s
 		typeParamSet[tp] = true
 	}
 
-	fields := make(map[string]*model.FieldModel, len(class.Fields))
+	obj := &model.ObjectModel{
+		Kind:     model.KindObject,
+		TypeName: class.Name,
+		Fields:   make(map[string]*model.FieldModel, len(class.Fields)),
+	}
 	for _, f := range class.Fields {
 		// Static fields never belong to a serialized instance, so they are
 		// skipped — that also covers static final constants. Instance final
@@ -598,22 +602,18 @@ func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []s
 			continue
 		}
 		fm := r.resolveField(class, f, localBindings, typeParamSet)
-		fields[f.Name] = fm
+		obj.SetField(f.Name, fm)
 	}
 
 	// A property may come from code rather than from a field: Jackson
 	// serialises `isSuccess()` as `success` even when no field backs it.
 	// Declared fields are added first, so a getter for a field that already
 	// exists cannot add a second copy under the same name.
-	r.addGetterProperties(class, localBindings, typeParamSet, fields)
+	r.addGetterProperties(class, localBindings, typeParamSet, obj)
 
-	r.resolveInheritedFields(class, localBindings, fields)
+	r.resolveInheritedFields(class, localBindings, obj)
 
-	return &model.ObjectModel{
-		Kind:     model.KindObject,
-		TypeName: class.Name,
-		Fields:   fields,
-	}
+	return obj
 }
 
 func (r *TypeResolver) resolveField(source parser.Class, f parser.Field, localBindings map[string]string, typeParamSet map[string]bool) *model.FieldModel {
@@ -644,7 +644,7 @@ func (r *TypeResolver) resolveField(source parser.Class, f parser.Field, localBi
 // Names already present in fields win: a getter paired with its field is that
 // same property, not a second one. @JsonIgnore drops the property and
 // @JsonProperty("other") renames it.
-func (r *TypeResolver) addGetterProperties(source parser.Class, localBindings map[string]string, typeParamSet map[string]bool, fields map[string]*model.FieldModel) {
+func (r *TypeResolver) addGetterProperties(source parser.Class, localBindings map[string]string, typeParamSet map[string]bool, obj *model.ObjectModel) {
 	for _, m := range source.Methods {
 		property, ok := getterPropertyName(m)
 		if !ok || isJsonIgnored(m.Annotations) {
@@ -653,7 +653,7 @@ func (r *TypeResolver) addGetterProperties(source parser.Class, localBindings ma
 		if renamed := jsonPropertyName(m.Annotations); renamed != "" {
 			property = renamed
 		}
-		if _, exists := fields[property]; exists {
+		if _, exists := obj.Fields[property]; exists {
 			continue
 		}
 
@@ -672,7 +672,7 @@ func (r *TypeResolver) addGetterProperties(source parser.Class, localBindings ma
 			fm.Demo = "true"
 		}
 
-		fields[property] = fm
+		obj.SetField(property, fm)
 	}
 }
 
@@ -754,7 +754,7 @@ func (r *TypeResolver) isUnboundTypeParam(typeName string, localBindings map[str
 	return true
 }
 
-func (r *TypeResolver) resolveInheritedFields(class parser.Class, localBindings map[string]string, fields map[string]*model.FieldModel) {
+func (r *TypeResolver) resolveInheritedFields(class parser.Class, localBindings map[string]string, obj *model.ObjectModel) {
 	if class.SuperClass == "" {
 		return
 	}
@@ -785,20 +785,22 @@ func (r *TypeResolver) resolveInheritedFields(class parser.Class, localBindings 
 		superTypeParamSet[tp] = true
 	}
 
+	// A superclass's fields follow the subclass's own, which is the order a
+	// reader of the subclass meets them in.
 	for _, f := range superClass.Fields {
-		if _, exists := fields[f.Name]; !exists {
+		if _, exists := obj.Fields[f.Name]; !exists {
 			// The field type is written in the superclass's own compilation
 			// unit, so that is the scope its simple names resolve in.
 			fm := r.resolveField(superClass, f, superBindings, superTypeParamSet)
-			fields[f.Name] = fm
+			obj.SetField(f.Name, fm)
 		}
 	}
 
 	// The superclass's getters are part of the subclass's wire format too, and
 	// are resolved in the compilation unit that declared them.
-	r.addGetterProperties(superClass, superBindings, superTypeParamSet, fields)
+	r.addGetterProperties(superClass, superBindings, superTypeParamSet, obj)
 
-	r.resolveInheritedFields(superClass, superBindings, fields)
+	r.resolveInheritedFields(superClass, superBindings, obj)
 }
 
 func parseGenericType(rawType string) (string, []string) {

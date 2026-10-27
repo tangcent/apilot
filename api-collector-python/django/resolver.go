@@ -65,28 +65,30 @@ func (r *DRFTypeResolver) ResolveSerializer(serializerName string) *model.Object
 	r.resolving[serializerName] = true
 	defer func() { delete(r.resolving, serializerName) }()
 
-	fields := make(map[string]*model.FieldModel, len(md.Fields))
+	obj := &model.ObjectModel{
+		Kind:     model.KindObject,
+		TypeName: serializerName,
+		Fields:   make(map[string]*model.FieldModel, len(md.Fields)),
+	}
 	for _, f := range md.Fields {
 		fieldModel := r.resolveSerializerField(f)
-		fields[f.Name] = fieldModel
+		obj.SetField(f.Name, fieldModel)
 	}
 
 	for _, embedded := range md.EmbeddedTypes {
 		embeddedModel := r.ResolveSerializer(embedded)
 		if embeddedModel != nil && embeddedModel.IsObject() {
-			for k, v := range embeddedModel.Fields {
-				if _, exists := fields[k]; !exists {
-					fields[k] = v
+			// An embedded serializer contributes what the serializer itself
+			// does not declare, after it, in the embedded type's own order.
+			for _, k := range embeddedModel.OrderedFieldNames() {
+				if _, exists := obj.Fields[k]; !exists {
+					obj.SetField(k, embeddedModel.Fields[k])
 				}
 			}
 		}
 	}
 
-	return &model.ObjectModel{
-		Kind:     model.KindObject,
-		TypeName: serializerName,
-		Fields:   fields,
-	}
+	return obj
 }
 
 func (r *DRFTypeResolver) resolveSerializerField(f SerializerField) *model.FieldModel {
@@ -197,24 +199,25 @@ func (r *DRFTypeResolver) BuildRequestBody(serializerName string) *model.ObjectM
 		return nil
 	}
 
-	writeFields := make(map[string]*model.FieldModel)
-	for name, field := range resolved.Fields {
+	write := &model.ObjectModel{
+		Kind:     model.KindObject,
+		TypeName: serializerName,
+		Fields:   make(map[string]*model.FieldModel, len(resolved.Fields)),
+	}
+	for _, name := range resolved.OrderedFieldNames() {
+		field := resolved.Fields[name]
 		if !field.Required && field.DefaultValue == "" {
-			writeFields[name] = field
+			write.SetField(name, field)
 			continue
 		}
-		writeFields[name] = field
+		write.SetField(name, field)
 	}
 
-	if len(writeFields) == 0 {
+	if len(write.Fields) == 0 {
 		return resolved
 	}
 
-	return &model.ObjectModel{
-		Kind:     model.KindObject,
-		TypeName: serializerName,
-		Fields:   writeFields,
-	}
+	return write
 }
 
 func (r *DRFTypeResolver) BuildResponseBody(serializerName string) *model.ObjectModel {

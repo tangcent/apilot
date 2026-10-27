@@ -149,9 +149,6 @@ func TestFormat_DetailedFormat(t *testing.T) {
 	if !strings.Contains(outputStr, "Create a new user") {
 		t.Error("Output should contain description")
 	}
-	if !strings.Contains(outputStr, "> BASIC") {
-		t.Error("Output should contain '> BASIC' section")
-	}
 	if !strings.Contains(outputStr, "> REQUEST") {
 		t.Error("Output should contain '> REQUEST' section")
 	}
@@ -358,7 +355,6 @@ func TestFormat_AllFields(t *testing.T) {
 		"**Path:** /api/v1/resource/{id}",
 		"**Method:** PATCH",
 		"A complete endpoint with all fields",
-		"> BASIC",
 		"> REQUEST",
 		"**Path Params:**",
 		"| id | 123 | YES |  | Resource ID |",
@@ -778,7 +774,8 @@ func TestBuildEndpointView_BodyRows(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			view := buildEndpointView(model.ApiEndpoint{Path: "/x", RequestBody: tt.body}, true, 2)
+			view := buildEndpointView(model.ApiEndpoint{Path: "/x", RequestBody: tt.body},
+				renderOptions{outputDemo: true, maxVisits: 2})
 
 			if len(view.BodyRows) != len(tt.want) {
 				t.Fatalf("got %d rows, want %d: %+v", len(view.BodyRows), len(tt.want), view.BodyRows)

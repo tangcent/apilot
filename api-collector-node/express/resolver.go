@@ -194,26 +194,28 @@ func (r *TSTypeResolver) resolveUnionType(rawType string, typeBindings map[strin
 
 func (r *TSTypeResolver) resolveIntersectionType(rawType string, typeBindings map[string]string) *model.ObjectModel {
 	parts := strings.Split(rawType, " & ")
-	mergedFields := make(map[string]*model.FieldModel)
+	merged := &model.ObjectModel{
+		Kind:     model.KindObject,
+		TypeName: "object",
+		Fields:   make(map[string]*model.FieldModel),
+	}
 
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		resolved := r.Resolve(part, typeBindings)
 		if resolved != nil && resolved.IsObject() {
-			for name, field := range resolved.Fields {
-				if _, exists := mergedFields[name]; !exists {
-					mergedFields[name] = field
+			// The parts keep their own declaration order, so the merged type
+			// reads left to right across `A & B`.
+			for _, name := range resolved.OrderedFieldNames() {
+				if _, exists := merged.Fields[name]; !exists {
+					merged.SetField(name, resolved.Fields[name])
 				}
 			}
 		}
 	}
 
-	if len(mergedFields) > 0 {
-		return &model.ObjectModel{
-			Kind:     model.KindObject,
-			TypeName: "object",
-			Fields:   mergedFields,
-		}
+	if len(merged.Fields) > 0 {
+		return merged
 	}
 
 	r.recordUnresolved(rawType)
@@ -350,7 +352,11 @@ func (r *TSTypeResolver) resolveInterface(iface *TSInterface, typeArgs []string,
 		}
 	}
 
-	fields := make(map[string]*model.FieldModel, len(iface.Fields))
+	obj := &model.ObjectModel{
+		Kind:     model.KindObject,
+		TypeName: iface.Name,
+		Fields:   make(map[string]*model.FieldModel, len(iface.Fields)),
+	}
 	for _, f := range iface.Fields {
 		fieldModel := r.Resolve(f.Type, localBindings)
 		fm := &model.FieldModel{
@@ -358,14 +364,10 @@ func (r *TSTypeResolver) resolveInterface(iface *TSInterface, typeArgs []string,
 			Required: f.Required,
 		}
 		jsdoc.Extract(f.Comment).ApplyTo(fm)
-		fields[f.Name] = fm
+		obj.SetField(f.Name, fm)
 	}
 
-	return &model.ObjectModel{
-		Kind:     model.KindObject,
-		TypeName: iface.Name,
-		Fields:   fields,
-	}
+	return obj
 }
 
 func (r *TSTypeResolver) resolveTypeAlias(alias *TSTypeAlias, typeArgs []string, typeBindings map[string]string) *model.ObjectModel {
