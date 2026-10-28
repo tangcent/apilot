@@ -5,20 +5,15 @@ set -e
 SCRIPT_DIR="$(dirname "$0")"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-SKILLS_SOURCE="$PROJECT_ROOT/.agent/skills"
-TRAE_DIR="$PROJECT_ROOT/.trae"
+SKILLS_SOURCE="$PROJECT_ROOT/.agents/skills"
 KIRO_DIR="$PROJECT_ROOT/.kiro"
 CURSOR_DIR="$PROJECT_ROOT/.cursor"
 CLAUDE_DIR="$PROJECT_ROOT/.claude"
 
 init_trae() {
     echo "Initializing Trae..."
-    if [ ! -d "$TRAE_DIR/skills" ]; then
-        mkdir -p "$TRAE_DIR/skills"
-    fi
     if [ -d "$SKILLS_SOURCE" ]; then
-        cp -r "$SKILLS_SOURCE/"* "$TRAE_DIR/skills/"
-        echo "✓ Trae skills initialized"
+        echo "✓ Trae loads .agents/skills natively; no setup needed"
     else
         echo "✗ No skills found at $SKILLS_SOURCE"
     fi
@@ -66,7 +61,7 @@ init_claude() {
 show_help() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
-    echo "Initialize AI tools with skills from .agent/skills"
+    echo "Initialize AI tools with skills from .agents/skills"
     echo ""
     echo "Options:"
     echo "  --all         Initialize all AI tools (default)"

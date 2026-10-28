@@ -32,7 +32,7 @@ bin/
 dist/
 
 # Development files
-.agent/
+.agents/
 .claude/
 .cursor/
 .kiro/
