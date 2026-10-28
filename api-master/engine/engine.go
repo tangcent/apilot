@@ -369,12 +369,54 @@ var collectorIndicators = []collectorIndicator{
 func detectCollector(sourceDir string) (string, error) {
 	for _, ci := range collectorIndicators {
 		if _, err := os.Stat(filepath.Join(sourceDir, ci.file)); err == nil {
-			if _, ok := collectors[ci.collector]; ok {
-				return ci.collector, nil
+			name := ci.collector
+			// A Gradle or Maven build file says "JVM project", not "Java
+			// source": build.gradle.kts is also the build script of an ordinary
+			// Java project. Decide by the sources: Kotlin with no Java is
+			// Kotlin, anything with Java stays with the Java collector, which
+			// also handles mixed trees.
+			if name == "java" && onlyKotlinSources(sourceDir) {
+				name = "kotlin"
+			}
+			if _, ok := collectors[name]; ok {
+				return name, nil
 			}
 		}
 	}
+	// No build indicator at all: a tree of Kotlin sources is still collectable.
+	if onlyKotlinSources(sourceDir) {
+		if _, ok := collectors["kotlin"]; ok {
+			return "kotlin", nil
+		}
+	}
 	return "", fmt.Errorf("could not auto-detect collector for %q", sourceDir)
+}
+
+// onlyKotlinSources reports whether a tree holds at least one .kt file and no
+// .java file. Generated and build directories are skipped so a stale artifact
+// cannot decide the collector.
+func onlyKotlinSources(root string) bool {
+	java, kotlin := 0, 0
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", ".gradle", ".idea", "build", "out", "target", "node_modules":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		switch filepath.Ext(path) {
+		case ".java":
+			java++
+		case ".kt":
+			kotlin++
+		}
+		return nil
+	})
+	return kotlin > 0 && java == 0
 }
 
 func writeOutput(path string, data []byte) error {

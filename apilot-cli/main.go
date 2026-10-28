@@ -7,10 +7,11 @@ import (
 	"github.com/tangcent/apilot/api-master/engine"
 	"github.com/tangcent/apilot/apilot-cli/build"
 
-	gocollector   "github.com/tangcent/apilot/api-collector-go"
-	javacollector "github.com/tangcent/apilot/api-collector-java"
-	nodecollector "github.com/tangcent/apilot/api-collector-node"
-	pycollector   "github.com/tangcent/apilot/api-collector-python"
+	gocollector     "github.com/tangcent/apilot/api-collector-go"
+	javacollector   "github.com/tangcent/apilot/api-collector-java"
+	kotlincollector "github.com/tangcent/apilot/api-collector-kotlin"
+	nodecollector   "github.com/tangcent/apilot/api-collector-node"
+	pycollector     "github.com/tangcent/apilot/api-collector-python"
 
 	curlfmt    "github.com/tangcent/apilot/api-formatter-curl"
 	jsonfmt    "github.com/tangcent/apilot/api-formatter-json"
@@ -20,6 +21,7 @@ import (
 
 func init() {
 	engine.RegisterCollector(javacollector.New())
+	engine.RegisterCollector(kotlincollector.New())
 	engine.RegisterCollector(gocollector.New())
 	engine.RegisterCollector(nodecollector.New())
 	engine.RegisterCollector(pycollector.New())

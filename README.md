@@ -37,6 +37,7 @@ It detects your language and framework automatically, walks the source tree, and
 | Language   | Frameworks                              |
 |------------|-----------------------------------------|
 | Java       | Spring MVC, JAX-RS, Feign               |
+| Kotlin     | Spring MVC                              |
 | Go         | Gin, Echo, Fiber                        |
 | Node.js    | Express, Fastify, NestJS                |
 | Python     | FastAPI, Django REST, Flask             |

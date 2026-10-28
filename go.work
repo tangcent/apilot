@@ -4,6 +4,7 @@ use (
 	./api-collector
 	./api-collector-go
 	./api-collector-java
+	./api-collector-kotlin
 	./api-collector-node
 	./api-collector-python
 	./api-docmeta

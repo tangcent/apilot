@@ -51,7 +51,12 @@ jobs:
       - name: Test all modules
         shell: bash
         run: |
-          for mod in api-collector api-formatter api-docmeta api-collector-go api-collector-java api-collector-node api-collector-python api-formatter-curl api-formatter-json api-formatter-markdown api-formatter-postman api-master apilot-cli; do
+          for mod in api-collector api-formatter api-docmeta api-collector-go api-collector-java api-collector-kotlin api-collector-node api-collector-python api-formatter-curl api-formatter-json api-formatter-markdown api-formatter-postman api-master apilot-cli; do
+            # api-collector-kotlin depends on go-tree-sitter, which needs Go 1.23.
+            if [ "$mod" = "api-collector-kotlin" ] && [ "${{ matrix.go-version }}" = "1.22" ]; then
+              echo "==> Skipping $mod on Go 1.22"
+              continue
+            fi
             if [ -f "$mod/go.mod" ]; then
               echo "==> Testing $mod"
               (cd "$mod" && go test ./... && go vet ./...)
