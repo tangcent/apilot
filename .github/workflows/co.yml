@@ -36,11 +36,11 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.23"
 
       - name: Generate coverage
         run: |
-          for mod in api-collector api-formatter api-docmeta api-collector-go api-collector-java api-collector-node api-collector-python api-formatter-curl api-formatter-json api-formatter-markdown api-formatter-postman api-master apilot-cli; do
+          for mod in api-collector api-formatter api-docmeta api-collector-go api-collector-java api-collector-kotlin api-collector-node api-collector-python api-formatter-curl api-formatter-json api-formatter-markdown api-formatter-postman api-master apilot-cli; do
             if [ -f "$mod/go.mod" ]; then
               echo "==> Coverage for $mod"
               (cd "$mod" && go test -coverprofile=coverage.out ./... || true)

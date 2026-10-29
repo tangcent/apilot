@@ -513,6 +513,71 @@ func TestDetectCollector_Java(t *testing.T) {
 	}
 }
 
+func TestDetectCollector_Kotlin(t *testing.T) {
+	tests := []struct {
+		name     string
+		build    string
+		sources  []string
+		expected string
+	}{
+		{
+			name:     "gradle Kotlin DSL with only Kotlin sources",
+			build:    "build.gradle.kts",
+			sources:  []string{"Main.kt"},
+			expected: "kotlin",
+		},
+		{
+			name:     "maven project with only Kotlin sources",
+			build:    "pom.xml",
+			sources:  []string{"Main.kt"},
+			expected: "kotlin",
+		},
+		{
+			name:     "mixed sources stay with the Java collector",
+			build:    "build.gradle",
+			sources:  []string{"Main.kt", "Legacy.java"},
+			expected: "java",
+		},
+		{
+			name:     "Kotlin sources with no build indicator",
+			sources:  []string{"Main.kt"},
+			expected: "kotlin",
+		},
+		{
+			name:     "Java build script with no sources stays Java",
+			build:    "build.gradle.kts",
+			expected: "java",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			if tt.build != "" {
+				if err := os.WriteFile(filepath.Join(tmpDir, tt.build), []byte{}, 0644); err != nil {
+					t.Fatalf("Failed to create %s: %v", tt.build, err)
+				}
+			}
+			for _, source := range tt.sources {
+				if err := os.WriteFile(filepath.Join(tmpDir, source), []byte{}, 0644); err != nil {
+					t.Fatalf("Failed to create %s: %v", source, err)
+				}
+			}
+
+			RegisterCollector(&mockCollector{name: "java"})
+			RegisterCollector(&mockCollector{name: "kotlin"})
+
+			result, err := detectCollector(tmpDir)
+			if err != nil {
+				t.Fatalf("Expected no error, got: %v", err)
+			}
+			if result != tt.expected {
+				t.Errorf("Expected %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
+
 func TestDetectCollector_Go(t *testing.T) {
 	tmpDir := t.TempDir()
 	indicatorFile := tmpDir + "/go.mod"
