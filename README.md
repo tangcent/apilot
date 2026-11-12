@@ -5,7 +5,7 @@
 APilot scans your source code, extracts API endpoints, and exports them to the format you need — Postman collections, Markdown docs, cURL commands, and more. No annotations required, no runtime needed.
 
 [![CI](https://github.com/tangcent/apilot/actions/workflows/ci.yml/badge.svg)](https://github.com/tangcent/apilot/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/tangcent/apilot/branch/master/graph/badge.svg)](https://codecov.io/gh/tangcent/apilot)
+[![codecov](https://codecov.io/gh/tangcent/apilot/graph/badge.svg)](https://codecov.io/gh/tangcent/apilot)
 [![npm version](https://img.shields.io/npm/v/@tangcent/apilot.svg)](https://www.npmjs.com/package/@tangcent/apilot)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
