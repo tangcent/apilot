@@ -91,10 +91,11 @@ func (p *Parser) extractController(class parser.Class, typeResolver *resolver.Ty
 	endpoints = append(endpoints, inheritedEndpoints...)
 
 	return &Controller{
-		Name:      class.Name,
-		Package:   class.Package,
-		BasePath:  basePath,
-		Endpoints: endpoints,
+		Name:        class.Name,
+		Package:     class.Package,
+		BasePath:    basePath,
+		Endpoints:   endpoints,
+		Description: class.JavaDoc,
 	}
 }
 

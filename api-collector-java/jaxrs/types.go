@@ -52,4 +52,6 @@ type Resource struct {
 	Endpoints []Endpoint
 	Produces  []string
 	Consumes  []string
+	// Description is the resource class's Javadoc.
+	Description string
 }

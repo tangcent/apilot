@@ -149,12 +149,13 @@ func (p *Parser) extractResource(class parser.Class, typeResolver *resolver.Type
 	endpoints = append(endpoints, inheritedEndpoints...)
 
 	return &Resource{
-		Name:      class.Name,
-		Package:   class.Package,
-		BasePath:  basePath,
-		Endpoints: endpoints,
-		Produces:  classProduces,
-		Consumes:  classConsumes,
+		Name:        class.Name,
+		Package:     class.Package,
+		BasePath:    basePath,
+		Endpoints:   endpoints,
+		Produces:    classProduces,
+		Consumes:    classConsumes,
+		Description: class.JavaDoc,
 	}
 }
 
