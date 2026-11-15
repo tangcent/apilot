@@ -113,6 +113,35 @@ func extractInterface(node *tree_sitter.Node, source []byte) Class {
 	return class
 }
 
+// extractEnum reads an enum declaration: its name and its constants. The
+// fields and methods of its body are not read: Spring binds a request
+// parameter to an enum by the name of a constant, so the constants are the
+// values it accepts.
+func extractEnum(node *tree_sitter.Node, source []byte) Class {
+	enum := Class{IsEnum: true, JavaDoc: extractLeadingJavaDoc(node, source)}
+	enum.Annotations = extractAnnotations(node, source)
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		switch child.Kind() {
+		case "identifier":
+			if enum.Name == "" {
+				enum.Name = child.Utf8Text(source)
+			}
+		case "enum_body":
+			for j := uint(0); j < child.ChildCount(); j++ {
+				constant := child.Child(j)
+				if constant.Kind() != "enum_constant" {
+					continue
+				}
+				if name := constant.ChildByFieldName("name"); name != nil {
+					enum.EnumConstants = append(enum.EnumConstants, name.Utf8Text(source))
+				}
+			}
+		}
+	}
+	return enum
+}
+
 // extractRecord extracts a record declaration. Its components become fields;
 // the optional body (compact constructors, methods, static members) is ignored.
 func extractRecord(node *tree_sitter.Node, source []byte) Class {
@@ -442,7 +471,8 @@ func extractParameter(node *tree_sitter.Node, source []byte) Parameter {
 		child := node.Child(i)
 
 		switch child.Kind() {
-		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type":
+		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type",
+			"array_type", "scoped_type_identifier":
 			param.Type = child.Utf8Text(source)
 		case "identifier":
 			param.Name = child.Utf8Text(source)

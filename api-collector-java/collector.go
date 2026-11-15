@@ -172,7 +172,9 @@ func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Cla
 		}
 		sm.SetUnresolved(unresolved)
 		before := len(endpoints)
-		for _, ctrl := range sm.ExtractControllers(results) {
+		controllers := sm.ExtractControllers(results)
+		warnings = append(warnings, sm.Warnings()...)
+		for _, ctrl := range controllers {
 			for _, ep := range ctrl.Endpoints {
 				api := springmvcEndpointToAPI(ep, ctrl.Name)
 				api.FolderDescription = ctrl.Description
@@ -502,8 +504,11 @@ func feignEndpointToAPI(ep feign.Endpoint, folder string) collector.ApiEndpoint 
 // isMultipartFile reports whether a declared Java type is a multipart file
 // part. The parameter travels in a multipart form body, so it is a form
 // parameter: documenting it under Query would tell a reader to send ?file=.
+// isMultipartFile reports whether a parameter of this type is uploaded as
+// file parts: a MultipartFile, or a collection or array of them.
 func isMultipartFile(javaType string) bool {
-	return javaType == "MultipartFile" || strings.HasSuffix(javaType, ".MultipartFile")
+	element := springmvc.ElementType(javaType)
+	return element == "MultipartFile" || strings.HasSuffix(element, ".MultipartFile")
 }
 
 // firstMediaType returns the first declared media type, or fallback when the

@@ -311,6 +311,8 @@ func extractClassParameter(node *tree_sitter.Node, source []byte, filePath strin
 		Annotations: anns,
 		IsMutable:   directIndexOf(node, "var") >= 0,
 		KDoc:        leadingKDoc(node, source),
+
+		InConstructor: true,
 	}
 	if eq := directIndexOf(node, "="); eq >= 0 && eq+1 < int(node.ChildCount()) {
 		prop.HasDefault = true
