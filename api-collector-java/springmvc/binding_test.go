@@ -6,6 +6,47 @@ import (
 	"github.com/tangcent/apilot/api-collector-java/parser"
 )
 
+func TestClassifyImplicit(t *testing.T) {
+	isEnum := func(t string) bool { return t == "Status" }
+	for _, tc := range []struct {
+		typeName    string
+		annotations []string
+		want        ImplicitKind
+		blocker     string
+	}{
+		{"String", nil, ImplicitParam, ""},
+		{"Status", nil, ImplicitParam, ""},
+		{"List<Status>", nil, ImplicitParam, ""},
+		{"Long[]", nil, ImplicitParam, ""},
+		{"OrderQuery", nil, ImplicitModel, ""},
+		{"HttpServletRequest", nil, ImplicitNone, ""},
+		{"Map<String,String>", nil, ImplicitNone, ""},
+		{"Pageable", nil, ImplicitPageable, ""},
+		{"Sort", nil, ImplicitSort, ""},
+		// Files: one, a collection, an array.
+		{"MultipartFile", nil, ImplicitFile, ""},
+		{"List<MultipartFile>", nil, ImplicitFile, ""},
+		{"MultipartFile[]", nil, ImplicitFile, ""},
+		// Annotations that format or default a value do not change the binding.
+		{"LocalDate", []string{"DateTimeFormat"}, ImplicitParam, ""},
+		{"BigDecimal", []string{"NumberFormat"}, ImplicitParam, ""},
+		{"Pageable", []string{"PageableDefault", "Qualifier"}, ImplicitPageable, ""},
+		{"Sort", []string{"SortDefault"}, ImplicitSort, ""},
+		// An annotation no binding covers leaves the parameter to a custom
+		// resolver, and is named so the caller can say so.
+		{"Operator", []string{"CurrentUser"}, ImplicitNone, "CurrentUser"},
+		{"Operator", []string{"Valid", "CurrentUser"}, ImplicitNone, "CurrentUser"},
+		// An explicit @ModelAttribute wins wherever it is written.
+		{"OrderFilter", []string{"Audit", "ModelAttribute"}, ImplicitModel, ""},
+		{"OrderFilter", []string{"ModelAttribute", "Audit"}, ImplicitModel, ""},
+	} {
+		kind, blocker := ClassifyImplicit(tc.typeName, tc.annotations, isEnum)
+		if kind != tc.want || blocker != tc.blocker {
+			t.Errorf("ClassifyImplicit(%q, %v) = %v, %q; want %v, %q", tc.typeName, tc.annotations, kind, blocker, tc.want, tc.blocker)
+		}
+	}
+}
+
 func TestParser_ImplicitBinding(t *testing.T) {
 	jp, err := parser.NewParser(parser.ParserOptions{})
 	if err != nil {

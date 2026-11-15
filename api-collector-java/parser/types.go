@@ -80,6 +80,10 @@ type Class struct {
 	FilePath string
 	// Imports carries the import declarations of the same compilation unit.
 	Imports []Import
+	// IsEnum marks an enum declaration; EnumConstants lists its constants in
+	// declaration order.
+	IsEnum        bool
+	EnumConstants []string
 }
 
 // ParseResult contains the parsing result for a single file.

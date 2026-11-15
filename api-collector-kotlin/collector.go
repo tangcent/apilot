@@ -11,6 +11,7 @@ import (
 	collector "github.com/tangcent/apilot/api-collector"
 	javacollector "github.com/tangcent/apilot/api-collector-java"
 	javaparser "github.com/tangcent/apilot/api-collector-java/parser"
+	javaspringmvc "github.com/tangcent/apilot/api-collector-java/springmvc"
 	ktparser "github.com/tangcent/apilot/api-collector-kotlin/parser"
 	"github.com/tangcent/apilot/api-collector-kotlin/resolver"
 	"github.com/tangcent/apilot/api-collector-kotlin/springmvc"
@@ -329,6 +330,9 @@ func springMVCEndpointToAPI(ep springmvc.Endpoint, folder string) collector.ApiE
 	return out
 }
 
+// isMultipartFile reports whether a parameter of this type is uploaded as
+// file parts: a MultipartFile, or a collection or array of them.
 func isMultipartFile(kotlinType string) bool {
-	return kotlinType == "MultipartFile" || strings.HasSuffix(kotlinType, ".MultipartFile")
+	element := javaspringmvc.ElementType(resolver.NormalizeModelType(kotlinType))
+	return element == "MultipartFile" || strings.HasSuffix(element, ".MultipartFile")
 }

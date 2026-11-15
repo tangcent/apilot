@@ -227,7 +227,7 @@ func (p *Parser) extractEndpoint(method *ktparser.Function, basePath string, cla
 			}
 			continue
 		}
-		params = append(params, p.implicitParameters(param, implicitIn, methodDocParams, source, bindings)...)
+		params = append(params, p.implicitParameters(param, implicitIn, method.Name, methodDocParams, source, bindings)...)
 	}
 
 	endpoint := &Endpoint{
@@ -392,20 +392,24 @@ func (p *Parser) extractParameter(param *ktparser.Parameter, methodDocParams map
 // annotation the way Spring MVC binds it by default; the rules are shared with
 // the Java collector so structurally identical sources export the same
 // parameters.
-func (p *Parser) implicitParameters(param *ktparser.Parameter, in string, methodDocParams map[string]string, source *ktparser.Class, bindings map[string]string) []EndpointParameter {
+func (p *Parser) implicitParameters(param *ktparser.Parameter, in, methodName string, methodDocParams map[string]string, source *ktparser.Class, bindings map[string]string) []EndpointParameter {
 	names := make([]string, 0, len(param.Annotations))
 	for _, ann := range param.Annotations {
 		names = append(names, ann.Name)
 	}
 	typeName := resolver.NormalizeModelType(param.Type)
-	kind, _ := javaspringmvc.ClassifyImplicit(typeName, names, p.typeResolver.IsEnum)
+	kind, blocker := javaspringmvc.ClassifyImplicit(typeName, names, p.typeResolver.IsEnum)
+	if blocker != "" {
+		p.warnings = append(p.warnings, javaspringmvc.ImplicitNoneWarning(source.Name, methodName, param.Name, blocker))
+		return nil
+	}
 	doc := javadoc.ParameterDocumentation(toJavaAnnotations(param.Annotations), methodDocParams[param.Name])
 
 	switch kind {
 	case javaspringmvc.ImplicitParam:
 		enum := doc.Enum
 		if len(enum) == 0 {
-			enum = p.typeResolver.EnumValues(typeName)
+			enum = p.typeResolver.EnumValues(javaspringmvc.ElementType(typeName))
 		}
 		return []EndpointParameter{{
 			Name:         param.Name,
@@ -427,8 +431,10 @@ func (p *Parser) implicitParameters(param *ktparser.Parameter, in string, method
 		}}
 	case javaspringmvc.ImplicitPageable:
 		return boundParameters(javaspringmvc.PageableFields(), in)
+	case javaspringmvc.ImplicitSort:
+		return boundParameters(javaspringmvc.SortFields(), in)
 	case javaspringmvc.ImplicitModel:
-		resolved := p.typeResolver.ResolveFrom(source, param.Type, bindings)
+		resolved := p.typeResolver.ResolveForBinding(source, param.Type, bindings)
 		return boundParameters(javaspringmvc.ResolvedModelFields(param.Name, resolved), in)
 	}
 	return nil

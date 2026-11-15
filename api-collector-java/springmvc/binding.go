@@ -21,7 +21,8 @@ const (
 	// collection or array of them), bound as a request parameter the way an
 	// optional @RequestParam is.
 	ImplicitParam
-	// ImplicitFile: a MultipartFile, bound as a part of a multipart request.
+	// ImplicitFile: a MultipartFile, or a collection or array of them, bound as
+	// parts of a multipart request.
 	ImplicitFile
 	// ImplicitModel: an object, bound property by property from request
 	// parameters the way @ModelAttribute is.
@@ -29,6 +30,9 @@ const (
 	// ImplicitPageable: a Spring Data Pageable, bound from the page, size and
 	// sort request parameters.
 	ImplicitPageable
+	// ImplicitSort: a Spring Data Sort, bound from the sort request parameter,
+	// the same parameter a Pageable takes its order from.
+	ImplicitSort
 )
 
 // ClassifyImplicit decides how Spring binds a parameter of the given type that
@@ -42,41 +46,81 @@ const (
 // resolved from the request context, simple values become request parameters,
 // and any other object is a model attribute.
 func ClassifyImplicit(typeName string, annotations []string, isEnum func(string) bool) (ImplicitKind, string) {
+	// Every annotation is looked at before deciding, so the outcome does not
+	// depend on the order they are written in: an explicit @ModelAttribute wins
+	// wherever it stands.
+	unknown := ""
 	for _, name := range annotations {
 		if name == "ModelAttribute" {
 			return ImplicitModel, ""
 		}
-		if !transparentAnnotations[name] {
-			return ImplicitNone, name
+		if !transparentAnnotations[name] && unknown == "" {
+			unknown = name
 		}
+	}
+	if unknown != "" {
+		return ImplicitNone, unknown
+	}
+
+	simpleOrEnum := func(t string) bool {
+		return simpleValueTypes[simpleName(t)] || (isEnum != nil && isEnum(t))
 	}
 	base, args := splitType(typeName)
 	simple := simpleName(base)
+	element := ""
+	switch {
+	case strings.HasSuffix(base, "[]"):
+		element = strings.TrimSpace(strings.TrimSuffix(base, "[]"))
+	case collectionTypes[simple] && len(args) == 1:
+		element, _ = splitType(args[0])
+	}
+
 	switch {
 	case frameworkTypes[simple]:
 		return ImplicitNone, ""
-	case simple == "MultipartFile":
+	case simple == "MultipartFile", element != "" && simpleName(element) == "MultipartFile":
+		// Spring binds a collection or an array of files as parts, as it binds
+		// a single one.
 		return ImplicitFile, ""
 	case simple == "Pageable":
 		return ImplicitPageable, ""
-	case simpleValueTypes[simple] || (isEnum != nil && isEnum(base)):
+	case simple == "Sort":
+		return ImplicitSort, ""
+	case simpleOrEnum(base):
 		return ImplicitParam, ""
-	case strings.HasSuffix(base, "[]"):
-		element := strings.TrimSpace(strings.TrimSuffix(base, "[]"))
-		if simpleValueTypes[simpleName(element)] || (isEnum != nil && isEnum(element)) {
+	case element != "":
+		if simpleOrEnum(element) {
 			return ImplicitParam, ""
 		}
 		return ImplicitNone, ""
 	case collectionTypes[simple]:
-		if len(args) == 1 {
-			element, _ := splitType(args[0])
-			if simpleValueTypes[simpleName(element)] || (isEnum != nil && isEnum(element)) {
-				return ImplicitParam, ""
-			}
-		}
 		return ImplicitNone, ""
 	}
 	return ImplicitModel, ""
+}
+
+// ElementType returns the element type of a collection or array type, or the
+// type itself when it is neither.
+func ElementType(typeName string) string {
+	base, args := splitType(typeName)
+	switch {
+	case strings.HasSuffix(base, "[]"):
+		return strings.TrimSpace(strings.TrimSuffix(base, "[]"))
+	case collectionTypes[simpleName(base)] && len(args) == 1:
+		element, _ := splitType(args[0])
+		return element
+	}
+	return base
+}
+
+// ImplicitNoneWarning says why a handler parameter is not exported: it
+// carries an annotation no known Spring binding covers, which in practice is
+// a custom argument resolver's (@CurrentUser) and fills the argument from
+// something other than request data. Exporting it would invent request
+// fields; dropping it silently would hide the decision, so it is reported.
+func ImplicitNoneWarning(class, method, param, annotation string) string {
+	return class + "." + method + ": parameter " + param + " carries @" + annotation +
+		", which no Spring binding covers; it is left to a custom argument resolver and not exported"
 }
 
 // ImplicitRequired reports whether an implicitly bound simple parameter must
@@ -161,6 +205,11 @@ func PageableFields() []BoundField {
 	}
 }
 
+// SortFields lists the request parameter Spring Data binds a Sort from.
+func SortFields() []BoundField {
+	return PageableFields()[2:]
+}
+
 // maxModelDepth bounds how deep nested objects are flattened; a type that
 // refers back to itself would otherwise expand forever.
 const maxModelDepth = 3
@@ -212,6 +261,10 @@ var transparentAnnotations = map[string]bool{
 	"Nullable": true, "NonNull": true, "Nonnull": true,
 	"Deprecated": true,
 	"Parameter":  true, "Schema": true,
+	// Spring annotations that format or default a bound value without
+	// changing where it is bound from.
+	"DateTimeFormat": true, "NumberFormat": true,
+	"PageableDefault": true, "SortDefault": true, "Qualifier": true,
 }
 
 // frameworkTypes are resolved from the request context, not from request data.
@@ -227,7 +280,7 @@ var frameworkTypes = map[string]bool{
 	"UriComponentsBuilder": true, "ServletUriComponentsBuilder": true,
 	"HttpEntity": true, "RequestEntity": true, "HttpMethod": true, "HttpHeaders": true,
 	"ServerWebExchange": true, "ServerHttpRequest": true, "ServerHttpResponse": true, "WebSession": true,
-	"Sort": true, "Continuation": true,
+	"Continuation": true,
 }
 
 // simpleValueTypes are bound from a single request parameter value.

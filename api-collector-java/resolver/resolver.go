@@ -155,6 +155,8 @@ type TypeResolver struct {
 	resolving          map[string]bool
 	dependencyResolver DependencyResolver
 	unresolved         *collector.UnresolvedSet
+	// bindingView is set while ResolveForBinding expands a model attribute.
+	bindingView bool
 }
 
 func NewTypeResolver(classes []parser.Class) *TypeResolver {
@@ -209,6 +211,27 @@ func appendKey(keys []string, key string) []string {
 func (r *TypeResolver) Class(source parser.Class, name string) (parser.Class, bool) {
 	c, found := r.classRegistry[r.resolveSimpleName(source, name)]
 	return c, found
+}
+
+// EnumConstants returns the constants of the enum a type name denotes as seen
+// from source, and whether it denotes an enum of the scanned sources at all.
+func (r *TypeResolver) EnumConstants(source parser.Class, name string) ([]string, bool) {
+	c, found := r.Class(source, strings.TrimSpace(name))
+	if !found || !c.IsEnum {
+		return nil, false
+	}
+	return c.EnumConstants, true
+}
+
+// ResolveForBinding expands a type the way Spring's data binder sees it when
+// it binds a model attribute from request parameters, rather than the way
+// Jackson writes it: getter-only properties cannot be bound, so they are left
+// out.
+func (r *TypeResolver) ResolveForBinding(source parser.Class, rawType string, typeBindings map[string]string) *model.ObjectModel {
+	previous := r.bindingView
+	r.bindingView = true
+	defer func() { r.bindingView = previous }()
+	return r.ResolveFrom(source, rawType, typeBindings)
 }
 
 // resolveSimpleName maps a type name as written in source to the registry key
@@ -552,6 +575,10 @@ func fillWildcardArgs(declared, inferred string) (string, bool) {
 
 // resolveClass expands one declaration into an object model.
 func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []string, typeBindings map[string]string) *model.ObjectModel {
+	// Jackson writes an enum as the name of its constant.
+	if class.IsEnum {
+		return model.SingleModel(model.JsonTypeString)
+	}
 	if r.resolving[key] {
 		return model.RefModel(class.Name)
 	}
@@ -627,6 +654,12 @@ func (r *TypeResolver) resolveField(source parser.Class, f parser.Field, localBi
 			fm.Required = false
 		}
 	}
+	// An enum field is one of the enum's constants.
+	if constants, ok := r.EnumConstants(source, f.Type); ok {
+		for _, constant := range constants {
+			fm.Options = append(fm.Options, model.FieldOption{Value: constant})
+		}
+	}
 	javadoc.FieldDocumentationFor(f.Annotations, f.JavaDoc).Normalize().ApplyTo(fm)
 	if r.isUnboundTypeParam(f.Type, localBindings, typeParamSet) {
 		fm.Generic = true
@@ -645,6 +678,11 @@ func (r *TypeResolver) resolveField(source parser.Class, f parser.Field, localBi
 // same property, not a second one. @JsonIgnore drops the property and
 // @JsonProperty("other") renames it.
 func (r *TypeResolver) addGetterProperties(source parser.Class, localBindings map[string]string, typeParamSet map[string]bool, obj *model.ObjectModel) {
+	// A getter-only property can be read, not bound: Spring's data binder sets
+	// properties through setters and fields, so the binding view leaves it out.
+	if r.bindingView {
+		return
+	}
 	for _, m := range source.Methods {
 		property, ok := getterPropertyName(m)
 		if !ok || isJsonIgnored(m.Annotations) {

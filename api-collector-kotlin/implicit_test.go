@@ -1,55 +1,72 @@
 package kotlincollector
 
 import (
+	"reflect"
+	"strings"
 	"testing"
+
+	collector "github.com/tangcent/apilot/api-collector"
 )
 
+// implicitExpectation is the export of testdata/implicit. The Java collector
+// asserts the same table for the same handlers written in Java
+// (api-collector-java/implicit_test.go): keep the two in sync.
+var implicitExpectation = map[string][]string{
+	"page": {
+		"orderNo/query", "regionList/query", "address.city/query", "displayName/query", "secret/query",
+		"page/query", "size/query", "sort/query",
+		"keyword/query", "ids/query", "status/query", "from/query",
+	},
+	"submit": {
+		"orderNo/form", "regionList/form", "address.city/form", "displayName/form", "secret/form",
+		"attachments/form",
+	},
+	"json":   {"trace/query"},
+	"me":     {"id/query"},
+	"search": {"name/query", "sort/query"},
+}
+
 func TestImplicitBindingMatchesSpring(t *testing.T) {
-	endpoints, _ := collectDir(t, "testdata/implicit")
-	locations := func(name string) map[string]string {
-		out := map[string]string{}
-		for _, p := range findEndpoint(t, endpoints, name).Parameters {
-			out[p.Name] = p.In
+	endpoints, c := collectDir(t, "testdata/implicit")
+	checkImplicitExport(t, endpoints, c.Warnings())
+}
+
+func checkImplicitExport(t *testing.T, endpoints []collector.ApiEndpoint, warnings []string) {
+	t.Helper()
+	params := map[string]map[string]collector.ApiParameter{}
+	for _, ep := range endpoints {
+		var got []string
+		params[ep.Name] = map[string]collector.ApiParameter{}
+		for _, p := range ep.Parameters {
+			got = append(got, p.Name+"/"+p.In)
+			params[ep.Name][p.Name] = p
 		}
-		return out
-	}
-
-	page := locations("page")
-	for name, in := range map[string]string{
-		"orderNo": "query", "regionList": "query", "address.city": "query",
-		"page": "query", "size": "query", "sort": "query",
-		"keyword": "query", "ids": "query", "status": "query",
-	} {
-		if page[name] != in {
-			t.Errorf("page: parameter %q in %q, want %q; got %v", name, page[name], in, page)
+		if want, ok := implicitExpectation[ep.Name]; ok && !reflect.DeepEqual(got, want) {
+			t.Errorf("%s parameters:\n got  %v\n want %v", ep.Name, got, want)
 		}
 	}
-	if len(page) != 9 {
-		t.Errorf("page: expected 9 parameters, got %v", page)
-	}
-	pageEndpoint := findEndpoint(t, endpoints, "page")
-	if !findParameter(t, pageEndpoint, "keyword", "query").Required {
-		t.Errorf("keyword carries @NotNull and should be required")
-	}
-	if findParameter(t, pageEndpoint, "ids", "query").Required {
-		t.Errorf("an implicit simple parameter is optional")
-	}
-	if status := findParameter(t, pageEndpoint, "status", "query"); len(status.Enum) != 2 {
-		t.Errorf("status enum = %v", status.Enum)
+	for name := range implicitExpectation {
+		if _, ok := params[name]; !ok {
+			t.Errorf("endpoint %s not exported", name)
+		}
 	}
 
-	submit := locations("submit")
-	if submit["orderNo"] != "form" || submit["address.city"] != "form" || submit["attachment"] != "form" {
-		t.Errorf("submit parameters = %v", submit)
+	page := params["page"]
+	if !page["keyword"].Required || page["ids"].Required {
+		t.Errorf("an implicit simple parameter is optional unless @NotNull: keyword=%v ids=%v", page["keyword"].Required, page["ids"].Required)
+	}
+	if status := page["status"]; !reflect.DeepEqual(status.Enum, []string{"ACTIVE", "CLOSED"}) || status.Default != "ACTIVE" {
+		t.Errorf("status = enum %v default %q", status.Enum, status.Default)
+	}
+	if page["orderNo"].Description != "Order number." {
+		t.Errorf("orderNo description = %q", page["orderNo"].Description)
+	}
+	if params["submit"]["attachments"].Type != "file" {
+		t.Errorf("a list of files is a file part: %+v", params["submit"]["attachments"])
 	}
 
-	json := findEndpoint(t, endpoints, "json")
-	if json.RequestBody == nil || len(json.Parameters) != 1 || json.Parameters[0].Name != "trace" || json.Parameters[0].In != "query" {
-		t.Errorf("json parameters = %#v", json.Parameters)
-	}
-
-	me := locations("me")
-	if _, ok := me["operator"]; ok || me["id"] != "query" || len(me) != 1 {
-		t.Errorf("me parameters = %v", me)
+	joined := strings.Join(warnings, "\n")
+	if !strings.Contains(joined, "OrderController.me: parameter operator carries @CurrentUser") {
+		t.Errorf("the dropped @CurrentUser parameter is not reported:\n%s", joined)
 	}
 }

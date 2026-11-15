@@ -14,6 +14,13 @@ type Parser struct {
 	dependencyResolver   resolver.DependencyResolver
 	collectorDepResolver collector.DependencyResolver
 	unresolved           *collector.UnresolvedSet
+	warnings             []string
+}
+
+// Warnings returns the diagnostics of the last extraction: handler
+// parameters that are not exported, and why.
+func (p *Parser) Warnings() []string {
+	return p.warnings
 }
 
 func NewParser() *Parser {
@@ -418,7 +425,15 @@ func (p *Parser) implicitParameters(param parser.Parameter, in string, method pa
 	for _, ann := range param.Annotations {
 		names = append(names, ann.Name)
 	}
-	kind, _ := ClassifyImplicit(param.Type, names, nil)
+	isEnum := func(typeName string) bool {
+		_, ok := typeResolver.EnumConstants(source, typeName)
+		return ok
+	}
+	kind, blocker := ClassifyImplicit(param.Type, names, isEnum)
+	if blocker != "" {
+		p.warnings = append(p.warnings, ImplicitNoneWarning(source.Name, method.Name, param.Name, blocker))
+		return nil
+	}
 
 	paramJavaDoc := param.JavaDoc
 	if paramJavaDoc == "" && method.JavaDocParams != nil {
@@ -428,14 +443,19 @@ func (p *Parser) implicitParameters(param parser.Parameter, in string, method pa
 
 	switch kind {
 	case ImplicitParam:
+		enum := doc.Enum
+		if len(enum) == 0 {
+			enum, _ = typeResolver.EnumConstants(source, ElementType(param.Type))
+		}
 		return []EndpointParameter{{
-			Name:        param.Name,
-			Type:        param.Type,
-			ParamType:   in,
-			Required:    ImplicitRequired(names),
-			Description: doc.Description,
-			Example:     doc.Example,
-			Enum:        doc.Enum,
+			Name:         param.Name,
+			Type:         param.Type,
+			ParamType:    in,
+			Required:     ImplicitRequired(names),
+			DefaultValue: doc.Default,
+			Description:  doc.Description,
+			Example:      doc.Example,
+			Enum:         enum,
 		}}
 	case ImplicitFile:
 		return []EndpointParameter{{
@@ -447,8 +467,10 @@ func (p *Parser) implicitParameters(param parser.Parameter, in string, method pa
 		}}
 	case ImplicitPageable:
 		return boundParameters(PageableFields(), in)
+	case ImplicitSort:
+		return boundParameters(SortFields(), in)
 	case ImplicitModel:
-		resolved := typeResolver.ResolveFrom(source, param.Type, typeBindings)
+		resolved := typeResolver.ResolveForBinding(source, param.Type, typeBindings)
 		return boundParameters(ResolvedModelFields(param.Name, resolved), in)
 	}
 	return nil
