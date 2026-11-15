@@ -50,6 +50,10 @@ type endpoint struct {
 	// collector may default.
 	Consumes []string `json:"consumes,omitempty"`
 	Produces []string `json:"produces,omitempty"`
+	// Deprecated and DeprecationNote are present for a deprecated endpoint
+	// only.
+	Deprecated      bool   `json:"deprecated,omitempty"`
+	DeprecationNote string `json:"deprecationNote,omitempty"`
 }
 
 type request struct {
@@ -141,7 +145,7 @@ func sortedEndpoints(endpoints []model.ApiEndpoint) []model.ApiEndpoint {
 }
 
 func buildEndpoint(ep model.ApiEndpoint) endpoint {
-	return endpoint{
+	out := endpoint{
 		Name:        ep.Name,
 		Method:      ep.Method,
 		Path:        ep.Path,
@@ -153,6 +157,8 @@ func buildEndpoint(ep model.ApiEndpoint) endpoint {
 		Consumes:    ep.Consumes,
 		Produces:    ep.Produces,
 	}
+	out.Deprecated, out.DeprecationNote = ep.Deprecated, ep.DeprecationNote
+	return out
 }
 
 func buildRequest(ep model.ApiEndpoint) *request {

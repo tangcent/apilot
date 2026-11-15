@@ -420,3 +420,28 @@ func TestFormat_DeclaredTypeAndMediaTypes(t *testing.T) {
 		t.Errorf("form parameter = %+v, want type file with typeName MultipartFile", ep.Request.Parameters.Form[0])
 	}
 }
+
+func TestFormat_Deprecation(t *testing.T) {
+	out := mustFormat(t, []model.ApiEndpoint{
+		{Name: "current", Path: "/current", Method: "GET", Protocol: "http"},
+		{Name: "old", Path: "/old", Method: "GET", Protocol: "http", Deprecated: true, DeprecationNote: "Use /current"},
+	})
+	doc := struct {
+		Endpoints []map[string]any `json:"endpoints"`
+	}{}
+	if err := stdjson.Unmarshal(out, &doc); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	for _, ep := range doc.Endpoints {
+		switch ep["name"] {
+		case "current":
+			if _, ok := ep["deprecated"]; ok {
+				t.Errorf("a current endpoint carries no deprecation: %v", ep)
+			}
+		case "old":
+			if ep["deprecated"] != true || ep["deprecationNote"] != "Use /current" {
+				t.Errorf("old = %v", ep)
+			}
+		}
+	}
+}
