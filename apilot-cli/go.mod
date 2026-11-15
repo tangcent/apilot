@@ -12,6 +12,7 @@ require (
 	github.com/tangcent/apilot/api-formatter-json v0.0.0
 	github.com/tangcent/apilot/api-formatter-markdown v0.0.0
 	github.com/tangcent/apilot/api-formatter-postman v0.0.0
+	github.com/tangcent/apilot/api-formatter-yapi v0.0.0
 	github.com/tangcent/apilot/api-master v0.0.0
 )
 
@@ -32,5 +33,6 @@ replace (
 	github.com/tangcent/apilot/api-formatter-json => ../api-formatter-json
 	github.com/tangcent/apilot/api-formatter-markdown => ../api-formatter-markdown
 	github.com/tangcent/apilot/api-formatter-postman => ../api-formatter-postman
+	github.com/tangcent/apilot/api-formatter-yapi => ../api-formatter-yapi
 	github.com/tangcent/apilot/api-master => ../api-master
 )

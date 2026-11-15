@@ -152,7 +152,9 @@ func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 		before := len(endpoints)
 		for _, ctrl := range sm.ExtractControllers(results) {
 			for _, ep := range ctrl.Endpoints {
-				endpoints = append(endpoints, springMVCEndpointToAPI(ep, ctrl.Name))
+				api := springMVCEndpointToAPI(ep, ctrl.Name)
+				api.FolderDescription = ctrl.Description
+				endpoints = append(endpoints, api)
 			}
 		}
 		if len(endpoints) > before {

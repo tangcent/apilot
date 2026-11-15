@@ -174,7 +174,9 @@ func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Cla
 		before := len(endpoints)
 		for _, ctrl := range sm.ExtractControllers(results) {
 			for _, ep := range ctrl.Endpoints {
-				endpoints = append(endpoints, springmvcEndpointToAPI(ep, ctrl.Name))
+				api := springmvcEndpointToAPI(ep, ctrl.Name)
+				api.FolderDescription = ctrl.Description
+				endpoints = append(endpoints, api)
 			}
 		}
 		if len(endpoints) > before {
@@ -191,7 +193,9 @@ func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Cla
 		before := len(endpoints)
 		for _, res := range jr.ExtractResources(results) {
 			for _, ep := range res.Endpoints {
-				endpoints = append(endpoints, jaxrsEndpointToAPI(ep, res.Name))
+				api := jaxrsEndpointToAPI(ep, res.Name)
+				api.FolderDescription = res.Description
+				endpoints = append(endpoints, api)
 			}
 		}
 		if len(endpoints) > before {

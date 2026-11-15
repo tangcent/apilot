@@ -70,10 +70,11 @@ func (p *Parser) extractController(class *ktparser.Class) *Controller {
 	endpoints = append(endpoints, p.extractInheritedEndpoints(class, basePath, bindings, map[string]bool{})...)
 
 	return &Controller{
-		Name:      class.Name,
-		Package:   class.Package,
-		BasePath:  basePath,
-		Endpoints: endpoints,
+		Name:        class.Name,
+		Package:     class.Package,
+		BasePath:    basePath,
+		Endpoints:   endpoints,
+		Description: javadoc.CleanJavaDoc(class.KDoc),
 	}
 }
 

@@ -14,6 +14,7 @@ MODULES=(
   api-formatter-json
   api-formatter-markdown
   api-formatter-postman
+  api-formatter-yapi
   api-master
   apilot-cli
 )

@@ -154,7 +154,7 @@ func Run(cfg Config) error {
 	if cfg.FormatParams != "" {
 		opts.Params = []byte(cfg.FormatParams)
 	}
-	if projectName != "" || cfg.OutputPath != "" || len(frameworks) > 0 {
+	if projectName != "" || cfg.OutputPath != "" || len(frameworks) > 0 || sourceDir != "" {
 		var existing map[string]any
 		if len(opts.Params) > 0 {
 			_ = json.Unmarshal(opts.Params, &existing)
@@ -174,6 +174,11 @@ func Run(cfg Config) error {
 		}
 		if cfg.OutputPath != "" {
 			existing["outputPath"] = cfg.OutputPath
+		}
+		// Where the sources are, so a formatter can read project-level files
+		// that travel with them, such as an .easy.api.config rules file.
+		if abs, err := filepath.Abs(sourceDir); err == nil {
+			existing["sourceDir"] = abs
 		}
 		merged, _ := json.Marshal(existing)
 		opts.Params = merged
