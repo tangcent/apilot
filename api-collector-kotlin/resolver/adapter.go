@@ -210,7 +210,9 @@ func toJavaClass(class ktparser.Class) javaparser.Class {
 		out.Imports = append(out.Imports, javaparser.Import{Path: imp.Path, OnDemand: imp.OnDemand})
 	}
 	for _, prop := range class.Fields {
-		if annotationValue(prop.Annotations, "JsonIgnore") == "true" || hasAnnotation(prop.Annotations, "JsonIgnore") {
+		// An @JsonIgnore(false) re-enables the property; only an ignore whose
+		// value is not "false" drops the field, matching the parser's validation.
+		if hasAnnotation(prop.Annotations, "JsonIgnore") && annotationValue(prop.Annotations, "JsonIgnore") != "false" {
 			continue
 		}
 		name := prop.Name

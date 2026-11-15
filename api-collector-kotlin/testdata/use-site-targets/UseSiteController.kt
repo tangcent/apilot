@@ -40,6 +40,24 @@ class CreateReq {
 
     @field:Valid
     var items: List<Item>? = null
+
+    // @set: and @setparam: are use-site targets Jackson merges, so a
+    // name-affecting annotation there behaves like an untargeted one.
+    @set:JsonProperty("setter_code")
+    var setterCode: String? = null
+
+    @setparam:JsonProperty("param_code")
+    var paramCode: String? = null
+
+    @set:JsonIgnore
+    var hiddenBySetter: String? = null
+
+    @setparam:JsonIgnore
+    var hiddenByParam: String? = null
+
+    // @JsonIgnore(value = false) does not ignore, so the explicit name still applies.
+    @field:JsonIgnore(value = false) @get:JsonProperty("revived")
+    var revivedField: String? = null
 }
 
 data class CreateResp(

@@ -569,9 +569,10 @@ var nameAffecting = map[string]bool{
 // property exactly as an untargeted @JsonProperty("x") does, because Jackson
 // merges the field, getter, setter and constructor-parameter annotations of a
 // property. What cannot be modelled fails loudly instead of exporting a guess:
-// a name-affecting annotation on a target Jackson does not read (@property:,
-// @delegate:), names that disagree across targets, and @JsonIgnore together
-// with an explicit name.
+// a name-affecting annotation on any use-site target Jackson does not read
+// (anything outside jacksonTargets, e.g. @property:, @delegate:, @receiver:),
+// names that disagree across targets, and @JsonIgnore together with an explicit
+// name.
 func checkPropertyAnnotations(anns []Annotation, propName, filePath string) error {
 	var names []string
 	var nameSources []string

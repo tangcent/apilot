@@ -260,7 +260,16 @@ func TestUseSiteTargetsFollowJackson(t *testing.T) {
 	// @get:/@field: JsonProperty renames the property as an untargeted one does.
 	objectField(t, req, "display_code")
 	objectField(t, req, "tag")
-	for _, gone := range []string{"code", "label", "secret"} {
+	// @set:/@setparam: are read by Jackson like an untargeted annotation, so
+	// JsonProperty renames and JsonIgnore hides the field there too.
+	objectField(t, req, "setter_code")
+	objectField(t, req, "param_code")
+	// @JsonIgnore(false) re-enables the property; the explicit name still applies.
+	objectField(t, req, "revived")
+	for _, gone := range []string{
+		"code", "label", "secret",
+		"setterCode", "paramCode", "hiddenBySetter", "hiddenByParam", "revivedField",
+	} {
 		if _, ok := req.Fields[gone]; ok {
 			t.Fatalf("field %q should not be exported; fields=%v", gone, fieldNames(req))
 		}
@@ -281,8 +290,12 @@ func TestUseSiteTargetConflictsAreRejected(t *testing.T) {
 	}{
 		// Two targets name the same property differently.
 		{"testdata/invalid-usecase", "@field:JsonProperty"},
-		// @property: is invisible to Jackson, so the name is unknowable.
+		// Targets outside jacksonTargets are invisible to Jackson.
 		{"testdata/invalid-property-target", "@property:JsonProperty"},
+		{"testdata/invalid-delegate-target", "@delegate:JsonProperty"},
+		{"testdata/invalid-receiver-target", "@receiver:JsonProperty"},
+		// @JsonIgnore and an explicit name are split by direction.
+		{"testdata/invalid-ignore-with-name", "@JsonIgnore"},
 	} {
 		t.Run(tc.dir, func(t *testing.T) {
 			c := New().(*KotlinCollector)
