@@ -156,6 +156,7 @@ type TypeResolver struct {
 	dependencyResolver DependencyResolver
 	unresolved         *collector.UnresolvedSet
 	// bindingView is set while ResolveForBinding expands a model attribute.
+	// Enums take part in that view only (see sees).
 	bindingView bool
 }
 
@@ -209,13 +210,41 @@ func appendKey(keys []string, key string) []string {
 // Class returns the declaration a type name denotes as seen from source.
 // It applies the same precedence as Resolve, without expanding the fields.
 func (r *TypeResolver) Class(source parser.Class, name string) (parser.Class, bool) {
-	c, found := r.classRegistry[r.resolveSimpleName(source, name)]
-	return c, found
+	return r.lookup(r.resolveSimpleName(source, name))
+}
+
+// sees reports whether the current view takes a declaration into account.
+// Enums are read for the binding view, where Spring converts a request
+// parameter to an enum by the name of a constant, so the constants are the
+// values the parameter accepts. The JSON view does not see them: it exports an
+// enum type as it does any type whose declaration was not read.
+func (r *TypeResolver) sees(c parser.Class) bool {
+	return r.bindingView || !c.IsEnum
+}
+
+// lookup returns the declaration registered under key, if the current view
+// sees it.
+func (r *TypeResolver) lookup(key string) (parser.Class, bool) {
+	c, found := r.classRegistry[key]
+	if !found || !r.sees(c) {
+		return parser.Class{}, false
+	}
+	return c, true
+}
+
+// enterBindingView switches to the binding view and returns the function that
+// restores the previous view.
+func (r *TypeResolver) enterBindingView() func() {
+	previous := r.bindingView
+	r.bindingView = true
+	return func() { r.bindingView = previous }
 }
 
 // EnumConstants returns the constants of the enum a type name denotes as seen
 // from source, and whether it denotes an enum of the scanned sources at all.
+// Enums take part in the binding view only, so the name is looked up there.
 func (r *TypeResolver) EnumConstants(source parser.Class, name string) ([]string, bool) {
+	defer r.enterBindingView()()
 	c, found := r.Class(source, strings.TrimSpace(name))
 	if !found || !c.IsEnum {
 		return nil, false
@@ -226,11 +255,9 @@ func (r *TypeResolver) EnumConstants(source parser.Class, name string) ([]string
 // ResolveForBinding expands a type the way Spring's data binder sees it when
 // it binds a model attribute from request parameters, rather than the way
 // Jackson writes it: getter-only properties cannot be bound, so they are left
-// out.
+// out, and an enum is a string holding one of its constants.
 func (r *TypeResolver) ResolveForBinding(source parser.Class, rawType string, typeBindings map[string]string) *model.ObjectModel {
-	previous := r.bindingView
-	r.bindingView = true
-	defer func() { r.bindingView = previous }()
+	defer r.enterBindingView()()
 	return r.ResolveFrom(source, rawType, typeBindings)
 }
 
@@ -250,7 +277,7 @@ func (r *TypeResolver) resolveSimpleName(source parser.Class, name string) strin
 
 	// 1. Same compilation unit: a class declared in the same file.
 	for _, key := range r.byFile[source.FilePath] {
-		if r.classRegistry[key].Name == name {
+		if c, found := r.lookup(key); found && c.Name == name {
 			return key
 		}
 	}
@@ -288,15 +315,17 @@ func (r *TypeResolver) resolveSimpleName(source parser.Class, name string) strin
 	// declarations themselves, so accept the only one — or the first of
 	// several, in a stable order, which is what an ambiguous reference would
 	// have to fall back to anyway.
-	if keys := r.bySimpleName[name]; len(keys) > 0 {
-		return keys[0]
+	for _, key := range r.bySimpleName[name] {
+		if r.isRegistered(key) {
+			return key
+		}
 	}
 
 	return name
 }
 
 func (r *TypeResolver) isRegistered(key string) bool {
-	_, found := r.classRegistry[key]
+	_, found := r.lookup(key)
 	return found
 }
 
@@ -477,14 +506,16 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 
 	name := r.resolveSimpleName(source, baseName)
 
-	if class, found := r.classRegistry[name]; found {
+	if class, found := r.lookup(name); found {
 		return r.resolveClass(class, name, typeArgs, typeBindings)
 	}
 
 	if r.dependencyResolver != nil {
 		if depClass := r.dependencyResolver.ResolveClass(name); depClass != nil {
 			r.register(*depClass, name)
-			return r.resolveClass(*depClass, name, typeArgs, typeBindings)
+			if r.sees(*depClass) {
+				return r.resolveClass(*depClass, name, typeArgs, typeBindings)
+			}
 		}
 	}
 
@@ -575,7 +606,8 @@ func fillWildcardArgs(declared, inferred string) (string, bool) {
 
 // resolveClass expands one declaration into an object model.
 func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []string, typeBindings map[string]string) *model.ObjectModel {
-	// Jackson writes an enum as the name of its constant.
+	// Only the binding view reaches an enum: a request parameter names one
+	// of its constants.
 	if class.IsEnum {
 		return model.SingleModel(model.JsonTypeString)
 	}
@@ -654,10 +686,12 @@ func (r *TypeResolver) resolveField(source parser.Class, f parser.Field, localBi
 			fm.Required = false
 		}
 	}
-	// An enum field is one of the enum's constants.
-	if constants, ok := r.EnumConstants(source, f.Type); ok {
-		for _, constant := range constants {
-			fm.Options = append(fm.Options, model.FieldOption{Value: constant})
+	// In the binding view, an enum field is one of the enum's constants.
+	if r.bindingView {
+		if constants, ok := r.EnumConstants(source, f.Type); ok {
+			for _, constant := range constants {
+				fm.Options = append(fm.Options, model.FieldOption{Value: constant})
+			}
 		}
 	}
 	javadoc.FieldDocumentationFor(f.Annotations, f.JavaDoc).Normalize().ApplyTo(fm)
@@ -787,7 +821,8 @@ func (r *TypeResolver) isUnboundTypeParam(typeName string, localBindings map[str
 		return false
 	}
 	if bound, exists := localBindings[typeName]; exists {
-		return r.allTypeParams[bound] && r.classRegistry[bound].Name == ""
+		_, declared := r.lookup(bound)
+		return r.allTypeParams[bound] && !declared
 	}
 	return true
 }
@@ -911,7 +946,7 @@ func (r *TypeResolver) findImplementation(iface parser.Class, key string) (parse
 
 	for _, candidate := range keys {
 		class := r.classRegistry[candidate]
-		if class.IsInterface {
+		if class.IsInterface || !r.sees(class) {
 			continue
 		}
 		for _, ifaceName := range class.Interfaces {

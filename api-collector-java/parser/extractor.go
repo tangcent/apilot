@@ -113,11 +113,10 @@ func extractInterface(node *tree_sitter.Node, source []byte) Class {
 	return class
 }
 
-// extractRecord extracts a record declaration. Its components become fields;
-// the optional body (compact constructors, methods, static members) is ignored.
 // extractEnum reads an enum declaration: its name and its constants. The
-// fields and methods of its body are not read: Jackson serialises an enum as
-// the name of its constant, so the constants are what an export shows.
+// fields and methods of its body are not read: Spring binds a request
+// parameter to an enum by the name of a constant, so the constants are the
+// values it accepts.
 func extractEnum(node *tree_sitter.Node, source []byte) Class {
 	enum := Class{IsEnum: true, JavaDoc: extractLeadingJavaDoc(node, source)}
 	enum.Annotations = extractAnnotations(node, source)
@@ -143,6 +142,8 @@ func extractEnum(node *tree_sitter.Node, source []byte) Class {
 	return enum
 }
 
+// extractRecord extracts a record declaration. Its components become fields;
+// the optional body (compact constructors, methods, static members) is ignored.
 func extractRecord(node *tree_sitter.Node, source []byte) Class {
 	rec := Class{JavaDoc: extractLeadingJavaDoc(node, source)}
 

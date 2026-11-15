@@ -233,7 +233,8 @@ func enumOptions(values []string) []model.FieldOption {
 }
 
 // ToJavaClasses converts Kotlin declarations to the Java model, so a Java
-// endpoint in the same tree can resolve them. An enum keeps its constants.
+// endpoint in the same tree can resolve them. An enum keeps its constants for
+// the binding view; the Java resolver's JSON view does not see enums.
 func ToJavaClasses(classes []ktparser.Class) []javaparser.Class {
 	out := make([]javaparser.Class, 0, len(classes))
 	for _, class := range classes {
