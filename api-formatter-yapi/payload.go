@@ -34,6 +34,7 @@ type Interface struct {
 	ReqBodyOther        string      `json:"req_body_other"`
 	ResBodyType         string      `json:"res_body_type,omitempty"`
 	ResBody             string      `json:"res_body"`
+	Tag                 []string    `json:"tag,omitempty"`
 
 	// category is the YApi category the interface is saved in.
 	category string
@@ -83,7 +84,7 @@ func (it Interface) Category() string { return it.category }
 // doc comment, or the class name. This is how the EasyYapi IntelliJ plugin
 // names them, so an export from either tool lands in the same place.
 func buildInterface(ep model.ApiEndpoint, b *schemaBuilder) Interface {
-	title, rest := splitDoc(ep.Description)
+	title, rest := splitDoc(withDeprecation(ep))
 	if title == "" {
 		title = ep.Name
 	}
@@ -108,6 +109,9 @@ func buildInterface(ep model.ApiEndpoint, b *schemaBuilder) Interface {
 		ReqParams:           []PathParam{},
 		ReqBodyForm:         []FormField{},
 		category:            categoryOf(ep),
+	}
+	if ep.Deprecated {
+		it.Tag = []string{"deprecated"}
 	}
 
 	hasFile := false
@@ -180,6 +184,21 @@ func categoryOf(ep model.ApiEndpoint) string {
 		return ep.Folder
 	}
 	return "anonymous"
+}
+
+// withDeprecation returns the description of an endpoint, followed for a
+// deprecated one by the line EasyYapi adds: 「已废弃」 ("deprecated") and the
+// deprecation note. An endpoint without a description of its own is then
+// titled by that line, as in EasyYapi.
+func withDeprecation(ep model.ApiEndpoint) string {
+	if !ep.Deprecated {
+		return ep.Description
+	}
+	line := "「已废弃」" + ep.DeprecationNote
+	if strings.TrimSpace(ep.Description) == "" {
+		return line
+	}
+	return strings.TrimRight(ep.Description, " \t\r\n") + "\n" + line
 }
 
 // splitDoc splits a description into its first line and the rest.
