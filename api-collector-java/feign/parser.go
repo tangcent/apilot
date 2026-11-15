@@ -253,6 +253,12 @@ func (p *Parser) extractSpringStyleEndpoint(method parser.Method, class, source 
 		ClassName:   class.Name,
 		Package:     class.Package,
 	}
+	deprecation := javadoc.EndpointDeprecation(
+		javadoc.DeprecationOf(method.Annotations, method.RawJavaDoc),
+		javadoc.DeprecationOf(source.Annotations, source.RawJavaDoc),
+		javadoc.DeprecationOf(class.Annotations, class.RawJavaDoc),
+	)
+	endpoint.Deprecated, endpoint.DeprecationNote = deprecation.Deprecated, deprecation.Note
 
 	if requestBodyType != "" {
 		endpoint.RequestBodySchema = typeResolver.ResolveFrom(source, requestBodyType, typeBindings)
@@ -445,6 +451,12 @@ func (p *Parser) extractRequestLineEndpoint(method parser.Method, class, source 
 		ClassName:   class.Name,
 		Package:     class.Package,
 	}
+	deprecation := javadoc.EndpointDeprecation(
+		javadoc.DeprecationOf(method.Annotations, method.RawJavaDoc),
+		javadoc.DeprecationOf(source.Annotations, source.RawJavaDoc),
+		javadoc.DeprecationOf(class.Annotations, class.RawJavaDoc),
+	)
+	endpoint.Deprecated, endpoint.DeprecationNote = deprecation.Deprecated, deprecation.Note
 
 	if requestBodyType != "" {
 		endpoint.RequestBodySchema = typeResolver.ResolveFrom(source, requestBodyType, typeBindings)

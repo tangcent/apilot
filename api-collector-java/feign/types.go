@@ -38,6 +38,11 @@ type Endpoint struct {
 	Package           string
 	RequestBodySchema *model.ObjectModel
 	ResponseSchema    *model.ObjectModel
+
+	// Deprecated and DeprecationNote report the deprecation of the client
+	// method or its interface (see doc.DeprecationOf).
+	Deprecated      bool
+	DeprecationNote string
 }
 
 // FeignClient represents a Feign client interface with its endpoints.

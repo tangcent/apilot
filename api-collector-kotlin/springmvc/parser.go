@@ -245,6 +245,12 @@ func (p *Parser) extractEndpoint(method *ktparser.Function, basePath string, cla
 		ClassName:   class.Name,
 		Package:     class.Package,
 	}
+	deprecation := javadoc.EndpointDeprecation(
+		javadoc.DeprecationOf(toJavaAnnotations(method.Annotations), method.KDoc),
+		javadoc.DeprecationOf(toJavaAnnotations(source.Annotations), source.KDoc),
+		javadoc.DeprecationOf(toJavaAnnotations(class.Annotations), class.KDoc),
+	)
+	endpoint.Deprecated, endpoint.DeprecationNote = deprecation.Deprecated, deprecation.Note
 
 	if requestBodyType != "" {
 		endpoint.RequestBodySchema = p.typeResolver.ResolveFrom(source, requestBodyType, bindings)

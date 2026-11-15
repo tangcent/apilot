@@ -287,6 +287,7 @@ func springMVCEndpointToAPI(ep springmvc.Endpoint, folder string) collector.ApiE
 		Consumes:    ep.Consumes,
 		Produces:    ep.Produces,
 	}
+	out.Deprecated, out.DeprecationNote = ep.Deprecated, ep.DeprecationNote
 	for _, p := range ep.Parameters {
 		switch {
 		case p.ParamType == "body":

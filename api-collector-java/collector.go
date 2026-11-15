@@ -339,6 +339,7 @@ func springmvcEndpointToAPI(ep springmvc.Endpoint, folder string) collector.ApiE
 		Consumes:    ep.Consumes,
 		Produces:    ep.Produces,
 	}
+	out.Deprecated, out.DeprecationNote = ep.Deprecated, ep.DeprecationNote
 	for _, p := range ep.Parameters {
 		if p.ParamType == "body" {
 			out.RequestBody = &collector.ApiBody{Name: p.Name, MediaType: "application/json"}
@@ -400,6 +401,7 @@ func jaxrsEndpointToAPI(ep jaxrs.Endpoint, folder string) collector.ApiEndpoint 
 		Consumes:    ep.Consumes,
 		Produces:    ep.Produces,
 	}
+	out.Deprecated, out.DeprecationNote = ep.Deprecated, ep.DeprecationNote
 	for _, p := range ep.Parameters {
 		if p.ParamType == "body" {
 			out.RequestBody = &collector.ApiBody{Name: p.Name, MediaType: firstMediaType(ep.Consumes)}
@@ -459,6 +461,7 @@ func feignEndpointToAPI(ep feign.Endpoint, folder string) collector.ApiEndpoint 
 		Method:      string(ep.Method),
 		Protocol:    "http",
 	}
+	out.Deprecated, out.DeprecationNote = ep.Deprecated, ep.DeprecationNote
 	for _, p := range ep.Parameters {
 		if p.ParamType == "body" {
 			out.RequestBody = &collector.ApiBody{Name: p.Name, MediaType: "application/json"}

@@ -39,6 +39,11 @@ type Endpoint struct {
 	Produces          []string
 	ClassName         string
 	Package           string
+
+	// Deprecated and DeprecationNote report the deprecation of the handler
+	// function or its class (see doc.DeprecationOf).
+	Deprecated      bool
+	DeprecationNote string
 }
 
 // EndpointParameter is one bound request parameter.

@@ -43,6 +43,11 @@ type Endpoint struct {
 	Package           string
 	RequestBodySchema *model.ObjectModel
 	ResponseSchema    *model.ObjectModel
+
+	// Deprecated and DeprecationNote report the deprecation of the handler
+	// method or its class (see doc.DeprecationOf).
+	Deprecated      bool
+	DeprecationNote string
 }
 
 // Controller represents a Spring MVC controller with its endpoints
