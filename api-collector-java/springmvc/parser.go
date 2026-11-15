@@ -226,6 +226,14 @@ func (p *Parser) extractEndpoint(method parser.Method, basePath string, class, s
 
 	fullPath := p.combinePaths(basePath, methodPath)
 
+	hasBody := false
+	for _, param := range method.Parameters {
+		if p.detectParameterType(param.Annotations) == "body" {
+			hasBody = true
+		}
+	}
+	implicitIn := ImplicitLocation(string(httpMethod), hasBody)
+
 	var params []EndpointParameter
 	var requestBodyType string
 	for _, param := range method.Parameters {
@@ -234,7 +242,9 @@ func (p *Parser) extractEndpoint(method parser.Method, basePath string, class, s
 			if ep.ParamType == "body" {
 				requestBodyType = param.Type
 			}
+			continue
 		}
+		params = append(params, p.implicitParameters(param, implicitIn, method, source, typeResolver, typeBindings)...)
 	}
 
 	endpoint := &Endpoint{
@@ -395,6 +405,70 @@ func (p *Parser) extractParameter(param parser.Parameter, methodJavaDocParams ma
 	}
 
 	return ep
+}
+
+// implicitParameters exports a handler parameter that carries no binding
+// annotation the way Spring MVC binds it by default: a simple value as an
+// optional request parameter, an object as a model attribute whose properties
+// are request parameters, a MultipartFile as a form part. Framework objects
+// and parameters left to a custom argument resolver are not request data and
+// export nothing.
+func (p *Parser) implicitParameters(param parser.Parameter, in string, method parser.Method, source parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string) []EndpointParameter {
+	names := make([]string, 0, len(param.Annotations))
+	for _, ann := range param.Annotations {
+		names = append(names, ann.Name)
+	}
+	kind, _ := ClassifyImplicit(param.Type, names, nil)
+
+	paramJavaDoc := param.JavaDoc
+	if paramJavaDoc == "" && method.JavaDocParams != nil {
+		paramJavaDoc = method.JavaDocParams[param.Name]
+	}
+	doc := javadoc.ParameterDocumentation(param.Annotations, paramJavaDoc)
+
+	switch kind {
+	case ImplicitParam:
+		return []EndpointParameter{{
+			Name:        param.Name,
+			Type:        param.Type,
+			ParamType:   in,
+			Required:    ImplicitRequired(names),
+			Description: doc.Description,
+			Example:     doc.Example,
+			Enum:        doc.Enum,
+		}}
+	case ImplicitFile:
+		return []EndpointParameter{{
+			Name:        param.Name,
+			Type:        param.Type,
+			ParamType:   "form",
+			Required:    ImplicitRequired(names),
+			Description: doc.Description,
+		}}
+	case ImplicitPageable:
+		return boundParameters(PageableFields(), in)
+	case ImplicitModel:
+		resolved := typeResolver.ResolveFrom(source, param.Type, typeBindings)
+		return boundParameters(ResolvedModelFields(param.Name, resolved), in)
+	}
+	return nil
+}
+
+func boundParameters(fields []BoundField, in string) []EndpointParameter {
+	out := make([]EndpointParameter, 0, len(fields))
+	for _, f := range fields {
+		out = append(out, EndpointParameter{
+			Name:         f.Name,
+			Type:         f.TypeName,
+			ParamType:    in,
+			Required:     f.Required,
+			DefaultValue: f.Default,
+			Description:  f.Description,
+			Example:      f.Example,
+			Enum:         f.Enum,
+		})
+	}
+	return out
 }
 
 func (p *Parser) detectParameterType(annotations []parser.Annotation) string {
