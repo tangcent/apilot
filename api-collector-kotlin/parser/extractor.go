@@ -1,24 +1,46 @@
 package parser
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func extractFile(root *tree_sitter.Node, source []byte, filePath string, result *ParseResult) {
+// extractFile reads the declarations of one parsed file. With skipDamaged set,
+// the tree holds syntax errors: a declaration they affect is skipped and named,
+// with its line, in a warning instead of being read half-parsed.
+func extractFile(root *tree_sitter.Node, source []byte, filePath string, result *ParseResult, skipDamaged bool) {
 	packageName := extractPackageName(root, source)
 	imports := extractImports(root, source)
+
+	skip := func(node *tree_sitter.Node) {
+		name := declaredName(node, source)
+		if name == "" {
+			name = "a declaration"
+		}
+		result.Warnings = append(result.Warnings, fmt.Sprintf("%s:%d: %s is skipped because the Kotlin grammar could not parse it",
+			filePath, node.StartPosition().Row+1, name))
+	}
 
 	var visit func(node *tree_sitter.Node)
 	visit = func(node *tree_sitter.Node) {
 		for i := uint(0); i < node.ChildCount(); i++ {
 			child := node.Child(i)
 			switch child.Kind() {
+			case "ERROR":
+				// The grammar folded a declaration into an error.
+				if skipDamaged && !isStraySemicolon(child, source) {
+					skip(child)
+				}
 			case "class_declaration", "object_declaration":
 				if result.Error != nil {
 					return
+				}
+				if skipDamaged && declarationDamaged(child, source) {
+					skip(child)
+					continue
 				}
 				if err := extractClass(child, source, packageName, filePath, imports, result); err != nil {
 					result.Error = err
