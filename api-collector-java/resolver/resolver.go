@@ -373,8 +373,13 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	// payload type, and rendering the argument as the payload name produced a
 	// table that said the type was literally "?" with an empty demo (issue
 	// #167). Without evidence of a concrete type the argument stays open, so
-	// the schema carries an empty object.
+	// the schema carries an empty object. An upper bound is that evidence:
+	// every element of a `List<? extends Order>` is an Order. Decompiled
+	// Kotlin declares each `List<T>` property that way.
 	if isWildcard(rawType) {
+		if bound, ok := wildcardUpperBound(rawType); ok {
+			return r.ResolveFrom(source, bound, typeBindings)
+		}
 		return model.EmptyObject()
 	}
 
@@ -454,6 +459,10 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 
 	name := r.resolveSimpleName(source, baseName)
 
+	if r.dependencyResolver != nil {
+		typeArgs = r.qualifyTypeArgs(source, typeArgs)
+	}
+
 	if class, found := r.classRegistry[name]; found {
 		return r.resolveClass(class, name, typeArgs, typeBindings)
 	}
@@ -519,6 +528,15 @@ func hasWildcardArg(rawType string) bool {
 // bounded (`? extends Order`) or not.
 func isWildcard(typeName string) bool {
 	return strings.HasPrefix(strings.TrimSpace(typeName), "?")
+}
+
+// wildcardUpperBound returns X of a wildcard `? extends X`.
+func wildcardUpperBound(typeName string) (string, bool) {
+	rest := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(typeName), "?"))
+	if !strings.HasPrefix(rest, "extends ") {
+		return "", false
+	}
+	return strings.TrimSpace(strings.TrimPrefix(rest, "extends ")), true
 }
 
 // fillWildcardArgs replaces the open type arguments of declared with the
@@ -801,6 +819,63 @@ func (r *TypeResolver) resolveInheritedFields(class parser.Class, localBindings 
 	r.addGetterProperties(superClass, superBindings, superTypeParamSet, obj)
 
 	r.resolveInheritedFields(superClass, superBindings, obj)
+}
+
+// qualifyTypeArgs spells each type argument by the qualified name it denotes
+// in source. An argument is bound to a type parameter and resolved later,
+// inside the generic class, where source's imports no longer apply: for
+// `Wrapper<PageData<Order>>` written in a controller, PageData would be looked
+// up among Wrapper's imports, and a dependency class could only be asked for by
+// its simple name. Only a declaration of the scanned sources or a single-type
+// import qualifies a name; JDK and Kotlin types stay as written, since the
+// resolver knows collections and scalars by their simple names.
+func (r *TypeResolver) qualifyTypeArgs(source parser.Class, args []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+	out := make([]string, len(args))
+	for i, arg := range args {
+		out[i] = r.qualifyTypeName(source, strings.TrimSpace(arg))
+	}
+	return out
+}
+
+func (r *TypeResolver) qualifyTypeName(source parser.Class, typeName string) string {
+	if typeName == "" {
+		return typeName
+	}
+	if isWildcard(typeName) {
+		if bound, ok := wildcardUpperBound(typeName); ok {
+			return "? extends " + r.qualifyTypeName(source, bound)
+		}
+		return typeName
+	}
+	suffix := ""
+	for strings.HasSuffix(typeName, "[]") {
+		typeName = strings.TrimSuffix(typeName, "[]")
+		suffix += "[]"
+	}
+	base, args := parseGenericType(typeName)
+	if !strings.Contains(base, ".") {
+		if key := r.resolveSimpleName(source, base); key != base && !isPlatformName(key) {
+			base = key
+		}
+	}
+	if len(args) > 0 {
+		base += "<" + strings.Join(r.qualifyTypeArgs(source, args), ", ") + ">"
+	}
+	return base + suffix
+}
+
+// isPlatformName reports whether a qualified name belongs to the JDK or the
+// Kotlin standard library.
+func isPlatformName(name string) bool {
+	for _, prefix := range []string{"java.", "javax.", "kotlin."} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func parseGenericType(rawType string) (string, []string) {
