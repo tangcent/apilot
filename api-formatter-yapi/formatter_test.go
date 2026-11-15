@@ -145,8 +145,16 @@ func TestFormatReportsFailedSaves(t *testing.T) {
 		{Name: "ping", Path: "/ping", Method: "GET"},
 		{Name: "pong", Path: "/pong", Method: "GET"},
 	}, formatter.FormatOptions{Params: json.RawMessage(`{"server":"` + server.URL + `","token":"secret"}`)})
-	if err == nil || !strings.Contains(err.Error(), "1 of 2") || !strings.Contains(err.Error(), "path conflict") {
-		t.Fatalf("expected a partial-failure error, got %v", err)
+	if err == nil {
+		t.Fatal("expected a partial-failure error")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"1 of 2", "created: 1", "updated: 0", "failed: 1", "GET /ping", "path conflict",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q lacks the result summary %q", msg, want)
+		}
 	}
 }
 

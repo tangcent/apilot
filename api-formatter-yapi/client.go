@@ -44,9 +44,19 @@ func (c *client) get(path string, query url.Values, out any) error {
 	query.Set("token", c.token)
 	resp, err := c.http.Get(c.server + path + "?" + query.Encode())
 	if err != nil {
-		return fmt.Errorf("%s: %w", path, err)
+		return fmt.Errorf("%s: %w", path, redactHTTPError(err))
 	}
 	return c.decode(path, resp, out)
+}
+
+// redactHTTPError keeps an HTTP error's underlying cause but drops the
+// *url.Error wrapper, whose message embeds the full request URL. A GET query
+// here carries the project token, which must never reach the logs.
+func redactHTTPError(err error) error {
+	if ue, ok := err.(*url.Error); ok {
+		return ue.Err
+	}
+	return err
 }
 
 func (c *client) post(path string, body any, out any) error {

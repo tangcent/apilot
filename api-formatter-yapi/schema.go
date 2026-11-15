@@ -128,7 +128,10 @@ func (b *schemaBuilder) field(f *model.FieldModel, path string, depth int) *obje
 		if len(descs) > 0 {
 			target.set("enumDesc", strings.Join(descs, "\n"))
 		}
-		if !target.has("mock") {
+		// The enum's own pick mock wins over a generic mock rule that node()
+		// may already have applied to an array's items. A mock from the field's
+		// own documentation lives on the scalar field and is kept instead.
+		if target != s || !target.has("mock") {
 			pick, _ := json.Marshal(values)
 			target.set("mock", mockValue("@pick("+string(pick)+")"))
 		}

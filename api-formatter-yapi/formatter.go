@@ -9,6 +9,7 @@ package yapi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -85,9 +86,15 @@ func (f *YapiFormatter) Format(endpoints []model.ApiEndpoint, opts formatter.For
 	result.Rules = rules.Sources
 	result.Warnings = rules.Warnings
 	if result.Failed > 0 {
-		first := firstFailure(result)
-		return nil, fmt.Errorf("%d of %d endpoints were not saved to YApi; first: %s %s: %s",
-			result.Failed, len(interfaces), first.Method, first.Path, first.Reason)
+		var msg strings.Builder
+		fmt.Fprintf(&msg, "%d of %d endpoints were not saved to YApi (created: %d, updated: %d, failed: %d)",
+			result.Failed, len(interfaces), result.Created, result.Updated, result.Failed)
+		for _, item := range result.Items {
+			if item.Status == "failed" {
+				fmt.Fprintf(&msg, "\n  failed: %s %s: %s", item.Method, item.Path, item.Reason)
+			}
+		}
+		return nil, errors.New(msg.String())
 	}
 	return json.MarshalIndent(result, "", "  ")
 }
@@ -121,13 +128,4 @@ func setting(opts formatter.FormatOptions, key string) string {
 		return ""
 	}
 	return opts.Settings.Get(key)
-}
-
-func firstFailure(r *Result) ResultItem {
-	for _, item := range r.Items {
-		if item.Status == "failed" {
-			return item
-		}
-	}
-	return ResultItem{}
 }

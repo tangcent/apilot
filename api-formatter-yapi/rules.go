@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -145,6 +146,24 @@ func isURL(location string) bool {
 	return strings.HasPrefix(location, "http://") || strings.HasPrefix(location, "https://")
 }
 
+// redactURL drops the credentials a rules URL may carry (userinfo, query and
+// fragment) before it is echoed back in an error; local paths are unchanged.
+func redactURL(location string) string {
+	if !isURL(location) {
+		return location
+	}
+	u, err := url.Parse(location)
+	if err != nil {
+		return location
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.ForceQuery = false
+	u.Fragment = ""
+	u.RawFragment = ""
+	return u.String()
+}
+
 func (l *loader) load(location string, depth int) error {
 	if depth > maxIncludeDepth {
 		return fmt.Errorf("rules file %s: includes nest more than %d levels", location, maxIncludeDepth)
@@ -165,7 +184,7 @@ func (l *loader) load(location string, depth int) error {
 		content, err = os.ReadFile(location)
 	}
 	if err != nil {
-		return fmt.Errorf("reading rules from %s: %w", location, err)
+		return fmt.Errorf("reading rules from %s: %w", redactURL(location), redactHTTPError(err))
 	}
 	l.sources = append(l.sources, location)
 
