@@ -171,9 +171,11 @@ func isMethodOverridden(methodName string, class *ktparser.Class) bool {
 	return false
 }
 
+// isController decides with the same predicate the parser's recovery uses, so
+// a file the recovery treats as a controller is one this parser reads as one.
 func isController(class *ktparser.Class) bool {
 	for _, ann := range class.Annotations {
-		if ann.Name == "RestController" || ann.Name == "Controller" {
+		if ktparser.IsControllerAnnotation(ann.Name) {
 			return true
 		}
 	}
