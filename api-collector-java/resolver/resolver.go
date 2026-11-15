@@ -631,11 +631,21 @@ func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []s
 // demands a value, which is what the constraint enforces at runtime: a field
 // without one may be left out of a request. A nullable marker wins in both
 // modes.
-func (r *TypeResolver) fieldRequired(annotations []parser.Annotation) bool {
+//
+// Only Bean Validation's @NotNull is a constraint. JetBrains' @NotNull is a
+// nullability marker the Kotlin compiler puts on every non-null property, so
+// it would make every field of a compiled Kotlin class required; it is told
+// apart by the import of the declaring compilation unit.
+func (r *TypeResolver) fieldRequired(source parser.Class, annotations []parser.Annotation) bool {
 	required := r.requiredFields != collector.RequiredFieldsConstraints
 	for _, ann := range annotations {
 		switch ann.Name {
-		case "NotNull", "NotBlank", "NotEmpty":
+		case "NotNull":
+			if importsAnnotation(source, "org.jetbrains.annotations.NotNull") {
+				continue
+			}
+			fallthrough
+		case "NotBlank", "NotEmpty":
 			if r.requiredFields == collector.RequiredFieldsConstraints {
 				required = true
 			}
@@ -649,11 +659,22 @@ func (r *TypeResolver) fieldRequired(annotations []parser.Annotation) bool {
 	return required
 }
 
+// importsAnnotation reports whether a compilation unit imports the given
+// annotation by its qualified name.
+func importsAnnotation(source parser.Class, qualified string) bool {
+	for _, imp := range source.Imports {
+		if !imp.OnDemand && imp.Path == qualified {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *TypeResolver) resolveField(source parser.Class, f parser.Field, localBindings map[string]string, typeParamSet map[string]bool) *model.FieldModel {
 	fieldModel := r.ResolveFrom(source, f.Type, localBindings)
 	fm := &model.FieldModel{
 		Model:    fieldModel,
-		Required: r.fieldRequired(f.Annotations),
+		Required: r.fieldRequired(source, f.Annotations),
 	}
 	javadoc.FieldDocumentationFor(f.Annotations, f.JavaDoc).Normalize().ApplyTo(fm)
 	if r.isUnboundTypeParam(f.Type, localBindings, typeParamSet) {

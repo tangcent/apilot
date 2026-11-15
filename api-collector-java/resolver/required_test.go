@@ -57,6 +57,38 @@ func TestResolve_RequiredFieldsModes(t *testing.T) {
 	}
 }
 
+func TestResolve_RequiredFieldsIgnoresJetBrainsNotNull(t *testing.T) {
+	// The Kotlin compiler marks every non-null property with JetBrains'
+	// @NotNull; a decompiled Kotlin class carries it on fields a client may
+	// still leave out. Only Bean Validation's @NotNull is a constraint.
+	field := []parser.Field{{Name: "message", Type: "String", Annotations: []parser.Annotation{{Name: "NotNull"}}}}
+	classes := []parser.Class{
+		{
+			Name: "CompiledKotlin", Package: "com.example", FilePath: "CompiledKotlin.java", Fields: field,
+			Imports: []parser.Import{{Path: "org.jetbrains.annotations.NotNull"}},
+		},
+		{
+			Name: "Validated", Package: "com.example", FilePath: "Validated.java", Fields: field,
+			Imports: []parser.Import{{Path: "jakarta.validation.constraints.NotNull"}},
+		},
+	}
+	for _, tc := range []struct {
+		mode, class string
+		want        bool
+	}{
+		{collector.RequiredFieldsConstraints, "com.example.CompiledKotlin", false},
+		{collector.RequiredFieldsConstraints, "com.example.Validated", true},
+		// The default mode does not look at constraints at all.
+		{collector.RequiredFieldsDefault, "com.example.CompiledKotlin", true},
+	} {
+		r := NewTypeResolver(classes)
+		r.SetRequiredFields(tc.mode)
+		if got := r.Resolve(tc.class, nil).Fields["message"].Required; got != tc.want {
+			t.Errorf("%s in %s mode: required = %v, want %v", tc.class, tc.mode, got, tc.want)
+		}
+	}
+}
+
 func TestResolve_RequiredFieldsDocumentationWins(t *testing.T) {
 	// An explicit required flag in a documentation annotation overrides the mode.
 	classes := []parser.Class{{
