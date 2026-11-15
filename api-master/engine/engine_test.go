@@ -547,6 +547,21 @@ func TestDetectCollector_Kotlin(t *testing.T) {
 			expected: "java",
 		},
 		{
+			// A .kt file under an ignored tool directory must not flip a
+			// Java-only tree to the Kotlin collector: the Kotlin parser also
+			// skips .kotlin/, so it would find no sources and fail the run.
+			name:     "Java-only with .kt only under ignored .kotlin dir stays Java",
+			build:    "pom.xml",
+			sources:  []string{"Main.java", ".kotlin/cache/Foo.kt"},
+			expected: "java",
+		},
+		{
+			name:     "uppercase .KT extension is still detected as Kotlin",
+			build:    "pom.xml",
+			sources:  []string{"Main.KT"},
+			expected: "kotlin",
+		},
+		{
 			name:     "Kotlin sources with no build indicator",
 			sources:  []string{"Main.kt"},
 			expected: "kotlin",
@@ -567,7 +582,11 @@ func TestDetectCollector_Kotlin(t *testing.T) {
 				}
 			}
 			for _, source := range tt.sources {
-				if err := os.WriteFile(filepath.Join(tmpDir, source), []byte{}, 0644); err != nil {
+				dest := filepath.Join(tmpDir, source)
+				if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+					t.Fatalf("Failed to create parent dir for %s: %v", source, err)
+				}
+				if err := os.WriteFile(dest, []byte{}, 0644); err != nil {
 					t.Fatalf("Failed to create %s: %v", source, err)
 				}
 			}

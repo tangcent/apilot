@@ -404,12 +404,12 @@ func hasKotlinSources(root string) bool {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case ".git", ".gradle", ".idea", "build", "out", "target", "node_modules":
+			case ".git", ".gradle", ".idea", ".kotlin", "build", "out", "target", "node_modules":
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if filepath.Ext(path) == ".kt" {
+		if strings.EqualFold(filepath.Ext(path), ".kt") {
 			found = true
 			return filepath.SkipAll
 		}
