@@ -639,9 +639,9 @@ func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []s
 func (r *TypeResolver) fieldRequired(source parser.Class, annotations []parser.Annotation) bool {
 	required := r.requiredFields != collector.RequiredFieldsConstraints
 	for _, ann := range annotations {
-		switch ann.Name {
+		switch lastSegment(ann.Name) {
 		case "NotNull":
-			if importsAnnotation(source, "org.jetbrains.annotations.NotNull") {
+			if ann.Name == jetBrainsNotNull || importsAnnotation(source, jetBrainsNotNull) {
 				continue
 			}
 			fallthrough
@@ -652,18 +652,26 @@ func (r *TypeResolver) fieldRequired(source parser.Class, annotations []parser.A
 		}
 	}
 	for _, ann := range annotations {
-		if ann.Name == "Nullable" || ann.Name == "Null" {
+		switch lastSegment(ann.Name) {
+		case "Nullable", "Null":
 			return false
 		}
 	}
 	return required
 }
 
-// importsAnnotation reports whether a compilation unit imports the given
-// annotation by its qualified name.
+const jetBrainsNotNull = "org.jetbrains.annotations.NotNull"
+
+// importsAnnotation reports whether a compilation unit binds the named
+// annotation, either by a single-type import of the annotation itself or by
+// an on-demand import of the package that declares it.
 func importsAnnotation(source parser.Class, qualified string) bool {
+	pkg := qualified[:strings.LastIndex(qualified, ".")]
 	for _, imp := range source.Imports {
 		if !imp.OnDemand && imp.Path == qualified {
+			return true
+		}
+		if imp.OnDemand && imp.Path == pkg {
 			return true
 		}
 	}

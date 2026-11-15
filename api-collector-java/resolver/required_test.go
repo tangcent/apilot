@@ -105,3 +105,44 @@ func TestResolve_RequiredFieldsDocumentationWins(t *testing.T) {
 		t.Fatal("@Schema(required = true) should make the field required in constraints mode")
 	}
 }
+
+func TestResolve_RequiredFieldsQualifiedNamesAndWildcardImport(t *testing.T) {
+	// A fully-qualified Bean Validation annotation must count as a constraint,
+	// while JetBrains' @NotNull must still be ignored when its package is
+	// imported on demand (as in a compiled Kotlin class).
+	classes := []parser.Class{
+		{
+			Name: "FqnValidated", Package: "com.example", FilePath: "FqnValidated.java",
+			Fields: []parser.Field{
+				{Name: "orderNo", Type: "String", Annotations: []parser.Annotation{
+					{Name: "jakarta.validation.constraints.NotNull"},
+				}},
+				{Name: "coupon", Type: "String", Annotations: []parser.Annotation{
+					{Name: "jakarta.validation.constraints.NotBlank"},
+				}},
+			},
+		},
+		{
+			Name: "WildcardKotlin", Package: "com.example", FilePath: "WildcardKotlin.java",
+			Imports: []parser.Import{{Path: "org.jetbrains.annotations", OnDemand: true}},
+			Fields: []parser.Field{
+				{Name: "message", Type: "String", Annotations: []parser.Annotation{
+					{Name: "NotNull"},
+				}},
+			},
+		},
+	}
+	r := NewTypeResolver(classes)
+	r.SetRequiredFields(collector.RequiredFieldsConstraints)
+	fqn := r.Resolve("com.example.FqnValidated", nil).Fields
+	if !fqn["orderNo"].Required {
+		t.Errorf("fully-qualified @NotNull: required = false, want true")
+	}
+	if !fqn["coupon"].Required {
+		t.Errorf("fully-qualified @NotBlank: required = false, want true")
+	}
+	wildcard := r.Resolve("com.example.WildcardKotlin", nil).Fields
+	if wildcard["message"].Required {
+		t.Errorf("JetBrains @NotNull via on-demand import: required = true, want false")
+	}
+}
