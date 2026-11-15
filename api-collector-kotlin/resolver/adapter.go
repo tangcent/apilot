@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	collector "github.com/tangcent/apilot/api-collector"
+	javadoc "github.com/tangcent/apilot/api-collector-java/doc"
 	javaparser "github.com/tangcent/apilot/api-collector-java/parser"
 	javaresolver "github.com/tangcent/apilot/api-collector-java/resolver"
 	ktparser "github.com/tangcent/apilot/api-collector-kotlin/parser"
@@ -27,6 +28,13 @@ type Resolver struct {
 
 // New builds a resolver over all Kotlin declarations in the project.
 func New(classes []ktparser.Class) *Resolver {
+	return NewWithJavaTypes(classes, nil)
+}
+
+// NewWithJavaTypes builds a resolver over the Kotlin declarations of a project
+// that also holds Java sources. javaTypes are the Java declarations of the same
+// tree: a Kotlin endpoint may take or return a class written in Java.
+func NewWithJavaTypes(classes []ktparser.Class, javaTypes []javaparser.Class) *Resolver {
 	r := &Resolver{
 		classes:    classes,
 		byKey:      make(map[string]*ktparser.Class, len(classes)),
@@ -53,6 +61,7 @@ func New(classes []ktparser.Class) *Resolver {
 		}
 		javaClasses = append(javaClasses, toJavaClass(*class))
 	}
+	javaClasses = append(javaClasses, javaTypes...)
 
 	r.tr = javaresolver.NewTypeResolver(javaClasses)
 	r.tr.SetUnresolved(r.unresolved)
@@ -188,12 +197,29 @@ func enumOptions(values []string) []model.FieldOption {
 	return out
 }
 
+// ToJavaClasses converts Kotlin declarations to the Java model, so a Java
+// endpoint in the same tree can resolve them. Enums are left out: the Java
+// type table has no enum model, and a Java enum is not in it either.
+func ToJavaClasses(classes []ktparser.Class) []javaparser.Class {
+	out := make([]javaparser.Class, 0, len(classes))
+	for _, class := range classes {
+		if class.IsEnum {
+			continue
+		}
+		out = append(out, toJavaClass(class))
+	}
+	return out
+}
+
 func toJavaClass(class ktparser.Class) javaparser.Class {
+	// The Java parser cleans a doc comment when it reads it; the Kotlin parser
+	// keeps the raw "/** ... */" text, so it is cleaned here, where the
+	// declaration enters the shared resolver.
 	out := javaparser.Class{
 		Name:           class.Name,
 		Package:        class.Package,
 		FilePath:       class.FilePath,
-		JavaDoc:        class.KDoc,
+		JavaDoc:        javadoc.CleanJavaDoc(class.KDoc),
 		Annotations:    toJavaAnnotations(class.Annotations),
 		TypeParameters: append([]string(nil), class.TypeParameters...),
 		SuperClass:     normalizeClassName(class.SuperClass),
@@ -210,7 +236,9 @@ func toJavaClass(class ktparser.Class) javaparser.Class {
 		out.Imports = append(out.Imports, javaparser.Import{Path: imp.Path, OnDemand: imp.OnDemand})
 	}
 	for _, prop := range class.Fields {
-		if annotationValue(prop.Annotations, "JsonIgnore") == "true" || hasAnnotation(prop.Annotations, "JsonIgnore") {
+		// An @JsonIgnore(false) re-enables the property; only an ignore whose
+		// value is not "false" drops the field, matching the parser's validation.
+		if hasAnnotation(prop.Annotations, "JsonIgnore") && annotationValue(prop.Annotations, "JsonIgnore") != "false" {
 			continue
 		}
 		name := prop.Name
@@ -221,7 +249,7 @@ func toJavaClass(class ktparser.Class) javaparser.Class {
 			Name:        name,
 			Type:        NormalizeModelType(prop.Type),
 			Annotations: fieldAnnotations(prop.Annotations),
-			JavaDoc:     prop.KDoc,
+			JavaDoc:     javadoc.CleanJavaDoc(prop.KDoc),
 			IsFinal:     !prop.IsMutable,
 		})
 	}

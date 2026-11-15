@@ -295,6 +295,9 @@ func TestToJavaClassFieldMapping(t *testing.T) {
 		Package: "com.example.model",
 		Fields: []ktparser.Property{
 			testProperty("secret", "String", testAnnotation("JsonIgnore", nil)),
+			testProperty("revived", "String",
+				testAnnotation("JsonIgnore", map[string]string{"value": "false"}),
+				testAnnotation("JsonProperty", map[string]string{"value": "revived_name"})),
 			testProperty("displayName", "String", testAnnotation("JsonProperty", map[string]string{"value": "display_name"})),
 			testProperty("parentId", "Long", testAnnotation("JsonProperty", map[string]string{"required": "false"})),
 			testProperty("name", "String"),
@@ -324,6 +327,9 @@ func TestToJavaClassFieldMapping(t *testing.T) {
 	}
 	if names["secret"] {
 		t.Error("JsonIgnore field was copied")
+	}
+	if !names["revived_name"] || names["revived"] {
+		t.Errorf("@JsonIgnore(false) should not drop the field and the rename should apply: %v", names)
 	}
 	if !names["display_name"] || names["displayName"] {
 		t.Errorf("JsonProperty rename not applied: %v", names)

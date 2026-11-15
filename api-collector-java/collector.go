@@ -83,6 +83,25 @@ func (c *JavaCollector) Frameworks() []string {
 // the indexer CLI; when that is not possible the outcome is reported through
 // DependencyResolution.
 func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEndpoint, error) {
+	endpoints, _, err := c.collect(ctx, nil)
+	return endpoints, err
+}
+
+// CollectWithTypes collects the Java endpoints of a tree that also holds
+// sources of another JVM language, such as a Kotlin service with a few Java
+// classes left in it.
+//
+// types holds the other language's declarations converted to the Java model.
+// They join the type table of every framework parser, so a Java controller can
+// resolve a request or response class written in that language; they never
+// contribute endpoints of their own. The Java declarations parsed from the tree
+// are returned alongside the endpoints, so the caller can resolve its own
+// endpoints against them without parsing the tree a second time.
+func (c *JavaCollector) CollectWithTypes(ctx collector.CollectContext, types []parser.Class) ([]collector.ApiEndpoint, []parser.Class, error) {
+	return c.collect(ctx, types)
+}
+
+func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Class) ([]collector.ApiEndpoint, []parser.Class, error) {
 	depResolution, depResolver := setupDependencyResolution(ctx.SourceDir, ctx.NoDeps)
 	c.mu.Lock()
 	c.depResolution = depResolution
@@ -93,18 +112,18 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 
 	p, err := parser.NewParser(parser.ParserOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create java parser: %w", err)
+		return nil, nil, fmt.Errorf("failed to create java parser: %w", err)
 	}
 	defer p.Close()
 
 	var results []parser.ParseResult
 	if ctx.SourceFile != "" {
 		if filepath.Ext(ctx.SourceFile) == ".kt" {
-			return nil, fmt.Errorf("%s is a Kotlin source file but the java collector only parses Java", ctx.SourceFile)
+			return nil, nil, fmt.Errorf("%s is a Kotlin source file but the java collector only parses Java", ctx.SourceFile)
 		}
 		r, parseErr := p.ParseFile(ctx.SourceFile)
 		if parseErr != nil {
-			return nil, fmt.Errorf("failed to parse file %s: %w", ctx.SourceFile, parseErr)
+			return nil, nil, fmt.Errorf("failed to parse file %s: %w", ctx.SourceFile, parseErr)
 		}
 		results = []parser.ParseResult{*r}
 
@@ -119,10 +138,20 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 			// cannot parse it, and an empty success would hide the gap.
 			var ko *parser.KotlinOnlyError
 			if errors.As(err, &ko) {
-				return nil, err
+				return nil, nil, err
 			}
-			return nil, fmt.Errorf("failed to parse directory %s: %w", ctx.SourceDir, err)
+			return nil, nil, fmt.Errorf("failed to parse directory %s: %w", ctx.SourceDir, err)
 		}
+	}
+
+	var parsed []parser.Class
+	for _, r := range results {
+		if r.Error == nil {
+			parsed = append(parsed, r.Classes...)
+		}
+	}
+	if len(types) > 0 {
+		results = append(results, parser.ParseResult{Classes: types})
 	}
 
 	frameworks := resolveFrameworks(ctx)
@@ -208,7 +237,7 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 			deduped = append(deduped, ep)
 		}
 	}
-	return deduped, nil
+	return deduped, parsed, nil
 }
 
 // setupDependencyResolution decides whether dependency-based type resolution
