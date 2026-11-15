@@ -194,12 +194,17 @@ jobs:
           bash samples/${{ matrix.framework }}/test.sh
 
   summary:
-    needs: [ go-tests, java-tests, node-tests, python-tests ]
+    needs: [ check-skip, go-tests, java-tests, node-tests, python-tests ]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check all tests passed
         run: |
+          if [ "${{ needs.check-skip.outputs.should-skip }}" = "true" ]; then
+            echo "Documentation-only PR; integration tests skipped."
+            exit 0
+          fi
+
           if [ "${{ needs.go-tests.result }}" != "success" ] || \
              [ "${{ needs.java-tests.result }}" != "success" ] || \
              [ "${{ needs.node-tests.result }}" != "success" ] || \
