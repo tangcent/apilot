@@ -410,6 +410,13 @@ func (p *Parser) extractParameter(param parser.Parameter, methodJavaDocParams ma
 			}
 		}
 	}
+	names := make([]string, 0, len(param.Annotations))
+	for _, ann := range param.Annotations {
+		names = append(names, ann.Name)
+	}
+	if OptionalArgument(paramType, param.Type, names, false) {
+		ep.Required = false
+	}
 	if doc.Default != "" {
 		ep.DefaultValue = doc.Default
 	}

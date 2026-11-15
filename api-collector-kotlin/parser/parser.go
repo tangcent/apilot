@@ -217,3 +217,21 @@ func typeAfterColon(node *tree_sitter.Node, source []byte) string {
 	}
 	return ""
 }
+
+// nullableTypeAfterColon reports whether the declared type after the ":"
+// token is nullable as a whole: `String?` and `List<String>?` are, while
+// `List<String?>` is not.
+func nullableTypeAfterColon(node *tree_sitter.Node, source []byte) bool {
+	sawColon := false
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == ":" {
+			sawColon = true
+			continue
+		}
+		if sawColon && isTypeNode(child.Kind()) {
+			return strings.HasSuffix(strings.TrimSpace(child.Utf8Text(source)), "?")
+		}
+	}
+	return false
+}

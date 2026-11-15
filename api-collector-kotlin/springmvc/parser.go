@@ -382,6 +382,13 @@ func (p *Parser) extractParameter(param *ktparser.Parameter, methodDocParams map
 			}
 		}
 	}
+	names := make([]string, 0, len(param.Annotations))
+	for _, ann := range param.Annotations {
+		names = append(names, ann.Name)
+	}
+	if javaspringmvc.OptionalArgument(paramType, param.Type, names, param.Nullable || param.HasDefault) {
+		ep.Required = false
+	}
 	if doc.Default != "" {
 		ep.DefaultValue = doc.Default
 	}

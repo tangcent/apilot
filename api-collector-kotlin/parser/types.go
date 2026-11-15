@@ -25,6 +25,8 @@ type Parameter struct {
 	Annotations  []Annotation
 	HasDefault   bool
 	DefaultValue string
+	// Nullable marks a nullable type (`String?`). Type drops the `?`.
+	Nullable bool
 }
 
 // Property is a constructor or body property (val/var).
