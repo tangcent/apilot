@@ -240,6 +240,13 @@ func (r *TypeResolver) lookup(key string) (parser.Class, bool) {
 	return c, true
 }
 
+// isRegisteredEnum reports whether key names an enum the resolver already
+// holds, whether or not the current view sees it.
+func (r *TypeResolver) isRegisteredEnum(key string) bool {
+	c, found := r.classRegistry[key]
+	return found && c.IsEnum
+}
+
 // enterBindingView switches to the binding view and returns the function that
 // restores the previous view.
 func (r *TypeResolver) enterBindingView() func() {
@@ -522,7 +529,9 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 		return r.resolveClass(class, name, typeArgs, typeBindings)
 	}
 
-	if r.dependencyResolver != nil {
+	// An enum of the scanned sources is already known; the JSON view just
+	// does not see it, and a dependency's copy of it would not be seen either.
+	if r.dependencyResolver != nil && !r.isRegisteredEnum(name) {
 		if depClass := r.dependencyResolver.ResolveClass(name); depClass != nil {
 			r.register(*depClass, name)
 			if r.sees(*depClass) {

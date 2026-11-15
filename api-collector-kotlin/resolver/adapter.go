@@ -80,11 +80,28 @@ func NewWithJavaTypes(classes []ktparser.Class, javaTypes []javaparser.Class) *R
 // project's dependencies, such as a response envelope from a shared library.
 // The binding view, built later, receives it too.
 func (r *Resolver) SetDependencyResolver(dr javaresolver.DependencyResolver) {
+	dr = projectEnumsFirst{dr: dr, r: r}
 	r.dependencyResolver = dr
 	r.tr.SetDependencyResolver(dr)
 	if r.bindingTR != nil {
 		r.bindingTR.SetDependencyResolver(dr)
 	}
+}
+
+// projectEnumsFirst keeps the project's own enums away from the dependency
+// resolver. The Java type table does not hold them, since the adapter renders
+// them itself, so the Java resolver would otherwise ask the index for them and
+// read some installed release of the project instead.
+type projectEnumsFirst struct {
+	dr javaresolver.DependencyResolver
+	r  *Resolver
+}
+
+func (p projectEnumsFirst) ResolveClass(className string) *javaparser.Class {
+	if c, ok := p.r.byKey[className]; ok && c.IsEnum {
+		return nil
+	}
+	return p.dr.ResolveClass(className)
 }
 
 // ResolveForBinding expands a type the way Spring's data binder sees it when

@@ -133,6 +133,9 @@ func TestKotlinEndpointResolvesTypesOfAKotlinLibrary(t *testing.T) {
 	}
 	objectField(t, rows.Model.Items, "id")
 	objectField(t, rows.Model.Items, "no")
+	if status := objectField(t, rows.Model.Items, "status"); status.Model.TypeName != model.JsonTypeString || len(status.Options) != 2 {
+		t.Errorf("status = %+v, options %v: a project enum is a string of its entries", status.Model, status.Options)
+	}
 
 	if unresolved := typeResolver.Unresolved(); len(unresolved) != 0 {
 		t.Errorf("unresolved = %v", unresolved)
@@ -144,6 +147,13 @@ func TestKotlinEndpointResolvesTypesOfAKotlinLibrary(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("the library was not asked for %s; asked for %v", want, library.queried)
+		}
+	}
+	// The project's own enum is not a dependency type: asking the index would
+	// read an installed release of the project.
+	for _, q := range library.queried {
+		if q == "com.example.app.OrderStatus" {
+			t.Errorf("the library was asked for the project's enum; asked for %v", library.queried)
 		}
 	}
 }

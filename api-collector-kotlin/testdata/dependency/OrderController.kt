@@ -6,9 +6,15 @@ import com.example.lib.Wrapper
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RestController
 
+enum class OrderStatus {
+    OPEN,
+    CLOSED
+}
+
 data class Order(
     val id: Long,
     val no: String?,
+    val status: OrderStatus,
 )
 
 @RestController
