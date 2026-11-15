@@ -68,10 +68,12 @@ func TestBuildInterface(t *testing.T) {
 	if it.Path != "/orders/{orderNo}" || it.Method != "post" || it.Status != "done" {
 		t.Errorf("path/method/status = %q %q %q", it.Path, it.Method, it.Status)
 	}
-	if !reflect.DeepEqual(it.ReqParams, []PathParam{{Name: "orderNo", Desc: "order number"}}) {
+	// A parameter without an example gets EasyYapi's mock for its name; a
+	// query parameter with a default shows the default.
+	if !reflect.DeepEqual(it.ReqParams, []PathParam{{Name: "orderNo", Example: "@string", Desc: "order number"}}) {
 		t.Errorf("req_params = %#v", it.ReqParams)
 	}
-	if !reflect.DeepEqual(it.ReqQuery, []Query{{Name: "dryRun", Value: "false", Desc: "validate only", Required: "0"}}) {
+	if !reflect.DeepEqual(it.ReqQuery, []Query{{Name: "dryRun", Value: "false", Example: "false", Desc: "validate only", Required: "0"}}) {
 		t.Errorf("req_query = %#v", it.ReqQuery)
 	}
 	wantHeaders := []Header{
@@ -126,6 +128,63 @@ func TestBuildInterfaceFallbacks(t *testing.T) {
 	}
 	if ct := form.ReqHeaders[len(form.ReqHeaders)-1]; ct.Name != "Content-Type" || ct.Value != "multipart/form-data" {
 		t.Errorf("content type = %#v", ct)
+	}
+}
+
+// Descriptions render as EasyYapi renders them: GitHub-flavoured Markdown
+// inside <body>, HTML from a doc comment passed through, and no line break
+// between blocks.
+func TestRenderHTML(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"paragraphs and a wrapped line",
+			"A\nB\n\nC",
+			"<body><p>A\nB</p><p>C</p></body>"},
+		{"emphasis",
+			"Read **only** this",
+			"<body><p>Read <strong>only</strong> this</p></body>"},
+		{"HTML of a Javadoc comment is kept",
+			"<p>Same service method.",
+			"<body><p>Same service method.</body>"},
+		{"a list",
+			"Steps:\n\n- one\n- two",
+			"<body><p>Steps:</p><ul><li>one</li><li>two</li></ul></body>"},
+		{"a code block keeps its lines",
+			"```\na\nb\n```",
+			"<body><pre><code>a\nb\n</code></pre></body>"},
+		{"nothing",
+			"  ",
+			""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := renderHTML(tc.in); got != tc.want {
+				t.Errorf("renderHTML(%q) =\n %q\nwant\n %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParameterMock(t *testing.T) {
+	for name, want := range map[string]string{
+		"operatorAccountId": "@id",
+		"serialNo":          "@string",
+		"createTime":        "@datetime",
+		"startDate":         "@datetime",
+		"birthDate":         "@date('yyyy-MM-dd')",
+		"userName":          "@cname",
+		"warehouseName":     "@string",
+		"province":          "@province",
+		"token":             "@string(32)",
+		"modelCode":         "@string(6)",
+		"email":             "@email",
+		// Substring tests, as EasyYapi's: "page" and "usageStatus" hold "age".
+		"page":        "@integer(0, 120)",
+		"usageStatus": "@integer(0, 120)",
+		"identity":    "@string",
+		"rows":        "@string",
+	} {
+		if got := parameterMock(name); got != want {
+			t.Errorf("parameterMock(%q) = %q, want %q", name, got, want)
+		}
 	}
 }
 

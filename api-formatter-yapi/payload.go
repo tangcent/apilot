@@ -1,11 +1,15 @@
 package yapi
 
 import (
+	"bytes"
 	"html"
 	"regexp"
 	"strings"
 
 	model "github.com/tangcent/apilot/api-model"
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
+	goldmarkhtml "github.com/yuin/goldmark/renderer/html"
 )
 
 // Interface is one YApi interface, in the shape YApi's /api/interface/save
@@ -111,10 +115,11 @@ func buildInterface(ep model.ApiEndpoint, b *schemaBuilder) Interface {
 		switch p.In {
 		case "query":
 			it.ReqQuery = append(it.ReqQuery, Query{
-				Name: p.Name, Value: p.Default, Example: p.Example, Desc: p.Description, Required: flag(p.Required),
+				Name: p.Name, Value: p.Default, Example: firstNonEmpty(p.Example, p.Default, parameterMock(p.Name)),
+				Desc: p.Description, Required: flag(p.Required),
 			})
 		case "path":
-			it.ReqParams = append(it.ReqParams, PathParam{Name: p.Name, Example: p.Example, Desc: p.Description})
+			it.ReqParams = append(it.ReqParams, PathParam{Name: p.Name, Example: firstNonEmpty(p.Example, parameterMock(p.Name)), Desc: p.Description})
 		case "form":
 			kind := "text"
 			if p.Type == "file" {
@@ -192,24 +197,31 @@ func splitDoc(doc string) (string, string) {
 	return "", ""
 }
 
-// renderHTML renders a plain description as YApi's HTML description: one
-// paragraph per blank-line-separated block.
+// markdown renders descriptions as GitHub-flavoured Markdown, the flavour
+// EasyYapi renders them with. HTML written in a doc comment, such as a
+// Javadoc <p>, is passed through as EasyYapi passes it.
+var markdown = goldmark.New(
+	goldmark.WithExtensions(extension.GFM),
+	goldmark.WithRendererOptions(goldmarkhtml.WithUnsafe()),
+)
+
+// blockBreak matches the line break the renderer writes after a block tag.
+// EasyYapi's renderer writes none, so blocks follow each other directly;
+// breaks inside a paragraph or a code block are kept.
+var blockBreak = regexp.MustCompile(`(</(?:p|h[1-6]|ul|ol|li|blockquote|pre|table|thead|tbody|tr|th|td)>|<(?:ul|ol|blockquote|table|thead|tbody|tr)>|<hr\s*/?>)\n`)
+
+// renderHTML renders a description as YApi's HTML description, the way
+// EasyYapi does: Markdown rendered to HTML inside a <body> element. The
+// Markdown source travels in the markdown field.
 func renderHTML(text string) string {
 	if strings.TrimSpace(text) == "" {
 		return ""
 	}
-	var b strings.Builder
-	b.WriteString("<body>")
-	for _, para := range strings.Split(text, "\n\n") {
-		if para = strings.TrimSpace(para); para == "" {
-			continue
-		}
-		b.WriteString("<p>")
-		b.WriteString(html.EscapeString(para))
-		b.WriteString("</p>")
+	var b bytes.Buffer
+	if err := markdown.Convert([]byte(text), &b); err != nil {
+		return "<body><p>" + html.EscapeString(text) + "</p></body>"
 	}
-	b.WriteString("</body>")
-	return b.String()
+	return "<body>" + blockBreak.ReplaceAllString(b.String(), "$1") + "</body>"
 }
 
 var (
