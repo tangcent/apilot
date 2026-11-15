@@ -119,7 +119,7 @@ func extractInterface(node *tree_sitter.Node, source []byte) Class {
 // parameter to an enum by the name of a constant, so the constants are the
 // values it accepts.
 func extractEnum(node *tree_sitter.Node, source []byte) Class {
-	enum := Class{IsEnum: true, JavaDoc: extractLeadingJavaDoc(node, source)}
+	enum := Class{IsEnum: true, JavaDoc: extractLeadingJavaDoc(node, source), RawJavaDoc: rawLeadingJavaDoc(node, source)}
 	enum.Annotations = extractAnnotations(node, source)
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
