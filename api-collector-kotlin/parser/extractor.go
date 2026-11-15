@@ -7,7 +7,10 @@ import (
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func extractFile(root *tree_sitter.Node, source []byte, filePath string, result *ParseResult) {
+// extractFile reads the declarations of one parsed file. With skipDamaged set,
+// the tree holds syntax errors: a declaration they affect is skipped and named
+// in a warning instead of being read half-parsed.
+func extractFile(root *tree_sitter.Node, source []byte, filePath string, result *ParseResult, skipDamaged bool) {
 	packageName := extractPackageName(root, source)
 	imports := extractImports(root, source)
 
@@ -19,6 +22,15 @@ func extractFile(root *tree_sitter.Node, source []byte, filePath string, result 
 			case "class_declaration", "object_declaration":
 				if result.Error != nil {
 					return
+				}
+				if skipDamaged && declarationDamaged(child, source) {
+					name := "a declaration"
+					if id := firstChildOfKind(child, "identifier"); id != nil {
+						name = id.Utf8Text(source)
+					}
+					result.Warnings = append(result.Warnings, filePath+": "+name+
+						" is skipped because the Kotlin grammar could not parse it")
+					continue
 				}
 				if err := extractClass(child, source, packageName, filePath, imports, result); err != nil {
 					result.Error = err
