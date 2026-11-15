@@ -280,6 +280,9 @@ func extractClassParameter(node *tree_sitter.Node, source []byte, filePath strin
 	if nameNode == nil {
 		return Property{}, false, nil
 	}
+	if err := checkPropertyAnnotations(anns, nameNode.Utf8Text(source), filePath); err != nil {
+		return Property{}, false, err
+	}
 	prop := Property{
 		Name:        nameNode.Utf8Text(source),
 		Type:        typeAfterColon(node, source),
@@ -308,6 +311,9 @@ func extractProperty(node *tree_sitter.Node, source []byte, filePath string) (*P
 	nameNode := firstChildOfKind(decl, "identifier")
 	if nameNode == nil {
 		return nil, nil
+	}
+	if err := checkPropertyAnnotations(anns, nameNode.Utf8Text(source), filePath); err != nil {
+		return nil, err
 	}
 	prop := &Property{
 		Name:        nameNode.Utf8Text(source),
@@ -526,15 +532,96 @@ func extractAnnotation(node *tree_sitter.Node, argsOverride *tree_sitter.Node, s
 		}
 	}
 
-	if ann.UseSiteTarget != "" {
-		return Annotation{}, &UnsupportedConstructError{
-			FilePath:  filePath,
-			Construct: "@" + ann.UseSiteTarget + ":" + ann.Name,
-		}
-	}
-
+	// A use-site target (@field:, @get:, ...) is kept on the annotation. Whether
+	// it can change the exported name is decided per property, where every
+	// annotation of that property is in view; see checkPropertyAnnotations.
 	extractAnnotationParams(argsNode, source, ann.Params)
 	return ann, nil
+}
+
+// jacksonTargets are the use-site targets that land on a member Jackson reads
+// for one logical property: the backing field, the getter, the setter, the
+// setter parameter, or the constructor parameter. Jackson merges the
+// annotations of these members, so an annotation on any of them applies to the
+// whole property.
+var jacksonTargets = map[string]bool{
+	"":         true,
+	"field":    true,
+	"get":      true,
+	"set":      true,
+	"setparam": true,
+	"param":    true,
+}
+
+// nameAffecting lists the annotations whose meaning is the property's exported
+// name or presence. Every other annotation (validation, documentation,
+// inclusion, JVM naming) leaves the name alone whatever its target.
+var nameAffecting = map[string]bool{
+	"JsonProperty": true,
+	"JsonIgnore":   true,
+}
+
+// checkPropertyAnnotations decides whether the annotations of one property,
+// use-site targets included, yield a single exported name.
+//
+// A target is only a problem when it can change that name. @field:NotNull or
+// @get:JsonInclude is accepted as written. @get:JsonProperty("x") renames the
+// property exactly as an untargeted @JsonProperty("x") does, because Jackson
+// merges the field, getter, setter and constructor-parameter annotations of a
+// property. What cannot be modelled fails loudly instead of exporting a guess:
+// a name-affecting annotation on any use-site target Jackson does not read
+// (anything outside jacksonTargets, e.g. @property:, @delegate:, @receiver:),
+// names that disagree across targets, and @JsonIgnore together with an explicit
+// name.
+func checkPropertyAnnotations(anns []Annotation, propName, filePath string) error {
+	var names []string
+	var nameSources []string
+	ignored := ""
+	for _, ann := range anns {
+		if !nameAffecting[ann.Name] {
+			continue
+		}
+		construct := "@" + ann.Name
+		if ann.UseSiteTarget != "" {
+			construct = "@" + ann.UseSiteTarget + ":" + ann.Name
+		}
+		if !jacksonTargets[ann.UseSiteTarget] {
+			return &UnsupportedConstructError{
+				FilePath:  filePath,
+				Construct: construct,
+				Reason: "the " + ann.UseSiteTarget + " use-site target puts the annotation where Jackson does not read it, " +
+					"so the exported name of property " + propName + " cannot be determined",
+			}
+		}
+		switch ann.Name {
+		case "JsonIgnore":
+			if ann.Params["value"] != "false" {
+				ignored = construct
+			}
+		case "JsonProperty":
+			if name := ann.Params["value"]; name != "" {
+				names = append(names, name)
+				nameSources = append(nameSources, construct+"(\""+name+"\")")
+			}
+		}
+	}
+	for i := 1; i < len(names); i++ {
+		if names[i] != names[0] {
+			return &UnsupportedConstructError{
+				FilePath:  filePath,
+				Construct: strings.Join(nameSources, " "),
+				Reason:    "property " + propName + " is given different names on different use-site targets",
+			}
+		}
+	}
+	if ignored != "" && len(names) > 0 {
+		return &UnsupportedConstructError{
+			FilePath:  filePath,
+			Construct: ignored + " " + nameSources[0],
+			Reason:    "property " + propName + " is both ignored and explicitly named, which Jackson splits by direction",
+		}
+	}
+	return nil
 }
 
 func extractAnnotationParams(node *tree_sitter.Node, source []byte, params map[string]string) {
