@@ -85,10 +85,12 @@ type ParseResult struct {
 type UnsupportedConstructError struct {
 	FilePath  string
 	Construct string
+	// Reason says why the construct cannot be modelled.
+	Reason string
 }
 
 func (e *UnsupportedConstructError) Error() string {
-	return fmt.Sprintf("%s: unsupported Kotlin construct %q: use-site targets are not supported because they can change the exported name", e.FilePath, e.Construct)
+	return fmt.Sprintf("%s: unsupported Kotlin construct %q: %s", e.FilePath, e.Construct, e.Reason)
 }
 
 // NoKotlinSourcesError reports a project that has no .kt files to read.

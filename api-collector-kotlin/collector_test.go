@@ -248,22 +248,60 @@ func TestCollectKotlinProject(t *testing.T) {
 	})
 }
 
-func TestUseSiteTargetIsRejected(t *testing.T) {
-	c := New().(*KotlinCollector)
-	abs, err := filepath.Abs("testdata/invalid-usecase")
-	if err != nil {
-		t.Fatal(err)
+func TestUseSiteTargetsFollowJackson(t *testing.T) {
+	endpoints, _ := collectDir(t, "testdata/use-site-targets")
+	ep := findEndpoint(t, endpoints, "create")
+
+	req := ep.RequestBody.Body
+	// A target on an annotation that does not touch the name changes nothing.
+	objectField(t, req, "name")
+	objectField(t, req, "note")
+	objectField(t, req, "items")
+	// @get:/@field: JsonProperty renames the property as an untargeted one does.
+	objectField(t, req, "display_code")
+	objectField(t, req, "tag")
+	for _, gone := range []string{"code", "label", "secret"} {
+		if _, ok := req.Fields[gone]; ok {
+			t.Fatalf("field %q should not be exported; fields=%v", gone, fieldNames(req))
+		}
 	}
-	_, err = c.Collect(collector.CollectContext{SourceDir: abs, NoDeps: true})
-	if err == nil {
-		t.Fatal("expected an error for a use-site target")
+
+	resp := ep.Response.Body
+	objectField(t, resp, "id")
+	objectField(t, resp, "status")
+	if _, ok := resp.Fields["identifier"]; ok {
+		t.Fatalf("identifier should be exported as id; fields=%v", fieldNames(resp))
 	}
-	message := err.Error()
-	if !strings.Contains(message, "InvalidController.kt") {
-		t.Fatalf("error does not name the file: %s", message)
-	}
-	if !strings.Contains(message, "@get:") || !strings.Contains(message, "JsonProperty") {
-		t.Fatalf("error does not name the construct: %s", message)
+}
+
+func TestUseSiteTargetConflictsAreRejected(t *testing.T) {
+	for _, tc := range []struct {
+		dir       string
+		construct string
+	}{
+		// Two targets name the same property differently.
+		{"testdata/invalid-usecase", "@field:JsonProperty"},
+		// @property: is invisible to Jackson, so the name is unknowable.
+		{"testdata/invalid-property-target", "@property:JsonProperty"},
+	} {
+		t.Run(tc.dir, func(t *testing.T) {
+			c := New().(*KotlinCollector)
+			abs, err := filepath.Abs(tc.dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = c.Collect(collector.CollectContext{SourceDir: abs, NoDeps: true})
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			message := err.Error()
+			if !strings.Contains(message, "InvalidController.kt") {
+				t.Fatalf("error does not name the file: %s", message)
+			}
+			if !strings.Contains(message, tc.construct) {
+				t.Fatalf("error does not name the construct %s: %s", tc.construct, message)
+			}
+		})
 	}
 }
 
