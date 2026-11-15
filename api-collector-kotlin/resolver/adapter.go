@@ -27,6 +27,9 @@ type Resolver struct {
 	javaTypes  []javaparser.Class
 	// bindingTR resolves model attributes; it is built on first use.
 	bindingTR *javaresolver.TypeResolver
+	// enumOptions holds the values of each enum, described by the doc
+	// comments of its entries, by simple and qualified name.
+	enumOptions map[string][]model.FieldOption
 }
 
 // New builds a resolver over all Kotlin declarations in the project.
@@ -47,6 +50,7 @@ func NewWithJavaTypes(classes []ktparser.Class, javaTypes []javaparser.Class) *R
 		unresolved: collector.NewUnresolvedSet(),
 		javaTypes:  javaTypes,
 	}
+	r.enumOptions = make(map[string][]model.FieldOption)
 
 	var javaClasses []javaparser.Class
 	for i := range classes {
@@ -60,7 +64,13 @@ func NewWithJavaTypes(classes []ktparser.Class, javaTypes []javaparser.Class) *R
 		if class.IsEnum {
 			r.enumValues[class.Name] = class.EnumValues
 			r.enumValues[key] = class.EnumValues
+			enum := toJavaEnum(*class)
+			r.enumOptions[class.Name] = javaresolver.EnumOptions(enum)
+			r.enumOptions[key] = r.enumOptions[class.Name]
 			// Enums are rendered as string options, not as empty objects.
+			// The JSON view never sees the declaration; it is there for the
+			// fields whose doc points at it with @see.
+			javaClasses = append(javaClasses, enum)
 			continue
 		}
 		javaClasses = append(javaClasses, toJavaClass(*class))
@@ -83,7 +93,9 @@ func (r *Resolver) ResolveForBinding(source *ktparser.Class, rawType string, bin
 	if r.bindingTR == nil {
 		var javaClasses []javaparser.Class
 		for _, class := range r.classes {
-			if !class.IsEnum {
+			if class.IsEnum {
+				javaClasses = append(javaClasses, toJavaEnum(class))
+			} else {
 				javaClasses = append(javaClasses, toBindingClass(class))
 			}
 		}
@@ -214,9 +226,9 @@ func (r *Resolver) applyEnums(m *model.ObjectModel) {
 				continue
 			}
 			if field.Model.Kind == model.KindSingle {
-				if values := r.EnumValues(field.Model.TypeName); len(values) > 0 {
+				if options := r.enumOptions[lastSegment(field.Model.TypeName)]; len(options) > 0 {
 					field.Model = model.SingleModel(model.JsonTypeString)
-					field.Options = enumOptions(values)
+					field.Options = append([]model.FieldOption(nil), options...)
 					continue
 				}
 			}
@@ -230,14 +242,6 @@ func (r *Resolver) applyEnums(m *model.ObjectModel) {
 	}
 }
 
-func enumOptions(values []string) []model.FieldOption {
-	out := make([]model.FieldOption, 0, len(values))
-	for _, value := range values {
-		out = append(out, model.FieldOption{Value: value})
-	}
-	return out
-}
-
 // ToJavaClasses converts Kotlin declarations to the Java model, so a Java
 // endpoint in the same tree can resolve them. An enum keeps its constants for
 // the binding view; the Java resolver's JSON view does not see enums.
@@ -245,17 +249,31 @@ func ToJavaClasses(classes []ktparser.Class) []javaparser.Class {
 	out := make([]javaparser.Class, 0, len(classes))
 	for _, class := range classes {
 		if class.IsEnum {
-			out = append(out, javaparser.Class{
-				Name:          class.Name,
-				Package:       class.Package,
-				FilePath:      class.FilePath,
-				Imports:       toJavaImports(class.Imports),
-				IsEnum:        true,
-				EnumConstants: append([]string(nil), class.EnumValues...),
-			})
+			out = append(out, toJavaEnum(class))
 			continue
 		}
 		out = append(out, toJavaClass(class))
+	}
+	return out
+}
+
+// toJavaEnum converts an enum to the Java model: its entries, each with its
+// doc comment cleaned.
+func toJavaEnum(class ktparser.Class) javaparser.Class {
+	out := javaparser.Class{
+		Name:          class.Name,
+		Package:       class.Package,
+		FilePath:      class.FilePath,
+		Imports:       toJavaImports(class.Imports),
+		IsEnum:        true,
+		EnumConstants: append([]string(nil), class.EnumValues...),
+	}
+	for i := range class.EnumValues {
+		doc := ""
+		if i < len(class.EnumValueKDocs) {
+			doc = javadoc.CleanJavaDoc(class.EnumValueKDocs[i])
+		}
+		out.EnumConstantDocs = append(out.EnumConstantDocs, doc)
 	}
 	return out
 }
@@ -288,6 +306,7 @@ func toBindingClass(class ktparser.Class) javaparser.Class {
 			Annotations: fieldAnnotations(prop.Annotations),
 			JavaDoc:     javadoc.CleanJavaDoc(prop.KDoc),
 			IsFinal:     !prop.IsMutable,
+			RawJavaDoc:  prop.KDoc,
 		})
 	}
 	return out
@@ -333,6 +352,7 @@ func toJavaClass(class ktparser.Class) javaparser.Class {
 			Annotations: fieldAnnotations(prop.Annotations),
 			JavaDoc:     javadoc.CleanJavaDoc(prop.KDoc),
 			IsFinal:     !prop.IsMutable,
+			RawJavaDoc:  prop.KDoc,
 		})
 	}
 	// Methods are deliberately not copied: Kotlin data-class getters,

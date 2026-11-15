@@ -284,6 +284,7 @@ func extractEnumEntries(node *tree_sitter.Node, source []byte, class *Class) {
 		}
 		if id := firstChildOfKind(child, "identifier"); id != nil {
 			class.EnumValues = append(class.EnumValues, id.Utf8Text(source))
+			class.EnumValueKDocs = append(class.EnumValueKDocs, leadingKDoc(child, source))
 		}
 	}
 }

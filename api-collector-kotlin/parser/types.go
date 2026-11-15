@@ -71,6 +71,9 @@ type Class struct {
 	IsSealed           bool
 	IsInterface        bool
 	EnumValues         []string
+	// EnumValueKDocs holds the KDoc of each enum entry as written, in the
+	// order of EnumValues: "" for an entry without one.
+	EnumValueKDocs []string
 }
 
 // ParseResult is the outcome of parsing one file.
