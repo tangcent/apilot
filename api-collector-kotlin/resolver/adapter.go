@@ -103,6 +103,12 @@ func (r *Resolver) ResolveForBinding(source *ktparser.Class, rawType string, bin
 	return resolved
 }
 
+// SetRequiredFields selects how resolved fields are marked required: one of
+// collector.RequiredFieldsDefault or collector.RequiredFieldsConstraints.
+func (r *Resolver) SetRequiredFields(mode string) {
+	r.tr.SetRequiredFields(mode)
+}
+
 // Unresolved returns type names the resolver could not expand, with enums
 // filtered out: an enum is intentionally rendered as a string, so it is not a
 // missing type.

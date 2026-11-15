@@ -102,6 +102,10 @@ func (c *JavaCollector) CollectWithTypes(ctx collector.CollectContext, types []p
 }
 
 func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Class) ([]collector.ApiEndpoint, []parser.Class, error) {
+	requiredFields, err := ctx.RequiredFields()
+	if err != nil {
+		return nil, nil, err
+	}
 	depResolution, depResolver := setupDependencyResolution(ctx.SourceDir, ctx.NoDeps)
 	c.mu.Lock()
 	c.depResolution = depResolution
@@ -171,6 +175,7 @@ func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Cla
 			sm.SetDependencyResolver(depResolver)
 		}
 		sm.SetUnresolved(unresolved)
+		sm.SetRequiredFields(requiredFields)
 		before := len(endpoints)
 		controllers := sm.ExtractControllers(results)
 		warnings = append(warnings, sm.Warnings()...)
@@ -192,6 +197,7 @@ func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Cla
 			jr.SetDependencyResolver(depResolver)
 		}
 		jr.SetUnresolved(unresolved)
+		jr.SetRequiredFields(requiredFields)
 		before := len(endpoints)
 		for _, res := range jr.ExtractResources(results) {
 			for _, ep := range res.Endpoints {
@@ -212,6 +218,7 @@ func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Cla
 			fg.SetDependencyResolver(depResolver)
 		}
 		fg.SetUnresolved(unresolved)
+		fg.SetRequiredFields(requiredFields)
 		before := len(endpoints)
 		for _, client := range fg.ExtractClients(results) {
 			for _, ep := range client.Endpoints {

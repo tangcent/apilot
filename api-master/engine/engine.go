@@ -32,6 +32,9 @@ type Config struct {
 	// run is an error, because a document with no endpoints is far more often a
 	// collector gap than an intentional export.
 	AllowEmpty bool
+	// RequiredFields selects how collectors mark fields required: empty or
+	// collector.RequiredFieldsDefault, or collector.RequiredFieldsConstraints.
+	RequiredFields string
 }
 
 func Run(cfg Config) error {
@@ -74,6 +77,13 @@ func Run(cfg Config) error {
 		SourceDir:  sourceDir,
 		SourceFile: sourceFile,
 		NoDeps:     cfg.NoDeps,
+	}
+	if cfg.RequiredFields != "" {
+		ctx.Config = map[string]string{collector.ConfigRequiredFields: cfg.RequiredFields}
+		// Reject an unknown mode before the tree is parsed, not after.
+		if _, err := ctx.RequiredFields(); err != nil {
+			return err
+		}
 	}
 	endpoints, err := c.Collect(ctx)
 	if err != nil {
@@ -594,6 +604,7 @@ func handleExport(args []string) {
 		projectRoot    string
 		noDeps         bool
 		allowEmpty     bool
+		requiredFields string
 		listCollectors bool
 		listFormatters bool
 		showHelp       bool
@@ -610,6 +621,7 @@ func handleExport(args []string) {
 	fs.StringVar(&projectRoot, "project-root", "", "override auto-detected project root directory")
 	fs.BoolVar(&noDeps, "no-deps", false, "disable resolving request/response types from dependencies")
 	fs.BoolVar(&allowEmpty, "allow-empty", false, "exit 0 when the collection yields no endpoints")
+	fs.StringVar(&requiredFields, "required-fields", "", `how fields are marked required: "default" (unless @Nullable) or "constraints" (only with @NotNull, @NotBlank or @NotEmpty)`)
 	fs.BoolVar(&listCollectors, "list-collectors", false, "print registered collectors and exit")
 	fs.BoolVar(&listFormatters, "list-formatters", false, "print registered formatters and exit")
 	fs.BoolVar(&showHelp, "help", false, "print help and exit")
@@ -673,6 +685,7 @@ func handleExport(args []string) {
 		ProjectRoot:    projectRoot,
 		NoDeps:         noDeps,
 		AllowEmpty:     allowEmpty,
+		RequiredFields: requiredFields,
 	}
 
 	if err := Run(cfg); err != nil {
@@ -733,6 +746,9 @@ func printExportHelp() {
 	fmt.Println("        disable resolving request/response types from dependencies")
 	fmt.Println("  --allow-empty")
 	fmt.Println("        exit 0 when the collection yields no endpoints (default: fail)")
+	fmt.Println("  --required-fields string")
+	fmt.Println("        how fields are marked required: default (unless @Nullable) or")
+	fmt.Println("        constraints (only with @NotNull, @NotBlank or @NotEmpty) (default: default)")
 	fmt.Println("  --params string")
 	fmt.Println("        formatter params as JSON (e.g. '{\"variant\":\"detailed\"}')")
 	fmt.Println("  --output string")

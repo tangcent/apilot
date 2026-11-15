@@ -17,6 +17,7 @@ type Parser struct {
 	dependencyResolver   resolver.DependencyResolver
 	collectorDepResolver collector.DependencyResolver
 	unresolved           *collector.UnresolvedSet
+	requiredFields       string
 	warnings             []string
 }
 
@@ -37,6 +38,12 @@ func (p *Parser) SetCollectorDependencyResolver(cdr collector.DependencyResolver
 // expand. Optional; type resolution behaviour is unchanged without it.
 func (p *Parser) SetUnresolved(u *collector.UnresolvedSet) {
 	p.unresolved = u
+}
+
+// SetRequiredFields selects how resolved fields are marked required: one of
+// collector.RequiredFieldsDefault or collector.RequiredFieldsConstraints.
+func (p *Parser) SetRequiredFields(mode string) {
+	p.requiredFields = mode
 }
 
 // Warnings returns the diagnostics raised by the last ExtractResources call.
@@ -62,6 +69,7 @@ func (p *Parser) ExtractResources(results []parser.ParseResult) []Resource {
 		typeResolver.SetCollectorDependencyResolver(p.collectorDepResolver)
 	}
 	typeResolver.SetUnresolved(p.unresolved)
+	typeResolver.SetRequiredFields(p.requiredFields)
 
 	var resources []Resource
 	for _, result := range results {

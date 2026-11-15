@@ -15,6 +15,7 @@ type Parser struct {
 	collectorDepResolver collector.DependencyResolver
 	unresolved           *collector.UnresolvedSet
 	warnings             []string
+	requiredFields       string
 }
 
 // Warnings returns the diagnostics of the last extraction: handler
@@ -41,6 +42,12 @@ func (p *Parser) SetUnresolved(u *collector.UnresolvedSet) {
 	p.unresolved = u
 }
 
+// SetRequiredFields selects how resolved fields are marked required: one of
+// collector.RequiredFieldsDefault or collector.RequiredFieldsConstraints.
+func (p *Parser) SetRequiredFields(mode string) {
+	p.requiredFields = mode
+}
+
 func (p *Parser) ExtractControllers(results []parser.ParseResult) []Controller {
 	typeResolver := resolver.NewTypeResolver(flattenClasses(results))
 	if p.dependencyResolver != nil {
@@ -49,6 +56,7 @@ func (p *Parser) ExtractControllers(results []parser.ParseResult) []Controller {
 		typeResolver.SetCollectorDependencyResolver(p.collectorDepResolver)
 	}
 	typeResolver.SetUnresolved(p.unresolved)
+	typeResolver.SetRequiredFields(p.requiredFields)
 
 	var controllers []Controller
 
