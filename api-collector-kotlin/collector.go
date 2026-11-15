@@ -3,11 +3,14 @@ package kotlincollector
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	collector "github.com/tangcent/apilot/api-collector"
+	javacollector "github.com/tangcent/apilot/api-collector-java"
+	javaparser "github.com/tangcent/apilot/api-collector-java/parser"
 	ktparser "github.com/tangcent/apilot/api-collector-kotlin/parser"
 	"github.com/tangcent/apilot/api-collector-kotlin/resolver"
 	"github.com/tangcent/apilot/api-collector-kotlin/springmvc"
@@ -15,10 +18,11 @@ import (
 
 // KotlinCollector parses Kotlin source trees for API endpoints.
 type KotlinCollector struct {
-	mu         sync.Mutex
-	unresolved map[string]int
-	warnings   []string
-	frameworks []string
+	mu            sync.Mutex
+	unresolved    map[string]int
+	warnings      []string
+	frameworks    []string
+	depResolution collector.DependencyResolution
 }
 
 // New returns a new KotlinCollector.
@@ -56,7 +60,21 @@ func (c *KotlinCollector) Frameworks() []string {
 	return append([]string(nil), c.frameworks...)
 }
 
+// DependencyResolution reports the dependency-based type resolution of the Java
+// half of a mixed tree. A Kotlin-only collection reports nothing: the Kotlin
+// resolver does not reach into dependencies.
+func (c *KotlinCollector) DependencyResolution() collector.DependencyResolution {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.depResolution
+}
+
 // Collect walks the Kotlin source and extracts Spring MVC endpoints.
+//
+// A tree that also holds Java sources is collected as one project: the Java
+// endpoints come from the Java collector, Kotlin declarations are visible to
+// Java endpoints and Java declarations to Kotlin endpoints, and the
+// diagnostics of both halves are reported together.
 func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEndpoint, error) {
 	p, err := ktparser.NewParser()
 	if err != nil {
@@ -64,9 +82,19 @@ func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 	}
 	defer p.Close()
 
+	ext := strings.ToLower(filepath.Ext(ctx.SourceFile))
+	mixed := hasJavaSources(ctx.SourceDir)
+
 	var results []ktparser.ParseResult
-	if ctx.SourceFile != "" {
-		if strings.ToLower(filepath.Ext(ctx.SourceFile)) != ".kt" {
+	if ctx.SourceFile != "" && ext == ".java" && mixed {
+		// A Java file of a mixed tree: the Java collector reads the file; the
+		// Kotlin sources are only needed as types.
+		results, err = p.ParseDirectory(ctx.SourceDir)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse directory %s: %w", ctx.SourceDir, err)
+		}
+	} else if ctx.SourceFile != "" {
+		if ext != ".kt" {
 			return nil, fmt.Errorf("%s is not a Kotlin source file", ctx.SourceFile)
 		}
 		fileResult, parseErr := p.ParseFile(ctx.SourceFile)
@@ -99,11 +127,27 @@ func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 	var matched []string
 	var unresolved map[string]int
 
+	// The Java half runs first: its declarations join the Kotlin type table.
+	var javaEndpoints []collector.ApiEndpoint
+	var javaTypes []javaparser.Class
+	var java *javacollector.JavaCollector
+	if mixed {
+		java = javacollector.New().(*javacollector.JavaCollector)
+		javaCtx := ctx
+		if ext == ".kt" {
+			javaCtx.SourceFile = ""
+		}
+		javaEndpoints, javaTypes, err = java.CollectWithTypes(javaCtx, resolver.ToJavaClasses(classes))
+		if err != nil {
+			return nil, fmt.Errorf("collecting the Java sources of %s: %w", ctx.SourceDir, err)
+		}
+	}
+
 	if springMVCDisabled(ctx.Frameworks) {
 		endpoints = nil
 		unresolved = map[string]int{}
 	} else {
-		typeResolver := resolver.New(classes)
+		typeResolver := resolver.NewWithJavaTypes(classes, javaTypes)
 		sm := springmvc.NewParser(typeResolver)
 		before := len(endpoints)
 		for _, ctrl := range sm.ExtractControllers(results) {
@@ -118,10 +162,26 @@ func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 		unresolved = typeResolver.Unresolved()
 	}
 
+	var depResolution collector.DependencyResolution
+	if java != nil {
+		endpoints = append(endpoints, javaEndpoints...)
+		for name, n := range java.Unresolved() {
+			unresolved[name] += n
+		}
+		warnings = append(warnings, java.Warnings()...)
+		for _, framework := range java.Frameworks() {
+			if !containsString(matched, framework) {
+				matched = append(matched, framework)
+			}
+		}
+		depResolution = java.DependencyResolution()
+	}
+
 	c.mu.Lock()
 	c.unresolved = unresolved
 	c.warnings = warnings
 	c.frameworks = matched
+	c.depResolution = depResolution
 	c.mu.Unlock()
 
 	seen := make(map[string]bool, len(endpoints))
@@ -134,6 +194,39 @@ func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 		}
 	}
 	return deduped, nil
+}
+
+// hasJavaSources reports whether a tree holds a .java file outside build and
+// tool directories.
+func hasJavaSources(root string) bool {
+	found := false
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || found {
+			return nil
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", ".gradle", ".idea", ".kotlin", "build", "out", "target", "node_modules":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.EqualFold(filepath.Ext(path), ".java") {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
+}
+
+func containsString(values []string, value string) bool {
+	for _, v := range values {
+		if v == value {
+			return true
+		}
+	}
+	return false
 }
 
 func flattenClasses(results []ktparser.ParseResult) []ktparser.Class {

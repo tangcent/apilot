@@ -372,10 +372,11 @@ func detectCollector(sourceDir string) (string, error) {
 			name := ci.collector
 			// A Gradle or Maven build file says "JVM project", not "Java
 			// source": build.gradle.kts is also the build script of an ordinary
-			// Java project. Decide by the sources: Kotlin with no Java is
-			// Kotlin, anything with Java stays with the Java collector, which
-			// also handles mixed trees.
-			if name == "java" && onlyKotlinSources(sourceDir) {
+			// Java project. Decide by the sources: a tree with Kotlin in it goes
+			// to the Kotlin collector, which hands the Java sources of a mixed
+			// tree to the Java collector. The Java collector does not read .kt
+			// files, so a mixed tree sent to it would lose every Kotlin endpoint.
+			if name == "java" && hasKotlinSources(sourceDir) {
 				name = "kotlin"
 			}
 			if _, ok := collectors[name]; ok {
@@ -384,7 +385,7 @@ func detectCollector(sourceDir string) (string, error) {
 		}
 	}
 	// No build indicator at all: a tree of Kotlin sources is still collectable.
-	if onlyKotlinSources(sourceDir) {
+	if hasKotlinSources(sourceDir) {
 		if _, ok := collectors["kotlin"]; ok {
 			return "kotlin", nil
 		}
@@ -392,13 +393,13 @@ func detectCollector(sourceDir string) (string, error) {
 	return "", fmt.Errorf("could not auto-detect collector for %q", sourceDir)
 }
 
-// onlyKotlinSources reports whether a tree holds at least one .kt file and no
-// .java file. Generated and build directories are skipped so a stale artifact
-// cannot decide the collector.
-func onlyKotlinSources(root string) bool {
-	java, kotlin := 0, 0
+// hasKotlinSources reports whether a tree holds at least one .kt file.
+// Generated and build directories are skipped so a stale artifact cannot
+// decide the collector.
+func hasKotlinSources(root string) bool {
+	found := false
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
+		if err != nil || found {
 			return nil
 		}
 		if d.IsDir() {
@@ -408,15 +409,13 @@ func onlyKotlinSources(root string) bool {
 			}
 			return nil
 		}
-		switch filepath.Ext(path) {
-		case ".java":
-			java++
-		case ".kt":
-			kotlin++
+		if filepath.Ext(path) == ".kt" {
+			found = true
+			return filepath.SkipAll
 		}
 		return nil
 	})
-	return kotlin > 0 && java == 0
+	return found
 }
 
 func writeOutput(path string, data []byte) error {

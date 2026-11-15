@@ -533,9 +533,17 @@ func TestDetectCollector_Kotlin(t *testing.T) {
 			expected: "kotlin",
 		},
 		{
-			name:     "mixed sources stay with the Java collector",
+			// The Java collector does not read .kt files; the Kotlin collector
+			// hands the Java sources to it.
+			name:     "mixed sources go to the Kotlin collector",
 			build:    "build.gradle",
 			sources:  []string{"Main.kt", "Legacy.java"},
+			expected: "kotlin",
+		},
+		{
+			name:     "Java sources only stay Java",
+			build:    "pom.xml",
+			sources:  []string{"Main.java"},
 			expected: "java",
 		},
 		{
