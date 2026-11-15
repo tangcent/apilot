@@ -2,6 +2,8 @@
 // A Collector parses source code for a specific language/framework and produces []ApiEndpoint.
 package collector
 
+import "fmt"
+
 // Collector is the interface every language/framework collector must implement.
 type Collector interface {
 	// Name returns the unique identifier for this collector (e.g. "java", "go").
@@ -35,4 +37,34 @@ type CollectContext struct {
 
 	// Config holds collector-specific key-value configuration.
 	Config map[string]string `json:"config,omitempty"`
+}
+
+// ConfigRequiredFields is the Config key that selects how a collector decides
+// whether a request or response field is required. Its values are the
+// RequiredFields constants; an absent key means RequiredFieldsDefault.
+const ConfigRequiredFields = "requiredFields"
+
+const (
+	// RequiredFieldsDefault marks a field required unless it is annotated as
+	// nullable (@Nullable, @Null).
+	RequiredFieldsDefault = "default"
+	// RequiredFieldsConstraints marks a field required only when a Bean
+	// Validation constraint demands a value: @NotNull, @NotBlank or @NotEmpty.
+	// This is how the constraints are enforced at runtime, and how the EasyYapi
+	// IntelliJ plugin documents them.
+	RequiredFieldsConstraints = "constraints"
+)
+
+// RequiredFields returns the requiredness mode the context selects, or an
+// error naming the accepted values when it selects an unknown one.
+func (c CollectContext) RequiredFields() (string, error) {
+	switch mode := c.Config[ConfigRequiredFields]; mode {
+	case "", RequiredFieldsDefault:
+		return RequiredFieldsDefault, nil
+	case RequiredFieldsConstraints:
+		return RequiredFieldsConstraints, nil
+	default:
+		return "", fmt.Errorf("unknown required-fields mode %q: use %q or %q",
+			mode, RequiredFieldsDefault, RequiredFieldsConstraints)
+	}
 }

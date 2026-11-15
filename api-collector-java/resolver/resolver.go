@@ -155,6 +155,14 @@ type TypeResolver struct {
 	resolving          map[string]bool
 	dependencyResolver DependencyResolver
 	unresolved         *collector.UnresolvedSet
+	// requiredFields is a collector.RequiredFields mode; empty means default.
+	requiredFields string
+}
+
+// SetRequiredFields selects how resolved fields are marked required: one of
+// collector.RequiredFieldsDefault or collector.RequiredFieldsConstraints.
+func (r *TypeResolver) SetRequiredFields(mode string) {
+	r.requiredFields = mode
 }
 
 func NewTypeResolver(classes []parser.Class) *TypeResolver {
@@ -616,16 +624,36 @@ func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []s
 	return obj
 }
 
+// fieldRequired decides whether a field is required from its annotations.
+//
+// In the default mode a field is required unless it is marked nullable. In the
+// constraints mode it is required only when a Bean Validation constraint
+// demands a value, which is what the constraint enforces at runtime: a field
+// without one may be left out of a request. A nullable marker wins in both
+// modes.
+func (r *TypeResolver) fieldRequired(annotations []parser.Annotation) bool {
+	required := r.requiredFields != collector.RequiredFieldsConstraints
+	for _, ann := range annotations {
+		switch ann.Name {
+		case "NotNull", "NotBlank", "NotEmpty":
+			if r.requiredFields == collector.RequiredFieldsConstraints {
+				required = true
+			}
+		}
+	}
+	for _, ann := range annotations {
+		if ann.Name == "Nullable" || ann.Name == "Null" {
+			return false
+		}
+	}
+	return required
+}
+
 func (r *TypeResolver) resolveField(source parser.Class, f parser.Field, localBindings map[string]string, typeParamSet map[string]bool) *model.FieldModel {
 	fieldModel := r.ResolveFrom(source, f.Type, localBindings)
 	fm := &model.FieldModel{
 		Model:    fieldModel,
-		Required: true,
-	}
-	for _, ann := range f.Annotations {
-		if ann.Name == "Nullable" || ann.Name == "Null" {
-			fm.Required = false
-		}
+		Required: r.fieldRequired(f.Annotations),
 	}
 	javadoc.FieldDocumentationFor(f.Annotations, f.JavaDoc).Normalize().ApplyTo(fm)
 	if r.isUnboundTypeParam(f.Type, localBindings, typeParamSet) {

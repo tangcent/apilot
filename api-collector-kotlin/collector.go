@@ -76,6 +76,10 @@ func (c *KotlinCollector) DependencyResolution() collector.DependencyResolution 
 // Java endpoints and Java declarations to Kotlin endpoints, and the
 // diagnostics of both halves are reported together.
 func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEndpoint, error) {
+	requiredFields, err := ctx.RequiredFields()
+	if err != nil {
+		return nil, err
+	}
 	p, err := ktparser.NewParser()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kotlin parser: %w", err)
@@ -148,6 +152,7 @@ func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 		unresolved = map[string]int{}
 	} else {
 		typeResolver := resolver.NewWithJavaTypes(classes, javaTypes)
+		typeResolver.SetRequiredFields(requiredFields)
 		sm := springmvc.NewParser(typeResolver)
 		before := len(endpoints)
 		for _, ctrl := range sm.ExtractControllers(results) {

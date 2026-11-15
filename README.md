@@ -158,6 +158,8 @@ Flags:
   --project-root   string   Override auto-detected project root directory
   --no-deps                 Disable resolving request/response types from dependencies
   --allow-empty             Exit 0 when the collection yields no endpoints (default: fail)
+  --required-fields string  How fields are marked required: default (unless @Nullable)
+                            or constraints (only with @NotNull, @NotBlank, @NotEmpty)
   --output         string   Output file path (default: stdout)
   --list-collectors         Print available collectors and exit
   --list-formatters         Print available formatters and exit
@@ -209,6 +211,24 @@ known to be absent.
 
 ```bash
 apilot export ./backend --formatter markdown --no-deps
+```
+
+### Required fields
+
+Java and Kotlin fields are marked required in one of two ways:
+
+| Mode | A field is required when | Use it when |
+|------|--------------------------|-------------|
+| `default` | it is not annotated `@Nullable` or `@Null` | fields are present unless declared otherwise |
+| `constraints` | it carries `@NotNull`, `@NotBlank` or `@NotEmpty` | requests are validated with Bean Validation, so a field without a constraint may be left out |
+
+`@Nullable` wins in both modes, and a `required` flag written in `@Schema` or
+`@ApiModelProperty` overrides either. The `constraints` mode matches what the
+validator enforces at runtime and how the EasyYapi IntelliJ plugin documents
+fields.
+
+```bash
+apilot export ./backend --formatter json --required-fields constraints
 ```
 
 ### Empty exports
