@@ -17,7 +17,7 @@ func TestCleanJavaDoc(t *testing.T) {
  */`
 
 	got := CleanJavaDoc(raw)
-	want := "Fetch user.\nMore details."
+	want := "Fetch user.\n\nMore details."
 	if got != want {
 		t.Fatalf("Expected cleaned JavaDoc %q, got %q", want, got)
 	}

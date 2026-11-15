@@ -50,11 +50,12 @@ func (p *Parser) ParseFile(path string) (*ParseResult, error) {
 		return nil, fmt.Errorf("parsing %s: empty syntax tree", path)
 	}
 	if root.HasError() {
-		return &ParseResult{FilePath: path, Error: fmt.Errorf("%s: failed to parse Kotlin source: the grammar reported a syntax error", path)}, nil
+		line, _ := firstSyntaxError(root)
+		return p.parseDamaged(path, source, line)
 	}
 
 	result := &ParseResult{FilePath: path}
-	extractFile(root, source, path, result)
+	extractFile(root, source, path, result, false)
 	return result, nil
 }
 

@@ -24,6 +24,9 @@ type Resolver struct {
 	enumValues map[string][]string
 	tr         *javaresolver.TypeResolver
 	unresolved *collector.UnresolvedSet
+	javaTypes  []javaparser.Class
+	// bindingTR resolves model attributes; it is built on first use.
+	bindingTR *javaresolver.TypeResolver
 }
 
 // New builds a resolver over all Kotlin declarations in the project.
@@ -42,6 +45,7 @@ func NewWithJavaTypes(classes []ktparser.Class, javaTypes []javaparser.Class) *R
 		byFile:     make(map[string][]string),
 		enumValues: make(map[string][]string),
 		unresolved: collector.NewUnresolvedSet(),
+		javaTypes:  javaTypes,
 	}
 
 	var javaClasses []javaparser.Class
@@ -66,6 +70,43 @@ func NewWithJavaTypes(classes []ktparser.Class, javaTypes []javaparser.Class) *R
 	r.tr = javaresolver.NewTypeResolver(javaClasses)
 	r.tr.SetUnresolved(r.unresolved)
 	return r
+}
+
+// ResolveForBinding expands a type the way Spring's data binder sees it when
+// it binds a model attribute from request parameters: properties go by their
+// Kotlin names, because @JsonProperty and @JsonIgnore only shape JSON, and a
+// val declared in the class body is left out, because nothing can set it.
+func (r *Resolver) ResolveForBinding(source *ktparser.Class, rawType string, bindings map[string]string) *model.ObjectModel {
+	if rawType == "" {
+		return model.NullModel()
+	}
+	if r.bindingTR == nil {
+		var javaClasses []javaparser.Class
+		for _, class := range r.classes {
+			if !class.IsEnum {
+				javaClasses = append(javaClasses, toBindingClass(class))
+			}
+		}
+		javaClasses = append(javaClasses, r.javaTypes...)
+		r.bindingTR = javaresolver.NewTypeResolver(javaClasses)
+		r.bindingTR.SetUnresolved(r.unresolved)
+	}
+	var normalizedBindings map[string]string
+	if len(bindings) > 0 {
+		normalizedBindings = make(map[string]string, len(bindings))
+		for name, value := range bindings {
+			normalizedBindings[name] = NormalizeModelType(value)
+		}
+	}
+	resolved := r.bindingTR.ResolveForBinding(toJavaClass(*source), NormalizeModelType(rawType), normalizedBindings)
+	r.applyEnums(resolved)
+	return resolved
+}
+
+// SetRequiredFields selects how resolved fields are marked required: one of
+// collector.RequiredFieldsDefault or collector.RequiredFieldsConstraints.
+func (r *Resolver) SetRequiredFields(mode string) {
+	r.tr.SetRequiredFields(mode)
 }
 
 // Unresolved returns type names the resolver could not expand, with enums
@@ -198,15 +239,56 @@ func enumOptions(values []string) []model.FieldOption {
 }
 
 // ToJavaClasses converts Kotlin declarations to the Java model, so a Java
-// endpoint in the same tree can resolve them. Enums are left out: the Java
-// type table has no enum model, and a Java enum is not in it either.
+// endpoint in the same tree can resolve them. An enum keeps its constants for
+// the binding view; the Java resolver's JSON view does not see enums.
 func ToJavaClasses(classes []ktparser.Class) []javaparser.Class {
 	out := make([]javaparser.Class, 0, len(classes))
 	for _, class := range classes {
 		if class.IsEnum {
+			out = append(out, javaparser.Class{
+				Name:          class.Name,
+				Package:       class.Package,
+				FilePath:      class.FilePath,
+				Imports:       toJavaImports(class.Imports),
+				IsEnum:        true,
+				EnumConstants: append([]string(nil), class.EnumValues...),
+			})
 			continue
 		}
 		out = append(out, toJavaClass(class))
+	}
+	return out
+}
+
+func toJavaImports(imports []ktparser.Import) []javaparser.Import {
+	out := make([]javaparser.Import, 0, len(imports))
+	for _, imp := range imports {
+		out = append(out, javaparser.Import{Path: imp.Path, OnDemand: imp.OnDemand})
+	}
+	return out
+}
+
+// toBindingClass converts a declaration for the binding view: every property
+// Spring can set, under its Kotlin name.
+func toBindingClass(class ktparser.Class) javaparser.Class {
+	out := toJavaClass(ktparser.Class{
+		Name: class.Name, Package: class.Package, FilePath: class.FilePath, KDoc: class.KDoc,
+		Annotations: class.Annotations, TypeParameters: class.TypeParameters,
+		SuperClass: class.SuperClass, SuperClassTypeArgs: class.SuperClassTypeArgs,
+		Interfaces: class.Interfaces, Imports: class.Imports,
+		IsInterface: class.IsInterface, IsSealed: class.IsSealed,
+	})
+	for _, prop := range class.Fields {
+		if !prop.IsMutable && !prop.InConstructor {
+			continue
+		}
+		out.Fields = append(out.Fields, javaparser.Field{
+			Name:        prop.Name,
+			Type:        NormalizeModelType(prop.Type),
+			Annotations: fieldAnnotations(prop.Annotations),
+			JavaDoc:     javadoc.CleanJavaDoc(prop.KDoc),
+			IsFinal:     !prop.IsMutable,
+		})
 	}
 	return out
 }

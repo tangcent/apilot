@@ -56,4 +56,6 @@ type Controller struct {
 	Package   string
 	BasePath  string
 	Endpoints []Endpoint
+	// Description is the controller's Javadoc.
+	Description string
 }

@@ -15,6 +15,7 @@ type Parser struct {
 	dependencyResolver resolver.DependencyResolver
 	collectorDepResolver collector.DependencyResolver
 	unresolved           *collector.UnresolvedSet
+	requiredFields       string
 }
 
 // NewParser creates a new Feign client parser.
@@ -36,6 +37,12 @@ func (p *Parser) SetUnresolved(u *collector.UnresolvedSet) {
 	p.unresolved = u
 }
 
+// SetRequiredFields selects how resolved fields are marked required: one of
+// collector.RequiredFieldsDefault or collector.RequiredFieldsConstraints.
+func (p *Parser) SetRequiredFields(mode string) {
+	p.requiredFields = mode
+}
+
 // ExtractClients extracts Feign clients from parse results.
 // It supports both Spring Cloud OpenFeign (Spring MVC annotations) and
 // Netflix Feign (@RequestLine annotations).
@@ -47,6 +54,7 @@ func (p *Parser) ExtractClients(results []parser.ParseResult) []FeignClient {
 		typeResolver.SetCollectorDependencyResolver(p.collectorDepResolver)
 	}
 	typeResolver.SetUnresolved(p.unresolved)
+	typeResolver.SetRequiredFields(p.requiredFields)
 
 	var clients []FeignClient
 	for _, result := range results {

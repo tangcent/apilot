@@ -102,6 +102,10 @@ func (c *JavaCollector) CollectWithTypes(ctx collector.CollectContext, types []p
 }
 
 func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Class) ([]collector.ApiEndpoint, []parser.Class, error) {
+	requiredFields, err := ctx.RequiredFields()
+	if err != nil {
+		return nil, nil, err
+	}
 	depResolution, depResolver := setupDependencyResolution(ctx.SourceDir, ctx.NoDeps)
 	c.mu.Lock()
 	c.depResolution = depResolution
@@ -171,10 +175,15 @@ func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Cla
 			sm.SetDependencyResolver(depResolver)
 		}
 		sm.SetUnresolved(unresolved)
+		sm.SetRequiredFields(requiredFields)
 		before := len(endpoints)
-		for _, ctrl := range sm.ExtractControllers(results) {
+		controllers := sm.ExtractControllers(results)
+		warnings = append(warnings, sm.Warnings()...)
+		for _, ctrl := range controllers {
 			for _, ep := range ctrl.Endpoints {
-				endpoints = append(endpoints, springmvcEndpointToAPI(ep, ctrl.Name))
+				api := springmvcEndpointToAPI(ep, ctrl.Name)
+				api.FolderDescription = ctrl.Description
+				endpoints = append(endpoints, api)
 			}
 		}
 		if len(endpoints) > before {
@@ -188,10 +197,13 @@ func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Cla
 			jr.SetDependencyResolver(depResolver)
 		}
 		jr.SetUnresolved(unresolved)
+		jr.SetRequiredFields(requiredFields)
 		before := len(endpoints)
 		for _, res := range jr.ExtractResources(results) {
 			for _, ep := range res.Endpoints {
-				endpoints = append(endpoints, jaxrsEndpointToAPI(ep, res.Name))
+				api := jaxrsEndpointToAPI(ep, res.Name)
+				api.FolderDescription = res.Description
+				endpoints = append(endpoints, api)
 			}
 		}
 		if len(endpoints) > before {
@@ -206,6 +218,7 @@ func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Cla
 			fg.SetDependencyResolver(depResolver)
 		}
 		fg.SetUnresolved(unresolved)
+		fg.SetRequiredFields(requiredFields)
 		before := len(endpoints)
 		for _, client := range fg.ExtractClients(results) {
 			for _, ep := range client.Endpoints {
@@ -501,8 +514,11 @@ func feignEndpointToAPI(ep feign.Endpoint, folder string) collector.ApiEndpoint 
 // isMultipartFile reports whether a declared Java type is a multipart file
 // part. The parameter travels in a multipart form body, so it is a form
 // parameter: documenting it under Query would tell a reader to send ?file=.
+// isMultipartFile reports whether a parameter of this type is uploaded as
+// file parts: a MultipartFile, or a collection or array of them.
 func isMultipartFile(javaType string) bool {
-	return javaType == "MultipartFile" || strings.HasSuffix(javaType, ".MultipartFile")
+	element := springmvc.ElementType(javaType)
+	return element == "MultipartFile" || strings.HasSuffix(element, ".MultipartFile")
 }
 
 // firstMediaType returns the first declared media type, or fallback when the

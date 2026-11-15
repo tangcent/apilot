@@ -18,6 +18,10 @@ type ApiEndpoint struct {
 	Headers     []ApiHeader    `json:"headers,omitempty"`
 	RequestBody *ApiBody       `json:"requestBody,omitempty"`
 	Response    *ApiBody       `json:"response,omitempty"`
+	// FolderDescription is the doc comment of the class the endpoint belongs
+	// to, such as a controller's Javadoc, so a formatter can name the folder
+	// the way the source describes it. Empty when the source has none.
+	FolderDescription string `json:"folderDescription,omitempty"`
 	// Consumes lists the request media types the endpoint declares (JAX-RS
 	// @Consumes, Spring consumes=...). Empty when the source declares none, so
 	// a formatter can tell a declared content type from a collector default.

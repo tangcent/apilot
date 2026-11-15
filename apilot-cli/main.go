@@ -17,6 +17,7 @@ import (
 	jsonfmt    "github.com/tangcent/apilot/api-formatter-json"
 	mdfmt      "github.com/tangcent/apilot/api-formatter-markdown"
 	postmanfmt "github.com/tangcent/apilot/api-formatter-postman"
+	yapifmt    "github.com/tangcent/apilot/api-formatter-yapi"
 )
 
 func init() {
@@ -30,6 +31,7 @@ func init() {
 	engine.RegisterFormatter(curlfmt.New())
 	engine.RegisterFormatter(postmanfmt.New())
 	engine.RegisterFormatter(jsonfmt.New())
+	engine.RegisterFormatter(yapifmt.New())
 }
 
 func main() {
