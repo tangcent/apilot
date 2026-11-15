@@ -28,6 +28,13 @@ type Resolver struct {
 
 // New builds a resolver over all Kotlin declarations in the project.
 func New(classes []ktparser.Class) *Resolver {
+	return NewWithJavaTypes(classes, nil)
+}
+
+// NewWithJavaTypes builds a resolver over the Kotlin declarations of a project
+// that also holds Java sources. javaTypes are the Java declarations of the same
+// tree: a Kotlin endpoint may take or return a class written in Java.
+func NewWithJavaTypes(classes []ktparser.Class, javaTypes []javaparser.Class) *Resolver {
 	r := &Resolver{
 		classes:    classes,
 		byKey:      make(map[string]*ktparser.Class, len(classes)),
@@ -54,6 +61,7 @@ func New(classes []ktparser.Class) *Resolver {
 		}
 		javaClasses = append(javaClasses, toJavaClass(*class))
 	}
+	javaClasses = append(javaClasses, javaTypes...)
 
 	r.tr = javaresolver.NewTypeResolver(javaClasses)
 	r.tr.SetUnresolved(r.unresolved)
@@ -185,6 +193,20 @@ func enumOptions(values []string) []model.FieldOption {
 	out := make([]model.FieldOption, 0, len(values))
 	for _, value := range values {
 		out = append(out, model.FieldOption{Value: value})
+	}
+	return out
+}
+
+// ToJavaClasses converts Kotlin declarations to the Java model, so a Java
+// endpoint in the same tree can resolve them. Enums are left out: the Java
+// type table has no enum model, and a Java enum is not in it either.
+func ToJavaClasses(classes []ktparser.Class) []javaparser.Class {
+	out := make([]javaparser.Class, 0, len(classes))
+	for _, class := range classes {
+		if class.IsEnum {
+			continue
+		}
+		out = append(out, toJavaClass(class))
 	}
 	return out
 }
