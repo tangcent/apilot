@@ -3,6 +3,7 @@
 package resolver
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
@@ -27,9 +28,6 @@ type Resolver struct {
 	javaTypes  []javaparser.Class
 	// bindingTR resolves model attributes; it is built on first use.
 	bindingTR *javaresolver.TypeResolver
-	// enumOptions holds the values of each enum, described by the doc
-	// comments of its entries, by simple and qualified name.
-	enumOptions map[string][]model.FieldOption
 }
 
 // New builds a resolver over all Kotlin declarations in the project.
@@ -50,7 +48,6 @@ func NewWithJavaTypes(classes []ktparser.Class, javaTypes []javaparser.Class) *R
 		unresolved: collector.NewUnresolvedSet(),
 		javaTypes:  javaTypes,
 	}
-	r.enumOptions = make(map[string][]model.FieldOption)
 
 	var javaClasses []javaparser.Class
 	for i := range classes {
@@ -64,13 +61,10 @@ func NewWithJavaTypes(classes []ktparser.Class, javaTypes []javaparser.Class) *R
 		if class.IsEnum {
 			r.enumValues[class.Name] = class.EnumValues
 			r.enumValues[key] = class.EnumValues
-			enum := toJavaEnum(*class)
-			r.enumOptions[class.Name] = javaresolver.EnumOptions(enum)
-			r.enumOptions[key] = r.enumOptions[class.Name]
 			// Enums are rendered as string options, not as empty objects.
 			// The JSON view never sees the declaration; it is there for the
 			// fields whose doc points at it with @see.
-			javaClasses = append(javaClasses, enum)
+			javaClasses = append(javaClasses, toJavaEnum(*class))
 			continue
 		}
 		javaClasses = append(javaClasses, toJavaClass(*class))
@@ -226,9 +220,9 @@ func (r *Resolver) applyEnums(m *model.ObjectModel) {
 				continue
 			}
 			if field.Model.Kind == model.KindSingle {
-				if options := r.enumOptions[lastSegment(field.Model.TypeName)]; len(options) > 0 {
+				if options := r.enumOptions(field.Model.TypeName); len(options) > 0 {
 					field.Model = model.SingleModel(model.JsonTypeString)
-					field.Options = append([]model.FieldOption(nil), options...)
+					field.Options = options
 					continue
 				}
 			}
@@ -240,6 +234,25 @@ func (r *Resolver) applyEnums(m *model.ObjectModel) {
 		r.applyEnums(m.KeyModel)
 		r.applyEnums(m.ValueModel)
 	}
+}
+
+// enumOptions returns the values of the enum a type name denotes, by its
+// simple name as EnumValues goes, each described by the KDoc of its entry.
+func (r *Resolver) enumOptions(name string) []model.FieldOption {
+	values := r.EnumValues(name)
+	if len(values) == 0 {
+		return nil
+	}
+	for _, key := range r.bySimple[lastSegment(name)] {
+		if c := r.byKey[key]; c != nil && c.IsEnum && slices.Equal(c.EnumValues, values) {
+			return javaresolver.EnumOptions(toJavaEnum(*c))
+		}
+	}
+	options := make([]model.FieldOption, 0, len(values))
+	for _, value := range values {
+		options = append(options, model.FieldOption{Value: value})
+	}
+	return options
 }
 
 // ToJavaClasses converts Kotlin declarations to the Java model, so a Java
