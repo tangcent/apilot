@@ -24,11 +24,17 @@ type JavaCollector struct {
 	warnings      []string
 	frameworks    []string
 	depResolution collector.DependencyResolution
+	// shared, when set, is the dependency resolution of a Collect call that
+	// spans another language as well; its owner closes it.
+	shared *Dependencies
 }
 
-// mavenAvailable is a variable so tests can force the tool-missing branch
-// without uninstalling maven-indexer-cli from the machine.
-var mavenAvailable = maven.IsAvailable
+// mavenAvailable and loadProjectContext are variables so tests can force each
+// branch without installing or uninstalling maven-indexer-cli.
+var (
+	mavenAvailable     = maven.IsAvailable
+	loadProjectContext = maven.LoadProjectContext
+)
 
 // New returns a new JavaCollector.
 func New() collector.Collector { return &JavaCollector{} }
@@ -101,14 +107,24 @@ func (c *JavaCollector) CollectWithTypes(ctx collector.CollectContext, types []p
 	return c.collect(ctx, types)
 }
 
+// ShareDependencies makes the next Collect call resolve dependency types
+// through deps instead of setting up its own, so the two halves of a mixed
+// tree read the project's dependency tree once and fetch each class once.
+// The caller keeps ownership of deps and closes it.
+func (c *JavaCollector) ShareDependencies(deps *Dependencies) {
+	c.shared = deps
+}
+
 func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Class) ([]collector.ApiEndpoint, []parser.Class, error) {
-	depResolution, depResolver := setupDependencyResolution(ctx.SourceDir, ctx.NoDeps)
-	c.mu.Lock()
-	c.depResolution = depResolution
-	c.mu.Unlock()
-	if depResolver != nil {
-		defer depResolver.Close()
+	deps := c.shared
+	if deps == nil {
+		deps = SetupDependencies(ctx.SourceDir, ctx.NoDeps)
+		defer deps.Close()
 	}
+	depResolver := deps.resolver
+	c.mu.Lock()
+	c.depResolution = deps.Resolution()
+	c.mu.Unlock()
 
 	p, err := parser.NewParser(parser.ParserOptions{})
 	if err != nil {
@@ -220,8 +236,7 @@ func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Cla
 	c.mu.Lock()
 	c.unresolved = unresolved.Counts()
 	c.warnings = warnings
-	depResolution.ResolvedTypes = depResolverCount(depResolver)
-	c.depResolution = depResolution
+	c.depResolution = deps.Resolution()
 	c.frameworks = matched
 	c.mu.Unlock()
 
@@ -240,53 +255,114 @@ func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Cla
 	return deduped, parsed, nil
 }
 
-// setupDependencyResolution decides whether dependency-based type resolution
-// runs for this Collect call, and why not when it does not.
+// installGuidance tells how to get the indexer CLI.
+const installGuidance = "Install it with `npm install -g maven-indexer-cli` (https://github.com/tangcent/maven-indexer-mcp) and make sure it is on PATH"
+
+// Dependencies is the dependency-based type resolution of one Collect call.
+type Dependencies struct {
+	resolution collector.DependencyResolution
+	resolver   *maven.MavenDependencyResolver
+}
+
+// SetupDependencies decides whether dependency-based type resolution runs for
+// the project in sourceDir, and why not when it does not.
 //
 // The build file is read before the tool check so that a project with no
-// dependencies reports no-deps instead of blaming a missing tool.
-func setupDependencyResolution(sourceDir string, noDeps bool) (collector.DependencyResolution, *maven.MavenDependencyResolver) {
+// dependencies reports no-deps instead of blaming a missing tool. A root that
+// aggregates modules usually declares no dependency itself, so it is asked
+// about before it is judged to have none.
+//
+// When resolution runs, the project's dependency tree is read first: every
+// class is then pinned to the version the tree names.
+func SetupDependencies(sourceDir string, noDeps bool) *Dependencies {
+	state := func(s collector.DependencyResolutionState, detail string) *Dependencies {
+		return &Dependencies{resolution: collector.DependencyResolution{State: s, Detail: detail}}
+	}
 	if noDeps {
-		return collector.DependencyResolution{State: collector.DependencyResolutionDisabled}, nil
+		return state(collector.DependencyResolutionDisabled, "")
 	}
 
 	if !maven.HasBuildFile(sourceDir) {
-		return collector.DependencyResolution{State: collector.DependencyResolutionNoDeps}, nil
+		return state(collector.DependencyResolutionNoDeps, "")
 	}
 
-	deps, err := maven.DetectDependencies(sourceDir)
-	if err != nil || len(deps) == 0 {
-		return collector.DependencyResolution{State: collector.DependencyResolutionNoDeps}, nil
+	declared, _ := maven.DetectDependencies(sourceDir)
+	modules := maven.DeclaresModules(sourceDir)
+	if len(declared) == 0 && !modules {
+		return state(collector.DependencyResolutionNoDeps, "")
 	}
 
 	if !mavenAvailable() {
-		return collector.DependencyResolution{
-			State: collector.DependencyResolutionToolMissing,
-			Detail: fmt.Sprintf("%s not found on PATH — request and response types from the %d declared dependencies cannot be resolved. "+
-				"Install it (https://github.com/tangcent/maven-indexer-cli) and make sure it is on PATH",
-				maven.ToolName, len(deps)),
-		}, nil
+		affected := fmt.Sprintf("the %d declared dependencies", len(declared))
+		if len(declared) == 0 {
+			affected = "the dependencies of its modules"
+		}
+		return state(collector.DependencyResolutionToolMissing,
+			fmt.Sprintf("%s not found on PATH — request and response types from %s cannot be resolved. %s",
+				maven.ToolName, affected, installGuidance))
+	}
+
+	project, err := loadProjectContext(sourceDir)
+	if err != nil {
+		return state(collector.DependencyResolutionToolMissing,
+			fmt.Sprintf("%s did not answer project-context (%v); version 1.2.0 or later is required. %s",
+				maven.ToolName, err, installGuidance))
+	}
+	if !project.HasDependencies() && len(declared) == 0 {
+		return state(collector.DependencyResolutionNoDeps, "")
 	}
 
 	dr, err := maven.NewMavenDependencyResolver()
 	if err != nil {
-		return collector.DependencyResolution{
-			State: collector.DependencyResolutionToolMissing,
-			Detail: fmt.Sprintf("%s found but the dependency class resolver failed to start: %v",
-				maven.ToolName, err),
-		}, nil
+		return state(collector.DependencyResolutionToolMissing,
+			fmt.Sprintf("%s found but the dependency class resolver failed to start: %v", maven.ToolName, err))
 	}
+	dr.SetProjectPath(sourceDir)
 
-	return collector.DependencyResolution{State: collector.DependencyResolutionActive}, dr
+	deps := &Dependencies{
+		resolution: collector.DependencyResolution{State: collector.DependencyResolutionActive},
+		resolver:   dr,
+	}
+	if project.Tree != "resolved" {
+		deps.resolution.Detail = unpinnedTreeDetail(project)
+	}
+	return deps
 }
 
-// depResolverCount reports how many distinct types the resolver expanded from
-// dependencies, or 0 when no resolver ran.
-func depResolverCount(depResolver *maven.MavenDependencyResolver) int {
-	if depResolver == nil {
-		return 0
+// unpinnedTreeDetail explains why versions may not follow the project when its
+// full dependency tree is unknown.
+func unpinnedTreeDetail(project maven.ProjectContext) string {
+	reason := "it has not been resolved"
+	if project.ResolveError != "" {
+		reason = project.ResolveError
 	}
-	return depResolver.ResolvedCount()
+	if project.Declared > 0 {
+		return fmt.Sprintf("the project's full dependency tree is unavailable (%s): only the %d dependencies its build file declares are pinned to their versions, other types come from the version the index holds",
+			reason, project.Declared)
+	}
+	return fmt.Sprintf("the project's dependency tree is unavailable (%s): types come from the version the index holds, not the one the project uses", reason)
+}
+
+// Resolution reports the outcome, counting what the resolver did so far.
+func (d *Dependencies) Resolution() collector.DependencyResolution {
+	res := d.resolution
+	if d.resolver != nil {
+		res.ResolvedTypes = d.resolver.ResolvedCount()
+		res.Unpinned = d.resolver.Unpinned()
+	}
+	return res
+}
+
+// Resolver returns the class resolver, or nil when resolution does not run.
+func (d *Dependencies) Resolver() *maven.MavenDependencyResolver {
+	return d.resolver
+}
+
+// Close releases the resolver.
+func (d *Dependencies) Close() {
+	if d.resolver != nil {
+		d.resolver.Close()
+	}
 }
 
 // resolveFrameworks returns the set of frameworks to parse.

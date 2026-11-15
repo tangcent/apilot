@@ -38,7 +38,12 @@ func (p *Parser) ParseFile(path string) (*ParseResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
+	return p.ParseSource(path, source)
+}
 
+// ParseSource parses Kotlin source read from elsewhere, such as a class of a
+// dependency's sources JAR. path names the source in messages.
+func (p *Parser) ParseSource(path string, source []byte) (*ParseResult, error) {
 	tree := p.parser.Parse(source, nil)
 	if tree == nil {
 		return nil, fmt.Errorf("parsing %s: parser returned no tree", path)

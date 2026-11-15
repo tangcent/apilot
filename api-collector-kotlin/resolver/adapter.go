@@ -68,6 +68,12 @@ func NewWithJavaTypes(classes []ktparser.Class, javaTypes []javaparser.Class) *R
 	return r
 }
 
+// SetDependencyResolver lets the resolver expand types declared in the
+// project's dependencies, such as a response envelope from a shared library.
+func (r *Resolver) SetDependencyResolver(dr javaresolver.DependencyResolver) {
+	r.tr.SetDependencyResolver(dr)
+}
+
 // Unresolved returns type names the resolver could not expand, with enums
 // filtered out: an enum is intentionally rendered as a string, so it is not a
 // missing type.

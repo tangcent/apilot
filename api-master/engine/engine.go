@@ -238,10 +238,11 @@ func reportWarnings(w io.Writer, warnings []string) {
 }
 
 // reportDependencyResolution prints one diagnostic line telling the user
-// whether dependency-based type resolution ran. Output goes to a side channel
-// (stderr) so exported documents stay byte-stable, and it never affects the
-// exit code. A no-deps outcome stays silent: nothing was skipped, so there is
-// nothing to act on.
+// whether dependency-based type resolution ran, followed by a warning when
+// resolved types may come from a version other than the project's. Output goes
+// to a side channel (stderr) so exported documents stay byte-stable, and it
+// never affects the exit code. A no-deps outcome stays silent: nothing was
+// skipped, so there is nothing to act on.
 func reportDependencyResolution(w io.Writer, dr collector.DependencyResolution) {
 	switch dr.State {
 	case collector.DependencyResolutionActive:
@@ -251,6 +252,19 @@ func reportDependencyResolution(w io.Writer, dr collector.DependencyResolution) 
 				unit = "type"
 			}
 			fmt.Fprintf(w, "info: resolved %d %s from dependencies\n", dr.ResolvedTypes, unit)
+			// A type read from another version of its library can differ
+			// from the one the project compiles against.
+			if dr.Detail != "" {
+				fmt.Fprintf(w, "warning: dependency versions: %s\n", dr.Detail)
+			}
+		}
+		if n := len(dr.Unpinned); n > 0 {
+			subject := "types were"
+			if n == 1 {
+				subject = "type was"
+			}
+			fmt.Fprintf(w, "warning: %d dependency %s not pinned to the project's version and read from the indexed one: %s\n",
+				n, subject, strings.Join(dr.Unpinned, ", "))
 		}
 	case collector.DependencyResolutionToolMissing:
 		fmt.Fprintf(w, "warning: dependency type resolution skipped: %s\n", dr.Detail)

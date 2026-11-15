@@ -197,7 +197,7 @@ own environment:
 
 | Language | Prerequisite | What happens without it |
 |----------|--------------|--------------------------|
-| Java     | [`maven-indexer-cli`](https://github.com/tangcent/maven-indexer-cli) on PATH | Resolution is skipped; a warning names the tool and the number of declared dependencies affected |
+| Java, Kotlin | [`maven-indexer-cli`](https://github.com/tangcent/maven-indexer-mcp) 1.2.0 or later on PATH (`npm install -g maven-indexer-cli`) | Resolution is skipped; a warning names the tool and the number of declared dependencies affected |
 | Go       | `go` toolchain on PATH (reads the module cache) | Resolution is skipped; a warning names the missing toolchain |
 | Node.js  | `npm install` run (reads `node_modules`) | Resolution is skipped; a warning says to install first |
 | Python   | A discoverable environment: project `.venv`/`venv`/`env`, `CONDA_PREFIX`, or `python` on PATH | Resolution is skipped; a warning says which environment to activate |
@@ -206,6 +206,29 @@ When resolution runs, APilot reports how many types were expanded from
 dependencies (`info: resolved N types from dependencies`). Use `--no-deps` to
 turn the capability off explicitly — useful in CI where the prerequisite is
 known to be absent.
+
+For Java and Kotlin, each class is read at the version the project uses, not
+whichever version happens to be in the local repository. APilot asks the
+indexer for the project's dependency tree first: the indexer runs
+`mvn dependency:tree` (or `gradle dependencies`) once and caches the result per
+build file, so the first export of a project takes as long as that command, and
+later ones do not. A class from a library written in Kotlin is read from its
+Kotlin sources; a class without a sources JAR, such as a locally built
+SNAPSHOT, is decompiled. When a type comes from another version — the tree
+could not be resolved, or the version it names is not indexed — a warning
+lists it with the version it was read from.
+
+The indexer's default index keeps one version per artifact. To read the exact
+versions your projects use, index all versions of your own libraries into an
+index of their own, which is fast because the scope is small. The indexer reads
+both variables from the environment, so keep them set when you run
+`apilot export`:
+
+```bash
+export DB_FILE="$HOME/.maven-indexer-mcp/my-libraries.sqlite"
+export INCLUDED_PACKAGES='com.example.*'
+maven-indexer-cli refresh-index --full
+```
 
 ```bash
 apilot export ./backend --formatter markdown --no-deps

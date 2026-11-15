@@ -1,0 +1,17 @@
+package com.example.app
+
+import com.example.lib.PageData
+import com.example.lib.Wrapper
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.RestController
+
+data class Order(
+    val id: Long,
+    val no: String?,
+)
+
+@RestController
+class OrderController {
+    @GetMapping("/orders")
+    fun page(): Wrapper<PageData<Order>> = TODO()
+}
