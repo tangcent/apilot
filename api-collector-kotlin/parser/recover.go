@@ -263,8 +263,11 @@ func isHeaderLine(source []byte, i int) bool {
 	return hasPrefixAt(source, i, "package ") || hasPrefixAt(source, i, "import ") || hasPrefixAt(source, i, "@file:")
 }
 
-// isolate keeps the file header, the declaration and every comment, and blanks
-// the rest of the code, keeping line breaks so positions stay true.
+// isolate keeps the file header, the declaration, and the comments that
+// belong to it: those inside its span and its own leading KDoc. Comments of
+// other declarations are blanked together with their code, so leadingKDoc
+// cannot attach them across the blanks to this declaration. Line breaks are
+// kept so positions stay true.
 func isolate(source []byte, decl span) []byte {
 	out := append([]byte(nil), source...)
 	keep := func(i int) bool { return i >= decl.start && i < decl.end }
@@ -279,7 +282,15 @@ func isolate(source []byte, decl span) []byte {
 		if !nonCode {
 			end = i + 1
 		}
-		if !(nonCode && isCommentStart(source, i)) && !keep(i) {
+		comment := nonCode && isCommentStart(source, i)
+		// A comment belongs to the declaration whose code follows it. Keep it
+		// only when that code is kept (this declaration's span, or the leading
+		// trivia that runs into it); blank the rest with their code.
+		keepThis := keep(i)
+		if comment && !keepThis {
+			keepThis = keep(nextCode(source, end))
+		}
+		if !keepThis {
 			for k := i; k < end && k < len(out); k++ {
 				if out[k] != '\n' && out[k] != '\r' {
 					out[k] = ' '
@@ -289,6 +300,23 @@ func isolate(source []byte, decl span) []byte {
 		i = end
 	}
 	return out
+}
+
+// nextCode returns the first byte at or after i that starts code, skipping
+// whitespace and comments. It names the declaration a comment attaches to.
+func nextCode(source []byte, i int) int {
+	for i < len(source) {
+		switch {
+		case isBlankByte(source[i]):
+			i++
+		case isCommentStart(source, i):
+			end, _ := skipNonCode(source, i)
+			i = end
+		default:
+			return i
+		}
+	}
+	return len(source)
 }
 
 // blankUnreadAnnotationArguments replaces, with spaces, the argument list of

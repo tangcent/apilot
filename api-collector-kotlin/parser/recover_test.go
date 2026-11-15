@@ -1,6 +1,8 @@
 package parser
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -122,6 +124,49 @@ func TestIsolateKeepsHeaderDeclarationAndComments(t *testing.T) {
 		if strings.Contains(got, gone) {
 			t.Errorf("isolated source kept %q from another declaration:\n%s", gone, got)
 		}
+	}
+}
+
+func TestIsolateDoesNotLeakKDocAcrossDeclarations(t *testing.T) {
+	// A syntax error sends the file through the per-declaration recovery in
+	// parseDamaged. The KDoc of one declaration must not be attached to a
+	// later, undocumented one when the declaration in between is blanked.
+	src := "package com.example\n\n" +
+		"class First {\n    var a: String? = null\n}\n\n" +
+		"/** KDoc of A. */\nclass A {\n    var x: String? = null\n}\n\n" +
+		"class B {\n    var b: String? = null\n}\n\n" +
+		"class Broken {\n    var c: String? = )\n}\n"
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Models.kt")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := NewParser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	result, err := p.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Error != nil {
+		t.Fatalf("unexpected parse error: %v", result.Error)
+	}
+	kdocs := map[string]string{}
+	for _, c := range result.Classes {
+		kdocs[c.Name] = c.KDoc
+	}
+	for _, name := range []string{"A", "B"} {
+		if _, ok := kdocs[name]; !ok {
+			t.Fatalf("class %s was not extracted; kdocs = %v", name, kdocs)
+		}
+	}
+	if !strings.Contains(kdocs["A"], "KDoc of A.") {
+		t.Errorf("A lost its own KDoc: %q", kdocs["A"])
+	}
+	if kdocs["B"] != "" {
+		t.Errorf("B inherited another declaration's KDoc: %q", kdocs["B"])
 	}
 }
 
