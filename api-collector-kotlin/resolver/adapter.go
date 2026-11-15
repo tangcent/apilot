@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	collector "github.com/tangcent/apilot/api-collector"
+	javadoc "github.com/tangcent/apilot/api-collector-java/doc"
 	javaparser "github.com/tangcent/apilot/api-collector-java/parser"
 	javaresolver "github.com/tangcent/apilot/api-collector-java/resolver"
 	ktparser "github.com/tangcent/apilot/api-collector-kotlin/parser"
@@ -189,11 +190,14 @@ func enumOptions(values []string) []model.FieldOption {
 }
 
 func toJavaClass(class ktparser.Class) javaparser.Class {
+	// The Java parser cleans a doc comment when it reads it; the Kotlin parser
+	// keeps the raw "/** ... */" text, so it is cleaned here, where the
+	// declaration enters the shared resolver.
 	out := javaparser.Class{
 		Name:           class.Name,
 		Package:        class.Package,
 		FilePath:       class.FilePath,
-		JavaDoc:        class.KDoc,
+		JavaDoc:        javadoc.CleanJavaDoc(class.KDoc),
 		Annotations:    toJavaAnnotations(class.Annotations),
 		TypeParameters: append([]string(nil), class.TypeParameters...),
 		SuperClass:     normalizeClassName(class.SuperClass),
@@ -221,7 +225,7 @@ func toJavaClass(class ktparser.Class) javaparser.Class {
 			Name:        name,
 			Type:        NormalizeModelType(prop.Type),
 			Annotations: fieldAnnotations(prop.Annotations),
-			JavaDoc:     prop.KDoc,
+			JavaDoc:     javadoc.CleanJavaDoc(prop.KDoc),
 			IsFinal:     !prop.IsMutable,
 		})
 	}
