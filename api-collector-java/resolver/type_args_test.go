@@ -87,25 +87,3 @@ func TestQualifyTypeArgs(t *testing.T) {
 		t.Errorf("qualifyTypeArgs:\n got  %q\n want %q", got, want)
 	}
 }
-
-// Decompiled Kotlin declares a `List<T>` property as `List<? extends T>`.
-func TestResolve_AnUpperBoundedWildcardIsItsBound(t *testing.T) {
-	r := NewTypeResolver([]parser.Class{
-		{Name: "Item", Package: "com.example", Fields: []parser.Field{{Name: "sku", Type: "String"}}},
-		{Name: "PageData", Package: "com.example", TypeParameters: []string{"T"}, Fields: []parser.Field{
-			{Name: "covariant", Type: "List<? extends T>"},
-			{Name: "contravariant", Type: "List<? super T>"},
-			{Name: "open", Type: "List<?>"},
-		}},
-	})
-	page := r.Resolve("com.example.PageData<com.example.Item>", nil)
-
-	if items := page.Fields["covariant"].Model.Items; items == nil || items.Fields["sku"] == nil {
-		t.Errorf("covariant items = %+v, want Item", items)
-	}
-	for _, name := range []string{"contravariant", "open"} {
-		if items := page.Fields[name].Model.Items; items == nil || items.Kind != model.KindObject || len(items.Fields) != 0 {
-			t.Errorf("%s items = %+v, want an open object", name, items)
-		}
-	}
-}

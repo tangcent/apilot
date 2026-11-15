@@ -155,8 +155,10 @@ func TestResolveClass_PicksTheNamedDeclarationOfTheSource(t *testing.T) {
 	if class == nil || class.Name != "Sort" {
 		t.Fatalf("class = %+v, want the nested Sort", class)
 	}
-	if pickClass([]parser.Class{{Name: "Page"}}, "com.example.lib.Other") != nil {
-		t.Error("a source that does not declare the class must not answer for it")
+	// A source without the simple name still answers with its first
+	// declaration, as the get-class path always did.
+	if c := pickClass([]parser.Class{{Name: "Page"}, {Name: "Sort"}}, "com.example.lib.Other"); c == nil || c.Name != "Page" {
+		t.Errorf("pickClass = %+v, want the first declaration", c)
 	}
 }
 
@@ -214,6 +216,10 @@ func TestResolveClass_ASourceWithoutAParserIsAMiss(t *testing.T) {
 	if class := r.ResolveClass("com.example.lib.Box"); class != nil {
 		t.Fatalf("class = %+v, want a miss: the Java grammar cannot read Scala", class)
 	}
+	want := []string{"com.example.lib.Box: reading the scala source: no parser for scala sources"}
+	if got := r.Failed(); !reflect.DeepEqual(got, want) {
+		t.Errorf("Failed = %q, want %q", got, want)
+	}
 }
 
 func TestResolveClass_AFailedCallIsAMiss(t *testing.T) {
@@ -232,8 +238,149 @@ func TestResolveClass_AFailedCallIsAMiss(t *testing.T) {
 		t.Fatal("want a miss")
 	}
 	r.ResolveClass("com.example.lib.Gone")
-	if calls != 1 {
-		t.Errorf("calls = %d, want the miss remembered", calls)
+	if calls != 2 {
+		t.Errorf("calls = %d, want explore then get-class once, and the miss remembered", calls)
+	}
+	want := []string{"com.example.lib.Gone: explore failed: exit status 1; get-class: get-class failed: exit status 1"}
+	if got := r.Failed(); !reflect.DeepEqual(got, want) {
+		t.Errorf("Failed = %q, want %q", got, want)
+	}
+}
+
+func TestResolveClass_AClassTheIndexDoesNotHoldIsNoFailure(t *testing.T) {
+	var calls [][]string
+	r := newTestResolver(t, `{"classes": [], "_meta": {"resolved": {}, "project": {"resolution": "project-pinned"}}}`, &calls)
+
+	if r.ResolveClass("com.example.lib.Gone") != nil {
+		t.Fatal("want a miss")
+	}
+	if len(calls) != 1 {
+		t.Errorf("calls = %q, want explore only", calls)
+	}
+	if got := r.Failed(); len(got) != 0 {
+		t.Errorf("Failed = %q, want none", got)
+	}
+}
+
+// scriptedResolver answers each subcommand from answers, keyed by its name.
+func scriptedResolver(t *testing.T, answers map[string]string, calls *[][]string) *MavenDependencyResolver {
+	t.Helper()
+	r, err := NewMavenDependencyResolver()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(r.Close)
+	r.run = func(args ...string) ([]byte, error) {
+		*calls = append(*calls, args)
+		command := args[0]
+		if command == "--json" {
+			command = args[1]
+		}
+		answer, ok := answers[command]
+		if !ok {
+			return nil, errors.New("exit status 1: error: unknown command '" + command + "'")
+		}
+		return []byte(answer), nil
+	}
+	return r
+}
+
+func getClassAnswer(language, source string) string {
+	out, _ := json.Marshal("### Class: com.example.lib.Page\n\n```" + language + "\n" + source + "\n```\n")
+	return string(out)
+}
+
+func TestResolveClass_AnExploreAnswerOfAnUnknownShapeFallsBackToGetClass(t *testing.T) {
+	var calls [][]string
+	r := scriptedResolver(t, map[string]string{
+		"explore":   `{"results": []}`,
+		"get-class": getClassAnswer("java", pageSource),
+	}, &calls)
+
+	class := r.ResolveClass("com.example.lib.Page")
+	if class == nil || class.Name != "Page" {
+		t.Fatalf("class = %+v, want Page read with get-class", class)
+	}
+	if len(calls) != 2 || calls[1][0] != "get-class" {
+		t.Errorf("calls = %q", calls)
+	}
+	want := []string{"com.example.lib.Page: explore answered without a classes list; read with get-class instead, not pinned to the project's version"}
+	if got := r.Failed(); !reflect.DeepEqual(got, want) {
+		t.Errorf("Failed = %q, want %q", got, want)
+	}
+}
+
+func TestResolveClass_UseGetClassReadsTheIndexedVersion(t *testing.T) {
+	var gotSource string
+	RegisterSourceParser("kotlin", func(name string, source []byte) ([]parser.Class, error) {
+		gotSource = string(source)
+		return []parser.Class{{Name: "Wrapper", Package: "com.example.lib"}}, nil
+	})
+	t.Cleanup(func() { RegisterSourceParser("kotlin", nil) })
+
+	kotlin := "package com.example.lib\n\nclass Wrapper<T>(var data: T? = null)"
+	var calls [][]string
+	r := scriptedResolver(t, map[string]string{"get-class": getClassAnswer("kotlin", kotlin)}, &calls)
+	r.UseGetClass()
+	r.SetProjectPath("/work/service")
+
+	if class := r.ResolveClass("com.example.lib.Wrapper"); class == nil || class.Name != "Wrapper" {
+		t.Fatalf("class = %+v", class)
+	}
+	want := []string{"get-class", "com.example.lib.Wrapper", "--json", "--type", "source"}
+	if len(calls) != 1 || !reflect.DeepEqual(calls[0], want) {
+		t.Fatalf("calls = %q, want one call %q", calls, want)
+	}
+	if gotSource != kotlin {
+		t.Errorf("the Kotlin parser got %q", gotSource)
+	}
+	if got := r.Failed(); len(got) != 0 {
+		t.Errorf("Failed = %q, want none", got)
+	}
+}
+
+func TestResolveClass_AGetClassMissIsNoFailure(t *testing.T) {
+	for _, answer := range []string{
+		`"Class 'com.example.lib.Gone' not found in the index. Try 'search-classes' with a keyword if you are unsure of the full name."`,
+		`"Class 'com.example.lib.Gone' not found exactly. Did you mean:\n- com.example.lib.Gun"`,
+		"Class com.example.lib.Gone not found in artifact lib.",
+	} {
+		var calls [][]string
+		r := scriptedResolver(t, map[string]string{"get-class": answer}, &calls)
+		r.UseGetClass()
+		if class := r.ResolveClass("com.example.lib.Gone"); class != nil {
+			t.Errorf("answer %s: class = %+v, want a miss", answer, class)
+		}
+		if got := r.Failed(); len(got) != 0 {
+			t.Errorf("answer %s: Failed = %q, want none", answer, got)
+		}
+	}
+}
+
+func TestCLIVersion(t *testing.T) {
+	version, err := cliVersion(func(args ...string) ([]byte, error) {
+		if !reflect.DeepEqual(args, []string{"--version"}) {
+			t.Errorf("args = %q", args)
+		}
+		return []byte("1.2.1\n"), nil
+	})
+	if err != nil || version != "1.2.1" {
+		t.Errorf("version = %q, %v", version, err)
+	}
+	if _, err := cliVersion(func(...string) ([]byte, error) { return nil, errors.New("exit status 1") }); err == nil {
+		t.Error("want the error")
+	}
+}
+
+func TestPinsProjectVersions(t *testing.T) {
+	for version, want := range map[string]bool{
+		"1.2.0": true, "1.2.1": true, "1.10.0": true, "2.0.0": true, "v1.3.0": true,
+		"1.1.0": false, "1.0.9": false, "0.9.0": false,
+		"dev": true, // unknown: explore is tried, and each failure falls back
+	} {
+		if got := PinsProjectVersions(version); got != want {
+			t.Errorf("PinsProjectVersions(%q) = %v, want %v", version, got, want)
+		}
 	}
 }
 

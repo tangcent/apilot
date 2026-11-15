@@ -44,18 +44,26 @@ func registeredSourceParser(language string) SourceParser {
 }
 
 // MavenDependencyResolver reads classes declared in a project's dependencies
-// through `maven-indexer-cli explore`, which pins each class to the version
-// the project's dependency tree names.
+// through maven-indexer-cli.
+//
+// By default it asks `explore`, which pins each class to the version the
+// project's dependency tree names. A CLI older than 1.2.0 has no explore, so
+// UseGetClass switches to `get-class`, which reads the version the index
+// holds. A class explore fails on is read with get-class too, and the failure
+// is reported through Failed.
 type MavenDependencyResolver struct {
 	mu          sync.Mutex
 	parser      *parser.Parser
 	run         runner
+	getClass    bool
 	projectPath string
 	cache       map[string]*parser.Class
 	misses      map[string]bool
 	// unpinned maps a class the indexer could not pin to the project's
 	// dependency versions to the artifact it was read from.
 	unpinned map[string]string
+	// failed maps a class whose lookup failed to the reason.
+	failed map[string]string
 }
 
 func NewMavenDependencyResolver() (*MavenDependencyResolver, error) {
@@ -70,12 +78,19 @@ func NewMavenDependencyResolver() (*MavenDependencyResolver, error) {
 		cache:    make(map[string]*parser.Class),
 		misses:   make(map[string]bool),
 		unpinned: make(map[string]string),
+		failed:   make(map[string]string),
 	}, nil
 }
 
 // SetProjectPath names the project whose dependency tree pins class versions.
 func (r *MavenDependencyResolver) SetProjectPath(projectPath string) {
 	r.projectPath = projectPath
+}
+
+// UseGetClass makes the resolver read classes with `get-class`, for a CLI
+// that has no explore. Versions then follow the index, not the project.
+func (r *MavenDependencyResolver) UseGetClass() {
+	r.getClass = true
 }
 
 func (r *MavenDependencyResolver) Close() {
@@ -108,6 +123,22 @@ func (r *MavenDependencyResolver) Unpinned() []string {
 	return out
 }
 
+// Failed lists the classes whose lookup failed, each as "class: reason": the
+// CLI exited with an error, answered in a shape the resolver does not know,
+// or returned a source no parser could read. A class missing from the index
+// is not a failure. When get-class read a class explore had failed on, the
+// reason says so.
+func (r *MavenDependencyResolver) Failed() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, 0, len(r.failed))
+	for class, reason := range r.failed {
+		out = append(out, class+": "+reason)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (r *MavenDependencyResolver) ResolveClass(className string) *parser.Class {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -130,8 +161,8 @@ func (r *MavenDependencyResolver) ResolveClass(className string) *parser.Class {
 	return nil
 }
 
-// exploredClass is one class of an explore answer.
-type exploredClass struct {
+// fetchedClass is the source of one class as the CLI returned it.
+type fetchedClass struct {
 	Source   string
 	Language string
 	Artifact string
@@ -141,7 +172,9 @@ type exploredClass struct {
 }
 
 type exploreJSON struct {
-	Classes []struct {
+	// Classes is a pointer so that an answer without the key is told apart
+	// from an answer that found nothing.
+	Classes *[]struct {
 		ClassName string `json:"className"`
 		Artifact  string `json:"artifact"`
 		Source    string `json:"source"`
@@ -159,62 +192,141 @@ type exploreJSON struct {
 }
 
 func (r *MavenDependencyResolver) resolveFromCLI(className string) *parser.Class {
-	explored, err := r.explore(className)
-	if err != nil || explored == nil || explored.Source == "" {
+	var fetched *fetchedClass
+	var err error
+	if r.getClass {
+		fetched, err = r.fetchWithGetClass(className)
+		if err != nil {
+			r.failed[className] = err.Error()
+			return nil
+		}
+	} else {
+		fetched, err = r.explore(className)
+		if err != nil {
+			// The explore contract is missing or broken: read the class the
+			// way a CLI without explore does, and say so.
+			reason := err.Error()
+			fetched, err = r.fetchWithGetClass(className)
+			switch {
+			case err != nil:
+				reason += "; get-class: " + err.Error()
+			case fetched != nil:
+				reason += "; read with get-class instead, not pinned to the project's version"
+			}
+			r.failed[className] = reason
+		}
+	}
+	if fetched == nil || fetched.Source == "" {
 		return nil
 	}
 
-	classes, err := r.parse(className, explored.Language, explored.Source)
+	classes, err := r.parse(className, fetched.Language, fetched.Source)
 	if err != nil {
+		r.failed[className] = fmt.Sprintf("reading the %s source: %v", languageName(fetched.Language), err)
 		return nil
 	}
 
 	class := pickClass(classes, className)
-	if class != nil && explored.Unpinned {
-		r.unpinned[className] = explored.Artifact
+	if class != nil && fetched.Unpinned {
+		r.unpinned[className] = fetched.Artifact
 	}
 	return class
 }
 
+func languageName(language string) string {
+	if language == "" {
+		return "java"
+	}
+	return language
+}
+
 // explore fetches the source of one class, pinned to the project's dependency
-// tree when a project path is set.
-func (r *MavenDependencyResolver) explore(className string) (*exploredClass, error) {
+// tree when a project path is set. A class the index does not hold is no
+// error: the answer is nil.
+func (r *MavenDependencyResolver) explore(className string) (*fetchedClass, error) {
 	args := []string{"--json", "explore", className, "--include", "source", "--max-lines", maxSourceLines}
 	if r.projectPath != "" {
 		args = append(args, "--project-path", r.projectPath)
 	}
 	output, err := r.run(args...)
 	if err != nil {
-		return nil, fmt.Errorf("%s explore failed: %w", cliName, err)
+		return nil, fmt.Errorf("explore failed: %w", err)
 	}
 
 	var result exploreJSON
 	if err := json.Unmarshal(output, &result); err != nil {
-		return nil, fmt.Errorf("%s explore: unexpected output: %w", cliName, err)
+		return nil, fmt.Errorf("explore answered in an unexpected format: %w", err)
 	}
-	if len(result.Classes) == 0 {
+	if result.Classes == nil {
+		return nil, fmt.Errorf("explore answered without a classes list")
+	}
+	classes := *result.Classes
+	if len(classes) == 0 {
 		return nil, nil
 	}
 	// One class was asked for. An inner class may come back under its binary
 	// name, so the only entry is the answer whatever its spelling.
-	entry := result.Classes[0]
-	for _, c := range result.Classes {
+	entry := classes[0]
+	for _, c := range classes {
 		if c.ClassName == className {
 			entry = c
 			break
 		}
 	}
-	explored := &exploredClass{
+	fetched := &fetchedClass{
 		Source:   entry.Source,
 		Language: entry.Language,
 		Artifact: entry.Artifact,
 	}
 	if result.Meta.Project.Resolution == "project-pinned" {
 		if resolved, ok := result.Meta.Resolved[className]; ok && resolved.Policy == "cache-wide" {
-			explored.Unpinned = true
+			fetched.Unpinned = true
 		}
 	}
-	return explored, nil
+	return fetched, nil
+}
+
+// fetchWithGetClass fetches the source of one class with `get-class`, from
+// the version the index holds. A class the index does not hold is no error:
+// the answer is nil.
+func (r *MavenDependencyResolver) fetchWithGetClass(className string) (*fetchedClass, error) {
+	output, err := r.run("get-class", className, "--json", "--type", "source")
+	if err != nil {
+		return nil, fmt.Errorf("get-class failed: %w", err)
+	}
+
+	var raw string
+	if err := json.Unmarshal(output, &raw); err != nil {
+		raw = string(output)
+	}
+	raw = strings.TrimSpace(raw)
+	// A miss is a sentence, such as "Class '…' not found in the index." or
+	// "Artifact … not found in index.".
+	if raw == "" || (strings.HasPrefix(raw, "Class ") || strings.HasPrefix(raw, "Artifact ")) && strings.Contains(raw, "not found") {
+		return nil, nil
+	}
+	source, language := extractSourceFromMarkdown(raw)
+	return &fetchedClass{Source: source, Language: language}, nil
+}
+
+// extractSourceFromMarkdown returns the first fenced code block of a
+// get-class answer, and the language its fence names: "kotlin" for a class of
+// a Kotlin sources JAR, "java" for Java sources and decompiled classes. An
+// answer without a fence is taken as Java source.
+func extractSourceFromMarkdown(raw string) (string, string) {
+	for _, language := range []string{"java", "kotlin"} {
+		fence := "```" + language + "\n"
+		start := strings.Index(raw, fence)
+		if start == -1 {
+			continue
+		}
+		remaining := raw[start+len(fence):]
+		if end := strings.Index(remaining, "```"); end != -1 {
+			remaining = remaining[:end]
+		}
+		return strings.TrimSuffix(remaining, "\n"), language
+	}
+	return raw, "java"
 }
 
 // parse reads a dependency source in the language the indexer reported.
@@ -229,18 +341,23 @@ func (r *MavenDependencyResolver) parse(className, language, source string) ([]p
 	if p := registeredSourceParser(language); p != nil {
 		return p(className, []byte(source))
 	}
-	return nil, fmt.Errorf("%s: no parser for %s sources", className, language)
+	return nil, fmt.Errorf("no parser for %s sources", language)
 }
 
 // pickClass returns the declaration a class name denotes among the
 // declarations of one source: the source of Outer also declares Outer.Inner,
-// and a Kotlin file may declare several top-level classes.
+// and a Kotlin file may declare several top-level classes. When no
+// declaration carries the simple name, the first one answers, as it always
+// has.
 func pickClass(classes []parser.Class, className string) *parser.Class {
 	simple := className[strings.LastIndexAny(className, ".$")+1:]
 	for i := range classes {
 		if classes[i].Name == simple {
 			return &classes[i]
 		}
+	}
+	if len(classes) > 0 {
+		return &classes[0]
 	}
 	return nil
 }

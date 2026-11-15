@@ -51,6 +51,12 @@ type DependencyResolution struct {
 	// version the project's dependency tree names, each as
 	// "type (artifact it was read from)". Meaningful only for Active.
 	Unpinned []string
+
+	// Failed lists the types whose lookup failed, each as "type: reason":
+	// the tool errored or answered in a shape the resolver does not know.
+	// A type the tool simply does not have is not a failure. Meaningful only
+	// for Active.
+	Failed []string
 }
 
 // DependencyResolutionReporter is an optional interface implemented by

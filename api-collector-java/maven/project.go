@@ -41,6 +41,31 @@ func firstLine(s string) string {
 	return s
 }
 
+// CLIVersion returns the version maven-indexer-cli reports, such as "1.2.1".
+func CLIVersion() (string, error) {
+	return cliVersion(runCLI)
+}
+
+func cliVersion(run runner) (string, error) {
+	out, err := run("--version")
+	if err != nil {
+		return "", fmt.Errorf("%s --version: %w", cliName, err)
+	}
+	return firstLine(string(out)), nil
+}
+
+// PinsProjectVersions reports whether a CLI version has the commands that pin
+// classes to a project's dependency tree, project-context and explore, which
+// arrived in 1.2.0. A version that cannot be read is given the benefit of the
+// doubt: the resolver falls back class by class when explore fails.
+func PinsProjectVersions(version string) bool {
+	var major, minor int
+	if _, err := fmt.Sscanf(strings.TrimPrefix(version, "v"), "%d.%d", &major, &minor); err != nil {
+		return true
+	}
+	return major > 1 || major == 1 && minor >= 2
+}
+
 // ProjectContext is the indexer's view of a project's dependencies, from
 // `maven-indexer-cli project-context`.
 type ProjectContext struct {

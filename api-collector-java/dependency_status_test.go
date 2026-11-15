@@ -121,14 +121,26 @@ func TestDependencyResolution_ToolMissingWarnsWithGuidance(t *testing.T) {
 	}
 }
 
-// stubIndexer makes the CLI look installed and answer project-context with
-// project, or with err.
-func stubIndexer(t *testing.T, project maven.ProjectContext, err error) {
+// stubIndexer makes the CLI look installed as version 1.2.1 and answer
+// project-context with project, or with err. It returns the number of
+// project-context calls made so far.
+func stubIndexer(t *testing.T, project maven.ProjectContext, err error) *int {
 	t.Helper()
-	origAvailable, origContext := mavenAvailable, loadProjectContext
+	return stubIndexerVersion(t, "1.2.1", project, err)
+}
+
+func stubIndexerVersion(t *testing.T, version string, project maven.ProjectContext, err error) *int {
+	t.Helper()
+	origAvailable, origVersion, origContext := mavenAvailable, mavenVersion, loadProjectContext
+	asked := 0
 	mavenAvailable = func() bool { return true }
-	loadProjectContext = func(string) (maven.ProjectContext, error) { return project, err }
-	t.Cleanup(func() { mavenAvailable, loadProjectContext = origAvailable, origContext })
+	mavenVersion = func() (string, error) { return version, nil }
+	loadProjectContext = func(string) (maven.ProjectContext, error) {
+		asked++
+		return project, err
+	}
+	t.Cleanup(func() { mavenAvailable, mavenVersion, loadProjectContext = origAvailable, origVersion, origContext })
+	return &asked
 }
 
 func collectStatus(t *testing.T, dir string) collector.DependencyResolution {
@@ -175,14 +187,36 @@ func TestDependencyResolution_AnAggregatorRootWithoutTheToolNamesItsModules(t *t
 	}
 }
 
-func TestDependencyResolution_ACLIWithoutProjectContextAsksForAnUpgrade(t *testing.T) {
+func TestDependencyResolution_ACLIOlderThan120StillResolvesWithGetClass(t *testing.T) {
 	dir := t.TempDir()
 	writePom(t, dir, pomWithDeps)
-	stubIndexer(t, maven.ProjectContext{}, errors.New("unknown command 'project-context'"))
+	asked := stubIndexerVersion(t, "1.1.0", maven.ProjectContext{}, errors.New("unknown command 'project-context'"))
+
+	deps := SetupDependencies(dir, false)
+	defer deps.Close()
+	dr := deps.Resolution()
+	if dr.State != collector.DependencyResolutionActive || deps.Resolver() == nil {
+		t.Fatalf("state = %q: types are still resolved, as they were before 1.2.0", dr.State)
+	}
+	if !strings.Contains(dr.Detail, "maven-indexer-cli 1.1.0") || !strings.Contains(dr.Detail, "1.2.0 or later") {
+		t.Errorf("detail = %q, want the version and what upgrading brings", dr.Detail)
+	}
+	if *asked != 0 {
+		t.Errorf("project-context was asked of a CLI that does not have it")
+	}
+}
+
+func TestDependencyResolution_AProjectContextFailureIsReportedAsItIs(t *testing.T) {
+	dir := t.TempDir()
+	writePom(t, dir, pomWithDeps)
+	stubIndexer(t, maven.ProjectContext{}, errors.New("maven-indexer-cli project-context: exit status 1: SqliteError: database is locked"))
 
 	dr := collectStatus(t, dir)
-	if dr.State != collector.DependencyResolutionToolMissing || !strings.Contains(dr.Detail, "1.2.0 or later") {
-		t.Errorf("state = %q, detail %q", dr.State, dr.Detail)
+	if dr.State != collector.DependencyResolutionActive {
+		t.Fatalf("state = %q, want active: classes can still be read", dr.State)
+	}
+	if !strings.Contains(dr.Detail, "database is locked") || strings.Contains(dr.Detail, "1.2.0") {
+		t.Errorf("detail = %q, want the failure itself and no upgrade advice", dr.Detail)
 	}
 }
 
@@ -204,18 +238,23 @@ func TestDependencyResolution_SharedDependenciesAreNotSetUpAgain(t *testing.T) {
 	dir := t.TempDir()
 	writePom(t, dir, pomWithDeps)
 	// Setting up a resolution of its own would ask the indexer.
-	stubIndexer(t, maven.ProjectContext{}, errors.New("the indexer must not be asked"))
+	asked := stubIndexer(t, maven.ProjectContext{Kind: "maven", Tree: "resolved", Resolved: 3}, nil)
+
+	collectStatus(t, dir)
+	if *asked != 1 {
+		t.Fatalf("a collector without shared dependencies sets up its own: asked %d times", *asked)
+	}
 
 	c := New().(*JavaCollector)
-	c.ShareDependencies(&Dependencies{resolution: collector.DependencyResolution{State: collector.DependencyResolutionActive}})
-	if dr := collectStatus(t, dir); dr.State != collector.DependencyResolutionToolMissing {
-		t.Fatalf("a collector without shared dependencies sets up its own: state = %q", dr.State)
-	}
+	c.ShareDependencies(&Dependencies{resolution: collector.DependencyResolution{State: collector.DependencyResolutionActive, Detail: "shared"}})
 	if _, err := c.Collect(collector.CollectContext{SourceDir: dir}); err != nil {
 		t.Fatal(err)
 	}
-	if dr := c.DependencyResolution(); dr.State != collector.DependencyResolutionActive {
-		t.Errorf("state = %q, want the shared resolution", dr.State)
+	if dr := c.DependencyResolution(); dr.State != collector.DependencyResolutionActive || dr.Detail != "shared" {
+		t.Errorf("resolution = %+v, want the shared one", dr)
+	}
+	if *asked != 1 {
+		t.Errorf("the shared resolution was set up again: asked %d times", *asked)
 	}
 }
 

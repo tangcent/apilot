@@ -29,10 +29,11 @@ type JavaCollector struct {
 	shared *Dependencies
 }
 
-// mavenAvailable and loadProjectContext are variables so tests can force each
-// branch without installing or uninstalling maven-indexer-cli.
+// mavenAvailable, mavenVersion and loadProjectContext are variables so tests
+// can force each branch without installing or uninstalling maven-indexer-cli.
 var (
 	mavenAvailable     = maven.IsAvailable
+	mavenVersion       = maven.CLIVersion
 	loadProjectContext = maven.LoadProjectContext
 )
 
@@ -285,8 +286,10 @@ type Dependencies struct {
 // aggregates modules usually declares no dependency itself, so it is asked
 // about before it is judged to have none.
 //
-// When resolution runs, the project's dependency tree is read first: every
-// class is then pinned to the version the tree names.
+// When resolution runs with maven-indexer-cli 1.2.0 or later, the project's
+// dependency tree is read first: every class is then pinned to the version
+// the tree names. An older CLI reads classes with get-class, as before, from
+// the version the index holds.
 func SetupDependencies(sourceDir string, noDeps bool) *Dependencies {
 	state := func(s collector.DependencyResolutionState, detail string) *Dependencies {
 		return &Dependencies{resolution: collector.DependencyResolution{State: s, Detail: detail}}
@@ -315,29 +318,48 @@ func SetupDependencies(sourceDir string, noDeps bool) *Dependencies {
 				maven.ToolName, affected, installGuidance))
 	}
 
+	active := func(detail string) *Dependencies {
+		dr, err := maven.NewMavenDependencyResolver()
+		if err != nil {
+			return state(collector.DependencyResolutionToolMissing,
+				fmt.Sprintf("%s found but the dependency class resolver failed to start: %v", maven.ToolName, err))
+		}
+		deps := state(collector.DependencyResolutionActive, detail)
+		deps.resolver = dr
+		return deps
+	}
+
+	// A CLI older than 1.2.0 has neither project-context nor explore.
+	if version, err := mavenVersion(); err == nil && !maven.PinsProjectVersions(version) {
+		deps := active(fmt.Sprintf("%s %s reads each type from the version the index holds; 1.2.0 or later pins types to the versions the project uses",
+			maven.ToolName, version))
+		if deps.resolver != nil {
+			deps.resolver.UseGetClass()
+		}
+		return deps
+	}
+
 	project, err := loadProjectContext(sourceDir)
 	if err != nil {
-		return state(collector.DependencyResolutionToolMissing,
-			fmt.Sprintf("%s did not answer project-context (%v); version 1.2.0 or later is required. %s",
-				maven.ToolName, err, installGuidance))
+		// Classes can still be read; only the versions are in doubt.
+		deps := active(fmt.Sprintf("%s could not read the project's dependency tree (%v): types may come from a version other than the one the project uses",
+			maven.ToolName, err))
+		if deps.resolver != nil {
+			deps.resolver.SetProjectPath(sourceDir)
+		}
+		return deps
 	}
 	if !project.HasDependencies() && len(declared) == 0 {
 		return state(collector.DependencyResolutionNoDeps, "")
 	}
 
-	dr, err := maven.NewMavenDependencyResolver()
-	if err != nil {
-		return state(collector.DependencyResolutionToolMissing,
-			fmt.Sprintf("%s found but the dependency class resolver failed to start: %v", maven.ToolName, err))
-	}
-	dr.SetProjectPath(sourceDir)
-
-	deps := &Dependencies{
-		resolution: collector.DependencyResolution{State: collector.DependencyResolutionActive},
-		resolver:   dr,
-	}
+	detail := ""
 	if project.Tree != "resolved" {
-		deps.resolution.Detail = unpinnedTreeDetail(project)
+		detail = unpinnedTreeDetail(project)
+	}
+	deps := active(detail)
+	if deps.resolver != nil {
+		deps.resolver.SetProjectPath(sourceDir)
 	}
 	return deps
 }
@@ -362,6 +384,7 @@ func (d *Dependencies) Resolution() collector.DependencyResolution {
 	if d.resolver != nil {
 		res.ResolvedTypes = d.resolver.ResolvedCount()
 		res.Unpinned = d.resolver.Unpinned()
+		res.Failed = d.resolver.Failed()
 	}
 	return res
 }

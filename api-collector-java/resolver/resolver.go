@@ -433,13 +433,8 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	// payload type, and rendering the argument as the payload name produced a
 	// table that said the type was literally "?" with an empty demo (issue
 	// #167). Without evidence of a concrete type the argument stays open, so
-	// the schema carries an empty object. An upper bound is that evidence:
-	// every element of a `List<? extends Order>` is an Order. Decompiled
-	// Kotlin declares each `List<T>` property that way.
+	// the schema carries an empty object.
 	if isWildcard(rawType) {
-		if bound, ok := wildcardUpperBound(rawType); ok {
-			return r.ResolveFrom(source, bound, typeBindings)
-		}
 		return model.EmptyObject()
 	}
 
