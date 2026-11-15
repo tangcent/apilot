@@ -319,7 +319,7 @@ func extractStringLiteral(node *tree_sitter.Node, source []byte) string {
 }
 
 func extractLeadingJavaDoc(node *tree_sitter.Node, source []byte) string {
-	return cleanJavaDoc(rawLeadingJavaDoc(node, source), false)
+	return CleanDocComment(rawLeadingJavaDoc(node, source), false)
 }
 
 func rawLeadingJavaDoc(node *tree_sitter.Node, source []byte) string {
@@ -343,7 +343,15 @@ func rawLeadingJavaDoc(node *tree_sitter.Node, source []byte) string {
 	return ""
 }
 
-func cleanJavaDoc(raw string, includeTags bool) string {
+// CleanDocComment strips the markers of a Javadoc or KDoc comment and returns
+// its text, one source line per line.
+//
+// Paragraphs stay apart: a blank line of the comment is kept as one blank
+// line, so a reader or a Markdown renderer can tell a new paragraph from a
+// wrapped line. Without tags, the text is the main description, which ends at
+// the first block tag (@param, @return, @see, ...); a tag's continuation lines
+// are not description either.
+func CleanDocComment(raw string, includeTags bool) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ""
@@ -352,23 +360,29 @@ func cleanJavaDoc(raw string, includeTags bool) string {
 	raw = strings.TrimSuffix(raw, "*/")
 
 	var lines []string
+	blank := false
 	for _, line := range strings.Split(raw, "\n") {
 		line = strings.TrimSpace(line)
 		line = strings.TrimPrefix(line, "*")
 		line = strings.TrimSpace(line)
 		if line == "" {
+			blank = len(lines) > 0
 			continue
 		}
 		if !includeTags && strings.HasPrefix(line, "@") {
-			continue
+			break
+		}
+		if blank {
+			lines = append(lines, "")
+			blank = false
 		}
 		lines = append(lines, line)
 	}
-	return strings.TrimSpace(strings.Join(lines, "\n"))
+	return strings.Join(lines, "\n")
 }
 
 func parseJavaDocParamsFromText(raw string) map[string]string {
-	cleaned := cleanJavaDoc(raw, true)
+	cleaned := CleanDocComment(raw, true)
 	if cleaned == "" {
 		return nil
 	}

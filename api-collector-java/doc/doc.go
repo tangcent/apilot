@@ -27,12 +27,14 @@ func (d FieldDocumentation) Normalize() docmeta.Documentation {
 	}
 }
 
+// CleanJavaDoc returns the main description of a Javadoc or KDoc comment,
+// with its paragraphs apart (see parser.CleanDocComment).
 func CleanJavaDoc(raw string) string {
-	return cleanJavaDoc(raw, false)
+	return parser.CleanDocComment(raw, false)
 }
 
 func ParseJavaDocParams(raw string) map[string]string {
-	cleaned := cleanJavaDoc(raw, true)
+	cleaned := parser.CleanDocComment(raw, true)
 	if cleaned == "" {
 		return nil
 	}
@@ -86,30 +88,6 @@ func FieldDocumentationFor(annotations []parser.Annotation, javaDoc string) Fiel
 		applyCommonParams(&doc, ann.Params)
 	}
 	return doc
-}
-
-func cleanJavaDoc(raw string, includeTags bool) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return ""
-	}
-	raw = strings.TrimPrefix(raw, "/**")
-	raw = strings.TrimSuffix(raw, "*/")
-
-	var lines []string
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		line = strings.TrimPrefix(line, "*")
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if !includeTags && strings.HasPrefix(line, "@") {
-			continue
-		}
-		lines = append(lines, line)
-	}
-	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 func applyApiModelProperty(doc *FieldDocumentation, params map[string]string) {
