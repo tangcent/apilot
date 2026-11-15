@@ -15,6 +15,7 @@ type Parser struct {
 	dependencyResolver resolver.DependencyResolver
 	collectorDepResolver collector.DependencyResolver
 	unresolved           *collector.UnresolvedSet
+	requiredFields       string
 }
 
 // NewParser creates a new Feign client parser.
@@ -36,6 +37,12 @@ func (p *Parser) SetUnresolved(u *collector.UnresolvedSet) {
 	p.unresolved = u
 }
 
+// SetRequiredFields selects how resolved fields are marked required: one of
+// collector.RequiredFieldsDefault or collector.RequiredFieldsConstraints.
+func (p *Parser) SetRequiredFields(mode string) {
+	p.requiredFields = mode
+}
+
 // ExtractClients extracts Feign clients from parse results.
 // It supports both Spring Cloud OpenFeign (Spring MVC annotations) and
 // Netflix Feign (@RequestLine annotations).
@@ -47,6 +54,7 @@ func (p *Parser) ExtractClients(results []parser.ParseResult) []FeignClient {
 		typeResolver.SetCollectorDependencyResolver(p.collectorDepResolver)
 	}
 	typeResolver.SetUnresolved(p.unresolved)
+	typeResolver.SetRequiredFields(p.requiredFields)
 
 	var clients []FeignClient
 	for _, result := range results {
@@ -245,6 +253,12 @@ func (p *Parser) extractSpringStyleEndpoint(method parser.Method, class, source 
 		ClassName:   class.Name,
 		Package:     class.Package,
 	}
+	deprecation := javadoc.EndpointDeprecation(
+		javadoc.DeprecationOf(method.Annotations, method.RawJavaDoc),
+		javadoc.DeprecationOf(source.Annotations, source.RawJavaDoc),
+		javadoc.DeprecationOf(class.Annotations, class.RawJavaDoc),
+	)
+	endpoint.Deprecated, endpoint.DeprecationNote = deprecation.Deprecated, deprecation.Note
 
 	if requestBodyType != "" {
 		endpoint.RequestBodySchema = typeResolver.ResolveFrom(source, requestBodyType, typeBindings)
@@ -437,6 +451,12 @@ func (p *Parser) extractRequestLineEndpoint(method parser.Method, class, source 
 		ClassName:   class.Name,
 		Package:     class.Package,
 	}
+	deprecation := javadoc.EndpointDeprecation(
+		javadoc.DeprecationOf(method.Annotations, method.RawJavaDoc),
+		javadoc.DeprecationOf(source.Annotations, source.RawJavaDoc),
+		javadoc.DeprecationOf(class.Annotations, class.RawJavaDoc),
+	)
+	endpoint.Deprecated, endpoint.DeprecationNote = deprecation.Deprecated, deprecation.Note
 
 	if requestBodyType != "" {
 		endpoint.RequestBodySchema = typeResolver.ResolveFrom(source, requestBodyType, typeBindings)

@@ -14,6 +14,14 @@ type Parser struct {
 	dependencyResolver   resolver.DependencyResolver
 	collectorDepResolver collector.DependencyResolver
 	unresolved           *collector.UnresolvedSet
+	warnings             []string
+	requiredFields       string
+}
+
+// Warnings returns the diagnostics of the last extraction: handler
+// parameters that are not exported, and why.
+func (p *Parser) Warnings() []string {
+	return p.warnings
 }
 
 func NewParser() *Parser {
@@ -34,6 +42,12 @@ func (p *Parser) SetUnresolved(u *collector.UnresolvedSet) {
 	p.unresolved = u
 }
 
+// SetRequiredFields selects how resolved fields are marked required: one of
+// collector.RequiredFieldsDefault or collector.RequiredFieldsConstraints.
+func (p *Parser) SetRequiredFields(mode string) {
+	p.requiredFields = mode
+}
+
 func (p *Parser) ExtractControllers(results []parser.ParseResult) []Controller {
 	typeResolver := resolver.NewTypeResolver(flattenClasses(results))
 	if p.dependencyResolver != nil {
@@ -42,6 +56,7 @@ func (p *Parser) ExtractControllers(results []parser.ParseResult) []Controller {
 		typeResolver.SetCollectorDependencyResolver(p.collectorDepResolver)
 	}
 	typeResolver.SetUnresolved(p.unresolved)
+	typeResolver.SetRequiredFields(p.requiredFields)
 
 	var controllers []Controller
 
@@ -91,10 +106,11 @@ func (p *Parser) extractController(class parser.Class, typeResolver *resolver.Ty
 	endpoints = append(endpoints, inheritedEndpoints...)
 
 	return &Controller{
-		Name:      class.Name,
-		Package:   class.Package,
-		BasePath:  basePath,
-		Endpoints: endpoints,
+		Name:        class.Name,
+		Package:     class.Package,
+		BasePath:    basePath,
+		Endpoints:   endpoints,
+		Description: class.JavaDoc,
 	}
 }
 
@@ -226,6 +242,14 @@ func (p *Parser) extractEndpoint(method parser.Method, basePath string, class, s
 
 	fullPath := p.combinePaths(basePath, methodPath)
 
+	hasBody := false
+	for _, param := range method.Parameters {
+		if p.detectParameterType(param.Annotations) == "body" {
+			hasBody = true
+		}
+	}
+	implicitIn := ImplicitLocation(string(httpMethod), hasBody)
+
 	var params []EndpointParameter
 	var requestBodyType string
 	for _, param := range method.Parameters {
@@ -234,7 +258,9 @@ func (p *Parser) extractEndpoint(method parser.Method, basePath string, class, s
 			if ep.ParamType == "body" {
 				requestBodyType = param.Type
 			}
+			continue
 		}
+		params = append(params, p.implicitParameters(param, implicitIn, method, source, typeResolver, typeBindings)...)
 	}
 
 	endpoint := &Endpoint{
@@ -249,6 +275,12 @@ func (p *Parser) extractEndpoint(method parser.Method, basePath string, class, s
 		ClassName:   class.Name,
 		Package:     class.Package,
 	}
+	deprecation := javadoc.EndpointDeprecation(
+		javadoc.DeprecationOf(method.Annotations, method.RawJavaDoc),
+		javadoc.DeprecationOf(source.Annotations, source.RawJavaDoc),
+		javadoc.DeprecationOf(class.Annotations, class.RawJavaDoc),
+	)
+	endpoint.Deprecated, endpoint.DeprecationNote = deprecation.Deprecated, deprecation.Note
 
 	if requestBodyType != "" {
 		endpoint.RequestBodySchema = typeResolver.ResolveFrom(source, requestBodyType, typeBindings)
@@ -395,6 +427,85 @@ func (p *Parser) extractParameter(param parser.Parameter, methodJavaDocParams ma
 	}
 
 	return ep
+}
+
+// implicitParameters exports a handler parameter that carries no binding
+// annotation the way Spring MVC binds it by default: a simple value as an
+// optional request parameter, an object as a model attribute whose properties
+// are request parameters, a MultipartFile as a form part. Framework objects
+// and parameters left to a custom argument resolver are not request data and
+// export nothing.
+func (p *Parser) implicitParameters(param parser.Parameter, in string, method parser.Method, source parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string) []EndpointParameter {
+	names := make([]string, 0, len(param.Annotations))
+	for _, ann := range param.Annotations {
+		names = append(names, ann.Name)
+	}
+	isEnum := func(typeName string) bool {
+		_, ok := typeResolver.EnumConstants(source, typeName)
+		return ok
+	}
+	kind, blocker := ClassifyImplicit(param.Type, names, isEnum)
+	if blocker != "" {
+		p.warnings = append(p.warnings, ImplicitNoneWarning(source.Name, method.Name, param.Name, blocker))
+		return nil
+	}
+
+	paramJavaDoc := param.JavaDoc
+	if paramJavaDoc == "" && method.JavaDocParams != nil {
+		paramJavaDoc = method.JavaDocParams[param.Name]
+	}
+	doc := javadoc.ParameterDocumentation(param.Annotations, paramJavaDoc)
+
+	switch kind {
+	case ImplicitParam:
+		enum := doc.Enum
+		if len(enum) == 0 {
+			enum, _ = typeResolver.EnumConstants(source, ElementType(param.Type))
+		}
+		return []EndpointParameter{{
+			Name:         param.Name,
+			Type:         param.Type,
+			ParamType:    in,
+			Required:     ImplicitRequired(names),
+			DefaultValue: doc.Default,
+			Description:  doc.Description,
+			Example:      doc.Example,
+			Enum:         enum,
+		}}
+	case ImplicitFile:
+		return []EndpointParameter{{
+			Name:        param.Name,
+			Type:        param.Type,
+			ParamType:   "form",
+			Required:    ImplicitRequired(names),
+			Description: doc.Description,
+		}}
+	case ImplicitPageable:
+		return boundParameters(PageableFields(), in)
+	case ImplicitSort:
+		return boundParameters(SortFields(), in)
+	case ImplicitModel:
+		resolved := typeResolver.ResolveForBinding(source, param.Type, typeBindings)
+		return boundParameters(ResolvedModelFields(param.Name, resolved), in)
+	}
+	return nil
+}
+
+func boundParameters(fields []BoundField, in string) []EndpointParameter {
+	out := make([]EndpointParameter, 0, len(fields))
+	for _, f := range fields {
+		out = append(out, EndpointParameter{
+			Name:         f.Name,
+			Type:         f.TypeName,
+			ParamType:    in,
+			Required:     f.Required,
+			DefaultValue: f.Default,
+			Description:  f.Description,
+			Example:      f.Example,
+			Enum:         f.Enum,
+		})
+	}
+	return out
 }
 
 func (p *Parser) detectParameterType(annotations []parser.Annotation) string {

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	collector "github.com/tangcent/apilot/api-collector"
 	javaparser "github.com/tangcent/apilot/api-collector-java/parser"
 	ktparser "github.com/tangcent/apilot/api-collector-kotlin/parser"
 	"github.com/tangcent/apilot/api-collector-kotlin/resolver"
@@ -30,6 +31,18 @@ class PageData<T>(
     val total: Long,
     val rows: List<T>,
 )
+`,
+	"com.example.lib.PageQuery": `package com.example.lib
+
+import javax.validation.constraints.NotNull
+
+class PageQuery {
+    /** Page number. */
+    var page: Int = 1
+
+    @field:NotNull
+    var size: Int? = null
+}
 `,
 }
 
@@ -75,8 +88,14 @@ func TestParseDependencySourceReadsKotlinLikeTheProject(t *testing.T) {
 		t.Errorf("fields = %+v", wrapper.Fields)
 	}
 
-	if _, err := parseDependencySource("Broken", []byte("class Broken(val a: Int = )")); err == nil {
-		t.Error("a source the grammar cannot read is an error, so the class is a miss")
+	// A dependency source gets the project's grammar-error recovery: the
+	// damaged declaration is skipped and the rest of the source still reads.
+	damaged, err := parseDependencySource("Broken", []byte("package com.example.lib\n\nclass Broken(val a: Int = )\n\nclass Fine(val b: String)\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(damaged) != 1 || damaged[0].Name != "Fine" {
+		t.Errorf("classes of a damaged source = %+v, want only Fine", damaged)
 	}
 }
 
@@ -99,7 +118,9 @@ func TestKotlinEndpointResolvesTypesOfAKotlinLibrary(t *testing.T) {
 	var response *model.ObjectModel
 	for _, ctrl := range springmvc.NewParser(typeResolver).ExtractControllers(results) {
 		for _, ep := range ctrl.Endpoints {
-			response = ep.ResponseSchema
+			if ep.Path == "/orders" {
+				response = ep.ResponseSchema
+			}
 		}
 	}
 
@@ -124,5 +145,61 @@ func TestKotlinEndpointResolvesTypesOfAKotlinLibrary(t *testing.T) {
 		if !found {
 			t.Errorf("the library was not asked for %s; asked for %v", want, library.queried)
 		}
+	}
+}
+
+// An unannotated parameter is bound from request parameters through the
+// binding view, which is built separately from the JSON view. It must expand
+// a dependency type too, and follow the --required-fields mode.
+func TestKotlinBindingViewResolvesTypesOfALibrary(t *testing.T) {
+	p, err := ktparser.NewParser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	dir, _ := filepath.Abs("testdata/dependency")
+	results, err := p.ParseDirectory(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		mode string
+		want map[string]bool
+	}{
+		{collector.RequiredFieldsDefault, map[string]bool{"page": true, "size": true}},
+		{collector.RequiredFieldsConstraints, map[string]bool{"page": false, "size": true}},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			typeResolver := resolver.New(flattenClasses(results))
+			typeResolver.SetDependencyResolver(&libraryResolver{t: t})
+			typeResolver.SetRequiredFields(tc.mode)
+
+			got := map[string]bool{}
+			for _, ctrl := range springmvc.NewParser(typeResolver).ExtractControllers(results) {
+				for _, ep := range ctrl.Endpoints {
+					if ep.Path != "/orders/search" {
+						continue
+					}
+					for _, param := range ep.Parameters {
+						if param.ParamType != "query" {
+							t.Errorf("%s is bound from %s, want query", param.Name, param.ParamType)
+						}
+						got[param.Name] = param.Required
+					}
+				}
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("parameters = %v, want %v", got, tc.want)
+			}
+			for name, required := range tc.want {
+				if got[name] != required {
+					t.Errorf("%s required = %v, want %v", name, got[name], required)
+				}
+			}
+			if unresolved := typeResolver.Unresolved(); len(unresolved) != 0 {
+				t.Errorf("unresolved = %v", unresolved)
+			}
+		})
 	}
 }

@@ -42,6 +42,11 @@ type Endpoint struct {
 	Package           string
 	RequestBodySchema *model.ObjectModel
 	ResponseSchema    *model.ObjectModel
+
+	// Deprecated and DeprecationNote report the deprecation of the resource
+	// method or its class (see doc.DeprecationOf).
+	Deprecated      bool
+	DeprecationNote string
 }
 
 // Resource represents a JAX-RS resource class with its endpoints.
@@ -52,4 +57,6 @@ type Resource struct {
 	Endpoints []Endpoint
 	Produces  []string
 	Consumes  []string
+	// Description is the resource class's Javadoc.
+	Description string
 }

@@ -296,6 +296,11 @@ func extractAllClasses(tree *tree_sitter.Tree, source []byte) ([]Class, error) {
 			rec.Package = packageName
 			rec.Imports = imports
 			classes = append(classes, rec)
+		case "enum_declaration":
+			enum := extractEnum(node, source)
+			enum.Package = packageName
+			enum.Imports = imports
+			classes = append(classes, enum)
 		}
 	}, 0)
 

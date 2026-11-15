@@ -52,6 +52,7 @@ It detects your language and framework automatically, walks the source tree, and
 | curl     | One `curl` command per endpoint          |
 | postman  | Postman Collection v2.1 JSON             |
 | json     | Machine-readable endpoint JSON for CI    |
+| yapi     | Saves endpoints to a YApi project, or prints YApi import JSON |
 
 ---
 
@@ -152,12 +153,14 @@ apilot export <source-path> [flags]
 
 Flags:
   --collector      string   Collector name (auto-detected if omitted)
-  --formatter      string   Output format: markdown, curl, postman, json (default: markdown)
+  --formatter      string   Output format: markdown, curl, postman, json, yapi (default: markdown)
   --format         string   Format variant, e.g. simple, detailed (default: simple)
   --method         string   Filter to a specific method name (used with file-level export)
   --project-root   string   Override auto-detected project root directory
   --no-deps                 Disable resolving request/response types from dependencies
   --allow-empty             Exit 0 when the collection yields no endpoints (default: fail)
+  --required-fields string  How fields are marked required: default (unless @Nullable)
+                            or constraints (only with @NotNull, @NotBlank, @NotEmpty)
   --output         string   Output file path (default: stdout)
   --list-collectors         Print available collectors and exit
   --list-formatters         Print available formatters and exit
@@ -232,6 +235,24 @@ maven-indexer-cli refresh-index --full
 
 ```bash
 apilot export ./backend --formatter markdown --no-deps
+```
+
+### Required fields
+
+Java and Kotlin fields are marked required in one of two ways:
+
+| Mode | A field is required when | Use it when |
+|------|--------------------------|-------------|
+| `default` | it is not annotated `@Nullable` or `@Null` | fields are present unless declared otherwise |
+| `constraints` | it carries `@NotNull`, `@NotBlank` or `@NotEmpty` | requests are validated with Bean Validation, so a field without a constraint may be left out |
+
+`@Nullable` wins in both modes, and a `required` flag written in `@Schema` or
+`@ApiModelProperty` overrides either. The `constraints` mode matches what the
+validator enforces at runtime and how the EasyYapi IntelliJ plugin documents
+fields.
+
+```bash
+apilot export ./backend --formatter json --required-fields constraints
 ```
 
 ### Empty exports
@@ -363,6 +384,45 @@ declaration order is already lost before a formatter runs; sorting is the only
 order that is stable across runs and machines. A type that refers back to itself
 terminates as a `ref` node instead of expanding forever.
 
+### YApi
+
+`--formatter yapi` saves the endpoints to a [YApi](https://github.com/YMFE/yapi)
+project when it knows the server and the project's token, and prints what it
+created, updated or failed to save:
+
+```bash
+apilot set yapi.server https://yapi.example.com
+apilot set yapi.token <project token>
+apilot export ./backend --formatter yapi
+
+# or per run
+apilot export ./backend --formatter yapi --params '{"server":"https://yapi.example.com","token":"<project token>"}'
+```
+
+Without a server and a token it prints the interfaces in the JSON that YApi's
+data import accepts.
+
+An interface is matched by path and method, so a second export updates the
+first. Interfaces are grouped in categories named after the first line of the
+controller's doc comment, or the controller's name, and created on demand; the
+title is the first line of the endpoint's doc comment and the rest is its
+description. This is how the EasyYapi IntelliJ plugin names them, so exports
+from either tool land in the same place.
+
+A project already documented with EasyYapi keeps its rules in
+`.easy.api.config`. The YApi formatter reads that file from the project root
+and from each module directory, and applies the parts that shape a YApi export:
+
+| Rule | Effect |
+|------|--------|
+| `json.rule.convert[java.lang.Long]=java.lang.String` | Exports one primitive type as another, e.g. `long` as `string` |
+| `mock.[path\|type]=value` | Mocks every schema node whose JSON path (`data.list[].name`) and JSON type match; `*.` matches any parent, `*` any run of characters, and the first matching rule wins |
+| `properties.additional=<file or URL>` | Includes another rules file at that point |
+| `name=value` and `${name}` | Defines a value and refers to it |
+
+Extra rules files can be named with `--params '{"rules":["path/or/url"]}'`.
+Other keys belong to EasyYapi's rule engine and are ignored.
+
 ---
 
 ## IDE integrations
@@ -401,7 +461,7 @@ APilot is a multi-module Go monorepo with a clean three-layer design:
 apilot-cli  (bundled binary)
   └── api-master  (engine + plugin runtime)
         ├── api-collector-{java,go,node,python}
-        └── api-formatter-{markdown,curl,json,postman}
+        └── api-formatter-{markdown,curl,json,postman,yapi}
 ```
 
 The `api-collector` and `api-formatter` packages define the stable interfaces. Everything else is an implementation. See [docs/architecture.md](docs/architecture.md) for the full breakdown.

@@ -18,6 +18,10 @@ type ApiEndpoint struct {
 	Headers     []ApiHeader    `json:"headers,omitempty"`
 	RequestBody *ApiBody       `json:"requestBody,omitempty"`
 	Response    *ApiBody       `json:"response,omitempty"`
+	// FolderDescription is the doc comment of the class the endpoint belongs
+	// to, such as a controller's Javadoc, so a formatter can name the folder
+	// the way the source describes it. Empty when the source has none.
+	FolderDescription string `json:"folderDescription,omitempty"`
 	// Consumes lists the request media types the endpoint declares (JAX-RS
 	// @Consumes, Spring consumes=...). Empty when the source declares none, so
 	// a formatter can tell a declared content type from a collector default.
@@ -25,6 +29,14 @@ type ApiEndpoint struct {
 	// Produces lists the response media types the endpoint declares (JAX-RS
 	// @Produces, Spring produces=...). Empty when the source declares none.
 	Produces []string `json:"produces,omitempty"`
+	// Deprecated is set when the source marks the endpoint deprecated: a
+	// deprecation annotation (Java's or Kotlin's @Deprecated) or a
+	// @deprecated doc tag, on the handler method or on its class.
+	Deprecated bool `json:"deprecated,omitempty"`
+	// DeprecationNote is what the source says about the deprecation: Kotlin's
+	// @Deprecated message or the doc tag's text, the method's before the
+	// class's. Empty when the source says nothing.
+	DeprecationNote string `json:"deprecationNote,omitempty"`
 	// Metadata holds protocol-specific extensions without polluting the core struct.
 	Metadata map[string]any `json:"metadata,omitempty"`
 }

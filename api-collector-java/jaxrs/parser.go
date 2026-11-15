@@ -17,6 +17,7 @@ type Parser struct {
 	dependencyResolver   resolver.DependencyResolver
 	collectorDepResolver collector.DependencyResolver
 	unresolved           *collector.UnresolvedSet
+	requiredFields       string
 	warnings             []string
 }
 
@@ -37,6 +38,12 @@ func (p *Parser) SetCollectorDependencyResolver(cdr collector.DependencyResolver
 // expand. Optional; type resolution behaviour is unchanged without it.
 func (p *Parser) SetUnresolved(u *collector.UnresolvedSet) {
 	p.unresolved = u
+}
+
+// SetRequiredFields selects how resolved fields are marked required: one of
+// collector.RequiredFieldsDefault or collector.RequiredFieldsConstraints.
+func (p *Parser) SetRequiredFields(mode string) {
+	p.requiredFields = mode
 }
 
 // Warnings returns the diagnostics raised by the last ExtractResources call.
@@ -62,6 +69,7 @@ func (p *Parser) ExtractResources(results []parser.ParseResult) []Resource {
 		typeResolver.SetCollectorDependencyResolver(p.collectorDepResolver)
 	}
 	typeResolver.SetUnresolved(p.unresolved)
+	typeResolver.SetRequiredFields(p.requiredFields)
 
 	var resources []Resource
 	for _, result := range results {
@@ -149,12 +157,13 @@ func (p *Parser) extractResource(class parser.Class, typeResolver *resolver.Type
 	endpoints = append(endpoints, inheritedEndpoints...)
 
 	return &Resource{
-		Name:      class.Name,
-		Package:   class.Package,
-		BasePath:  basePath,
-		Endpoints: endpoints,
-		Produces:  classProduces,
-		Consumes:  classConsumes,
+		Name:        class.Name,
+		Package:     class.Package,
+		BasePath:    basePath,
+		Endpoints:   endpoints,
+		Produces:    classProduces,
+		Consumes:    classConsumes,
+		Description: class.JavaDoc,
 	}
 }
 
@@ -267,6 +276,12 @@ func (p *Parser) extractEndpoint(method parser.Method, basePath string, class, s
 		ClassName:   class.Name,
 		Package:     class.Package,
 	}
+	deprecation := javadoc.EndpointDeprecation(
+		javadoc.DeprecationOf(method.Annotations, method.RawJavaDoc),
+		javadoc.DeprecationOf(source.Annotations, source.RawJavaDoc),
+		javadoc.DeprecationOf(class.Annotations, class.RawJavaDoc),
+	)
+	endpoint.Deprecated, endpoint.DeprecationNote = deprecation.Deprecated, deprecation.Note
 
 	if requestBodyType != "" {
 		endpoint.RequestBodySchema = typeResolver.ResolveFrom(source, requestBodyType, typeBindings)

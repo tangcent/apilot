@@ -15,6 +15,9 @@ type Method struct {
 	ReturnType    string
 	JavaDoc       string
 	JavaDocParams map[string]string
+	// RawJavaDoc is the doc comment as written, markers and block tags
+	// included, for readers of a tag other than @param (@deprecated).
+	RawJavaDoc string
 	// Body is the raw text of the method body, braces included, or empty for
 	// a declaration without one (interface and abstract methods). Frameworks
 	// whose response payload is built inside the body rather than declared in
@@ -80,6 +83,12 @@ type Class struct {
 	FilePath string
 	// Imports carries the import declarations of the same compilation unit.
 	Imports []Import
+	// RawJavaDoc is the doc comment as written, block tags included.
+	RawJavaDoc string
+	// IsEnum marks an enum declaration; EnumConstants lists its constants in
+	// declaration order.
+	IsEnum        bool
+	EnumConstants []string
 }
 
 // ParseResult contains the parsing result for a single file.

@@ -36,6 +36,8 @@ type Property struct {
 	HasDefault   bool
 	DefaultValue string
 	IsMutable    bool
+	// InConstructor marks a property declared in the primary constructor.
+	InConstructor bool
 }
 
 // Function is a Kotlin function declaration.

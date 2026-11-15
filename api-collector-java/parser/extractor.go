@@ -59,6 +59,7 @@ func extractImports(root *tree_sitter.Node, source []byte) []Import {
 func extractClass(node *tree_sitter.Node, source []byte) Class {
 	class := Class{}
 	class.JavaDoc = extractLeadingJavaDoc(node, source)
+	class.RawJavaDoc = rawLeadingJavaDoc(node, source)
 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -87,7 +88,7 @@ func extractClass(node *tree_sitter.Node, source []byte) Class {
 
 // extractInterface extracts interface information including annotations and methods.
 func extractInterface(node *tree_sitter.Node, source []byte) Class {
-	class := Class{IsInterface: true, JavaDoc: extractLeadingJavaDoc(node, source)}
+	class := Class{IsInterface: true, JavaDoc: extractLeadingJavaDoc(node, source), RawJavaDoc: rawLeadingJavaDoc(node, source)}
 
 	// Extract interface name
 	for i := uint(0); i < node.ChildCount(); i++ {
@@ -113,10 +114,39 @@ func extractInterface(node *tree_sitter.Node, source []byte) Class {
 	return class
 }
 
+// extractEnum reads an enum declaration: its name and its constants. The
+// fields and methods of its body are not read: Spring binds a request
+// parameter to an enum by the name of a constant, so the constants are the
+// values it accepts.
+func extractEnum(node *tree_sitter.Node, source []byte) Class {
+	enum := Class{IsEnum: true, JavaDoc: extractLeadingJavaDoc(node, source), RawJavaDoc: rawLeadingJavaDoc(node, source)}
+	enum.Annotations = extractAnnotations(node, source)
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		switch child.Kind() {
+		case "identifier":
+			if enum.Name == "" {
+				enum.Name = child.Utf8Text(source)
+			}
+		case "enum_body":
+			for j := uint(0); j < child.ChildCount(); j++ {
+				constant := child.Child(j)
+				if constant.Kind() != "enum_constant" {
+					continue
+				}
+				if name := constant.ChildByFieldName("name"); name != nil {
+					enum.EnumConstants = append(enum.EnumConstants, name.Utf8Text(source))
+				}
+			}
+		}
+	}
+	return enum
+}
+
 // extractRecord extracts a record declaration. Its components become fields;
 // the optional body (compact constructors, methods, static members) is ignored.
 func extractRecord(node *tree_sitter.Node, source []byte) Class {
-	rec := Class{JavaDoc: extractLeadingJavaDoc(node, source)}
+	rec := Class{JavaDoc: extractLeadingJavaDoc(node, source), RawJavaDoc: rawLeadingJavaDoc(node, source)}
 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -290,7 +320,7 @@ func extractStringLiteral(node *tree_sitter.Node, source []byte) string {
 }
 
 func extractLeadingJavaDoc(node *tree_sitter.Node, source []byte) string {
-	return cleanJavaDoc(rawLeadingJavaDoc(node, source), false)
+	return CleanDocComment(rawLeadingJavaDoc(node, source), false)
 }
 
 func rawLeadingJavaDoc(node *tree_sitter.Node, source []byte) string {
@@ -314,7 +344,15 @@ func rawLeadingJavaDoc(node *tree_sitter.Node, source []byte) string {
 	return ""
 }
 
-func cleanJavaDoc(raw string, includeTags bool) string {
+// CleanDocComment strips the markers of a Javadoc or KDoc comment and returns
+// its text, one source line per line.
+//
+// Paragraphs stay apart: a blank line of the comment is kept as one blank
+// line, so a reader or a Markdown renderer can tell a new paragraph from a
+// wrapped line. Without tags, the text is the main description, which ends at
+// the first block tag (@param, @return, @see, ...); a tag's continuation lines
+// are not description either.
+func CleanDocComment(raw string, includeTags bool) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ""
@@ -323,23 +361,29 @@ func cleanJavaDoc(raw string, includeTags bool) string {
 	raw = strings.TrimSuffix(raw, "*/")
 
 	var lines []string
+	blank := false
 	for _, line := range strings.Split(raw, "\n") {
 		line = strings.TrimSpace(line)
 		line = strings.TrimPrefix(line, "*")
 		line = strings.TrimSpace(line)
 		if line == "" {
+			blank = len(lines) > 0
 			continue
 		}
 		if !includeTags && strings.HasPrefix(line, "@") {
-			continue
+			break
+		}
+		if blank {
+			lines = append(lines, "")
+			blank = false
 		}
 		lines = append(lines, line)
 	}
-	return strings.TrimSpace(strings.Join(lines, "\n"))
+	return strings.Join(lines, "\n")
 }
 
 func parseJavaDocParamsFromText(raw string) map[string]string {
-	cleaned := cleanJavaDoc(raw, true)
+	cleaned := CleanDocComment(raw, true)
 	if cleaned == "" {
 		return nil
 	}
@@ -385,7 +429,8 @@ func extractMethod(node *tree_sitter.Node, source []byte) Method {
 	method := Method{}
 
 	method.JavaDoc = extractLeadingJavaDoc(node, source)
-	method.JavaDocParams = parseJavaDocParamsFromText(rawLeadingJavaDoc(node, source))
+	method.RawJavaDoc = rawLeadingJavaDoc(node, source)
+	method.JavaDocParams = parseJavaDocParamsFromText(method.RawJavaDoc)
 	method.Annotations = extractAnnotations(node, source)
 
 	for i := uint(0); i < node.ChildCount(); i++ {
@@ -442,7 +487,8 @@ func extractParameter(node *tree_sitter.Node, source []byte) Parameter {
 		child := node.Child(i)
 
 		switch child.Kind() {
-		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type":
+		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type",
+			"array_type", "scoped_type_identifier":
 			param.Type = child.Utf8Text(source)
 		case "identifier":
 			param.Name = child.Utf8Text(source)

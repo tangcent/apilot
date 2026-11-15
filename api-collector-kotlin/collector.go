@@ -11,6 +11,7 @@ import (
 	collector "github.com/tangcent/apilot/api-collector"
 	javacollector "github.com/tangcent/apilot/api-collector-java"
 	javaparser "github.com/tangcent/apilot/api-collector-java/parser"
+	javaspringmvc "github.com/tangcent/apilot/api-collector-java/springmvc"
 	ktparser "github.com/tangcent/apilot/api-collector-kotlin/parser"
 	"github.com/tangcent/apilot/api-collector-kotlin/resolver"
 	"github.com/tangcent/apilot/api-collector-kotlin/springmvc"
@@ -75,6 +76,10 @@ func (c *KotlinCollector) DependencyResolution() collector.DependencyResolution 
 // Java endpoints and Java declarations to Kotlin endpoints, and the
 // diagnostics of both halves are reported together.
 func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEndpoint, error) {
+	requiredFields, err := ctx.RequiredFields()
+	if err != nil {
+		return nil, err
+	}
 	p, err := ktparser.NewParser()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kotlin parser: %w", err)
@@ -155,11 +160,14 @@ func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 		if dr := deps.Resolver(); dr != nil {
 			typeResolver.SetDependencyResolver(dr)
 		}
+		typeResolver.SetRequiredFields(requiredFields)
 		sm := springmvc.NewParser(typeResolver)
 		before := len(endpoints)
 		for _, ctrl := range sm.ExtractControllers(results) {
 			for _, ep := range ctrl.Endpoints {
-				endpoints = append(endpoints, springMVCEndpointToAPI(ep, ctrl.Name))
+				api := springMVCEndpointToAPI(ep, ctrl.Name)
+				api.FolderDescription = ctrl.Description
+				endpoints = append(endpoints, api)
 			}
 		}
 		if len(endpoints) > before {
@@ -284,6 +292,7 @@ func springMVCEndpointToAPI(ep springmvc.Endpoint, folder string) collector.ApiE
 		Consumes:    ep.Consumes,
 		Produces:    ep.Produces,
 	}
+	out.Deprecated, out.DeprecationNote = ep.Deprecated, ep.DeprecationNote
 	for _, p := range ep.Parameters {
 		switch {
 		case p.ParamType == "body":
@@ -334,6 +343,9 @@ func springMVCEndpointToAPI(ep springmvc.Endpoint, folder string) collector.ApiE
 	return out
 }
 
+// isMultipartFile reports whether a parameter of this type is uploaded as
+// file parts: a MultipartFile, or a collection or array of them.
 func isMultipartFile(kotlinType string) bool {
-	return kotlinType == "MultipartFile" || strings.HasSuffix(kotlinType, ".MultipartFile")
+	element := javaspringmvc.ElementType(resolver.NormalizeModelType(kotlinType))
+	return element == "MultipartFile" || strings.HasSuffix(element, ".MultipartFile")
 }

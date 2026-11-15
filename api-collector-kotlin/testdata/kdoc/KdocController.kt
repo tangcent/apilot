@@ -25,6 +25,14 @@ data class CreateOrderReq(
 
     /** Single-line comment. */
     var remark: String? = null
+
+    /**
+     * Free-text note,
+     * shown to the buyer.
+     *
+     * Kept for a year.
+     */
+    var note: String? = null
 }
 
 @RestController
@@ -35,4 +43,15 @@ class KdocController {
      */
     @PostMapping
     fun create(@RequestBody req: CreateOrderReq): CreateOrderReq = req
+
+    /**
+     * Save a draft.
+     *
+     * A draft is not submitted
+     * until it is confirmed.
+     *
+     * @param req the draft
+     */
+    @PostMapping("/draft")
+    fun draft(@RequestBody req: CreateOrderReq): CreateOrderReq = req
 }

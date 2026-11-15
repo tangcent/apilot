@@ -7,6 +7,7 @@ import (
 
 	javadoc "github.com/tangcent/apilot/api-collector-java/doc"
 	javaparser "github.com/tangcent/apilot/api-collector-java/parser"
+	javaspringmvc "github.com/tangcent/apilot/api-collector-java/springmvc"
 	ktparser "github.com/tangcent/apilot/api-collector-kotlin/parser"
 	"github.com/tangcent/apilot/api-collector-kotlin/resolver"
 )
@@ -70,10 +71,11 @@ func (p *Parser) extractController(class *ktparser.Class) *Controller {
 	endpoints = append(endpoints, p.extractInheritedEndpoints(class, basePath, bindings, map[string]bool{})...)
 
 	return &Controller{
-		Name:      class.Name,
-		Package:   class.Package,
-		BasePath:  basePath,
-		Endpoints: endpoints,
+		Name:        class.Name,
+		Package:     class.Package,
+		BasePath:    basePath,
+		Endpoints:   endpoints,
+		Description: javadoc.CleanJavaDoc(class.KDoc),
 	}
 }
 
@@ -171,9 +173,11 @@ func isMethodOverridden(methodName string, class *ktparser.Class) bool {
 	return false
 }
 
+// isController decides with the same predicate the parser's recovery uses, so
+// a file the recovery treats as a controller is one this parser reads as one.
 func isController(class *ktparser.Class) bool {
 	for _, ann := range class.Annotations {
-		if ann.Name == "RestController" || ann.Name == "Controller" {
+		if ktparser.IsControllerAnnotation(ann.Name) {
 			return true
 		}
 	}
@@ -206,6 +210,14 @@ func (p *Parser) extractEndpoint(method *ktparser.Function, basePath string, cla
 
 	fullPath := combinePaths(basePath, methodPath)
 
+	hasBody := false
+	for i := range method.Parameters {
+		if detectParameterType(method.Parameters[i].Annotations) == "body" {
+			hasBody = true
+		}
+	}
+	implicitIn := javaspringmvc.ImplicitLocation(string(httpMethod), hasBody)
+
 	var params []EndpointParameter
 	var requestBodyType string
 	methodDocParams := javadoc.ParseJavaDocParams(method.KDoc)
@@ -216,7 +228,9 @@ func (p *Parser) extractEndpoint(method *ktparser.Function, basePath string, cla
 			if ep.ParamType == "body" {
 				requestBodyType = param.Type
 			}
+			continue
 		}
+		params = append(params, p.implicitParameters(param, implicitIn, method.Name, methodDocParams, source, bindings)...)
 	}
 
 	endpoint := &Endpoint{
@@ -231,6 +245,12 @@ func (p *Parser) extractEndpoint(method *ktparser.Function, basePath string, cla
 		ClassName:   class.Name,
 		Package:     class.Package,
 	}
+	deprecation := javadoc.EndpointDeprecation(
+		javadoc.DeprecationOf(toJavaAnnotations(method.Annotations), method.KDoc),
+		javadoc.DeprecationOf(toJavaAnnotations(source.Annotations), source.KDoc),
+		javadoc.DeprecationOf(toJavaAnnotations(class.Annotations), class.KDoc),
+	)
+	endpoint.Deprecated, endpoint.DeprecationNote = deprecation.Deprecated, deprecation.Note
 
 	if requestBodyType != "" {
 		endpoint.RequestBodySchema = p.typeResolver.ResolveFrom(source, requestBodyType, bindings)
@@ -375,6 +395,75 @@ func (p *Parser) extractParameter(param *ktparser.Parameter, methodDocParams map
 		ep.Name = name
 	}
 	return ep
+}
+
+// implicitParameters exports a handler parameter that carries no binding
+// annotation the way Spring MVC binds it by default; the rules are shared with
+// the Java collector so structurally identical sources export the same
+// parameters.
+func (p *Parser) implicitParameters(param *ktparser.Parameter, in, methodName string, methodDocParams map[string]string, source *ktparser.Class, bindings map[string]string) []EndpointParameter {
+	names := make([]string, 0, len(param.Annotations))
+	for _, ann := range param.Annotations {
+		names = append(names, ann.Name)
+	}
+	typeName := resolver.NormalizeModelType(param.Type)
+	kind, blocker := javaspringmvc.ClassifyImplicit(typeName, names, p.typeResolver.IsEnum)
+	if blocker != "" {
+		p.warnings = append(p.warnings, javaspringmvc.ImplicitNoneWarning(source.Name, methodName, param.Name, blocker))
+		return nil
+	}
+	doc := javadoc.ParameterDocumentation(toJavaAnnotations(param.Annotations), methodDocParams[param.Name])
+
+	switch kind {
+	case javaspringmvc.ImplicitParam:
+		enum := doc.Enum
+		if len(enum) == 0 {
+			enum = p.typeResolver.EnumValues(javaspringmvc.ElementType(typeName))
+		}
+		return []EndpointParameter{{
+			Name:         param.Name,
+			Type:         param.Type,
+			ParamType:    in,
+			Required:     javaspringmvc.ImplicitRequired(names),
+			DefaultValue: doc.Default,
+			Description:  doc.Description,
+			Example:      doc.Example,
+			Enum:         enum,
+		}}
+	case javaspringmvc.ImplicitFile:
+		return []EndpointParameter{{
+			Name:        param.Name,
+			Type:        param.Type,
+			ParamType:   "form",
+			Required:    javaspringmvc.ImplicitRequired(names),
+			Description: doc.Description,
+		}}
+	case javaspringmvc.ImplicitPageable:
+		return boundParameters(javaspringmvc.PageableFields(), in)
+	case javaspringmvc.ImplicitSort:
+		return boundParameters(javaspringmvc.SortFields(), in)
+	case javaspringmvc.ImplicitModel:
+		resolved := p.typeResolver.ResolveForBinding(source, param.Type, bindings)
+		return boundParameters(javaspringmvc.ResolvedModelFields(param.Name, resolved), in)
+	}
+	return nil
+}
+
+func boundParameters(fields []javaspringmvc.BoundField, in string) []EndpointParameter {
+	out := make([]EndpointParameter, 0, len(fields))
+	for _, f := range fields {
+		out = append(out, EndpointParameter{
+			Name:         f.Name,
+			Type:         f.TypeName,
+			ParamType:    in,
+			Required:     f.Required,
+			DefaultValue: f.Default,
+			Description:  f.Description,
+			Example:      f.Example,
+			Enum:         f.Enum,
+		})
+	}
+	return out
 }
 
 func detectParameterType(annotations []ktparser.Annotation) string {

@@ -20,7 +20,7 @@ APilot is a multi-module monorepo that parses API source code and exports docume
 ┌──────────────────────▼──────────────────────────────────────┐
 │                   Collector / Formatter Modules              │
 │  api-collector-{java,go,node,python}                 │
-│  api-formatter-{markdown,curl,json,postman}                   │
+│  api-formatter-{markdown,curl,json,postman,yapi}              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -80,7 +80,7 @@ api-collector-{java,go,node,python}
   ├── api-collector
   └── api-docmeta   (shared documentation-metadata contract)
 
-api-formatter-{markdown,curl,json,postman}
+api-formatter-{markdown,curl,json,postman,yapi}
   ├── api-model     (for ApiEndpoint type)
   └── api-formatter
 
