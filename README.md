@@ -200,7 +200,7 @@ own environment:
 
 | Language | Prerequisite | What happens without it |
 |----------|--------------|--------------------------|
-| Java, Kotlin | [`maven-indexer-cli`](https://github.com/tangcent/maven-indexer-mcp) on PATH (`npm install -g maven-indexer-cli`); 1.2.0 or later to read types at the project's versions | Resolution is skipped; a warning names the tool and the number of declared dependencies affected |
+| Java, Kotlin | [`maven-indexer-cli`](https://github.com/tangcent/maven-indexer-mcp) on PATH (`npm install -g maven-indexer-cli`); 1.2.0 or later to read types at the project's versions (full pinning needs maven-indexer-mcp#28) | Resolution is skipped; a warning names the tool and the number of declared dependencies affected |
 | Go       | `go` toolchain on PATH (reads the module cache) | Resolution is skipped; a warning names the missing toolchain |
 | Node.js  | `npm install` run (reads `node_modules`) | Resolution is skipped; a warning says to install first |
 | Python   | A discoverable environment: project `.venv`/`venv`/`env`, `CONDA_PREFIX`, or `python` on PATH | Resolution is skipped; a warning says which environment to activate |
@@ -214,9 +214,11 @@ For Java and Kotlin, a class from a library written in Kotlin is read from its
 Kotlin sources; a class without a sources JAR, such as a locally built
 SNAPSHOT, is decompiled.
 
-With maven-indexer-cli 1.2.0 or later, APilot asks for each class at the
-version the project uses rather than whichever version the index holds. It
-asks the indexer for the project's dependency tree first: the indexer runs
+With maven-indexer-cli 1.2.0 or later, APilot asks the indexer to pin each
+class to the version the project's dependency tree names (`--project-path`),
+but on released CLIs up to 1.2.1 most types are still read from the version
+the index holds and are reported as unpinned. It asks the indexer for the
+project's dependency tree first: the indexer runs
 `mvn dependency:tree` (or `gradle dependencies`) once and caches the result per
 build file, so the first export of a project takes as long as that command, and
 later ones do not. An older CLI still resolves types, from the version the
