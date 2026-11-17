@@ -61,9 +61,8 @@ func (c *KotlinCollector) Frameworks() []string {
 	return append([]string(nil), c.frameworks...)
 }
 
-// DependencyResolution reports the dependency-based type resolution of the Java
-// half of a mixed tree. A Kotlin-only collection reports nothing: the Kotlin
-// resolver does not reach into dependencies.
+// DependencyResolution reports the dependency-based type resolution of the
+// last Collect call, shared by the Kotlin and Java halves of a mixed tree.
 func (c *KotlinCollector) DependencyResolution() collector.DependencyResolution {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -128,6 +127,10 @@ func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 	classes := flattenClasses(results)
 	warnings := collectWarnings(results, classes)
 
+	// One dependency resolution serves both halves of a mixed tree.
+	deps := javacollector.SetupDependencies(ctx.SourceDir, ctx.NoDeps)
+	defer deps.Close()
+
 	var endpoints []collector.ApiEndpoint
 	var matched []string
 	var unresolved map[string]int
@@ -138,6 +141,7 @@ func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 	var java *javacollector.JavaCollector
 	if mixed {
 		java = javacollector.New().(*javacollector.JavaCollector)
+		java.ShareDependencies(deps)
 		javaCtx := ctx
 		if ext == ".kt" {
 			javaCtx.SourceFile = ""
@@ -153,6 +157,9 @@ func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 		unresolved = map[string]int{}
 	} else {
 		typeResolver := resolver.NewWithJavaTypes(classes, javaTypes)
+		if dr := deps.Resolver(); dr != nil {
+			typeResolver.SetDependencyResolver(dr)
+		}
 		typeResolver.SetRequiredFields(requiredFields)
 		sm := springmvc.NewParser(typeResolver)
 		before := len(endpoints)
@@ -170,7 +177,6 @@ func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 		unresolved = typeResolver.Unresolved()
 	}
 
-	var depResolution collector.DependencyResolution
 	if java != nil {
 		endpoints = append(endpoints, javaEndpoints...)
 		for name, n := range java.Unresolved() {
@@ -182,14 +188,13 @@ func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 				matched = append(matched, framework)
 			}
 		}
-		depResolution = java.DependencyResolution()
 	}
 
 	c.mu.Lock()
 	c.unresolved = unresolved
 	c.warnings = warnings
 	c.frameworks = matched
-	c.depResolution = depResolution
+	c.depResolution = deps.Resolution()
 	c.mu.Unlock()
 
 	seen := make(map[string]bool, len(endpoints))

@@ -200,7 +200,7 @@ own environment:
 
 | Language | Prerequisite | What happens without it |
 |----------|--------------|--------------------------|
-| Java     | [`maven-indexer-cli`](https://github.com/tangcent/maven-indexer-cli) on PATH | Resolution is skipped; a warning names the tool and the number of declared dependencies affected |
+| Java, Kotlin | [`maven-indexer-cli`](https://github.com/tangcent/maven-indexer-mcp) on PATH (`npm install -g maven-indexer-cli`); 1.2.0 or later to read types at the project's versions (full pinning needs maven-indexer-mcp#28) | Resolution is skipped; a warning names the tool and the number of declared dependencies affected |
 | Go       | `go` toolchain on PATH (reads the module cache) | Resolution is skipped; a warning names the missing toolchain |
 | Node.js  | `npm install` run (reads `node_modules`) | Resolution is skipped; a warning says to install first |
 | Python   | A discoverable environment: project `.venv`/`venv`/`env`, `CONDA_PREFIX`, or `python` on PATH | Resolution is skipped; a warning says which environment to activate |
@@ -209,6 +209,42 @@ When resolution runs, APilot reports how many types were expanded from
 dependencies (`info: resolved N types from dependencies`). Use `--no-deps` to
 turn the capability off explicitly — useful in CI where the prerequisite is
 known to be absent.
+
+For Java and Kotlin, a class from a library written in Kotlin is read from its
+Kotlin sources; a class without a sources JAR, such as a locally built
+SNAPSHOT, is decompiled.
+
+With maven-indexer-cli 1.2.0 or later, APilot asks the indexer to pin each
+class to the version the project's dependency tree names (`--project-path`),
+but on released CLIs up to 1.2.1 most types are still read from the version
+the index holds and are reported as unpinned. It asks the indexer for the
+project's dependency tree first: the indexer runs
+`mvn dependency:tree` (or `gradle dependencies`) once and caches the result per
+build file, so the first export of a project takes as long as that command, and
+later ones do not. An older CLI still resolves types, from the version the
+index holds, and a warning says so.
+
+Whenever a type may come from a version other than the project's, a warning
+says why: the tree could not be resolved, or the version it names is not
+indexed. Types the indexer reports reading from another version are listed
+with the version each was read from, and a lookup that fails is listed with
+the reason. Up to maven-indexer-cli 1.2.1, the indexer pins only the classes
+of the first artifact of the tree it has indexed, which is often the project
+itself ([maven-indexer-mcp#28](https://github.com/tangcent/maven-indexer-mcp/pull/28));
+the other classes are read from the version the index holds and listed in
+that warning.
+
+The indexer's default index keeps one version per artifact. To read the exact
+versions your projects use, index all versions of your own libraries into an
+index of their own, which is fast because the scope is small. The indexer reads
+both variables from the environment, so keep them set when you run
+`apilot export`:
+
+```bash
+export DB_FILE="$HOME/.maven-indexer-mcp/my-libraries.sqlite"
+export INCLUDED_PACKAGES='com.example.*'
+maven-indexer-cli refresh-index --full
+```
 
 ```bash
 apilot export ./backend --formatter markdown --no-deps

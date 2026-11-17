@@ -240,6 +240,13 @@ func (r *TypeResolver) lookup(key string) (parser.Class, bool) {
 	return c, true
 }
 
+// isRegisteredEnum reports whether key names an enum the resolver already
+// holds, whether or not the current view sees it.
+func (r *TypeResolver) isRegisteredEnum(key string) bool {
+	c, found := r.classRegistry[key]
+	return found && c.IsEnum
+}
+
 // enterBindingView switches to the binding view and returns the function that
 // restores the previous view.
 func (r *TypeResolver) enterBindingView() func() {
@@ -566,11 +573,17 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 
 	name := r.resolveSimpleName(source, baseName)
 
+	if r.dependencyResolver != nil {
+		typeArgs = r.qualifyTypeArgs(source, typeArgs)
+	}
+
 	if class, found := r.lookup(name); found {
 		return r.resolveClass(class, name, typeArgs, typeBindings)
 	}
 
-	if r.dependencyResolver != nil {
+	// An enum of the scanned sources is already known; the JSON view just
+	// does not see it, and a dependency's copy of it would not be seen either.
+	if r.dependencyResolver != nil && !r.isRegisteredEnum(name) {
 		if depClass := r.dependencyResolver.ResolveClass(name); depClass != nil {
 			r.register(*depClass, name)
 			if r.sees(*depClass) {
@@ -996,6 +1009,63 @@ func (r *TypeResolver) resolveInheritedFields(class parser.Class, localBindings 
 	r.addGetterProperties(superClass, superBindings, superTypeParamSet, obj)
 
 	r.resolveInheritedFields(superClass, superBindings, obj)
+}
+
+// qualifyTypeArgs spells each type argument by the qualified name it denotes
+// in source. An argument is bound to a type parameter and resolved later,
+// inside the generic class, where source's imports no longer apply: for
+// `Wrapper<PageData<Order>>` written in a controller, PageData would be looked
+// up among Wrapper's imports, and a dependency class could only be asked for by
+// its simple name. Only a declaration of the scanned sources or a single-type
+// import qualifies a name; JDK and Kotlin types stay as written, since the
+// resolver knows collections and scalars by their simple names.
+func (r *TypeResolver) qualifyTypeArgs(source parser.Class, args []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+	out := make([]string, len(args))
+	for i, arg := range args {
+		out[i] = r.qualifyTypeName(source, strings.TrimSpace(arg))
+	}
+	return out
+}
+
+func (r *TypeResolver) qualifyTypeName(source parser.Class, typeName string) string {
+	if typeName == "" {
+		return typeName
+	}
+	if isWildcard(typeName) {
+		if bound, ok := wildcardUpperBound(typeName); ok {
+			return "? extends " + r.qualifyTypeName(source, bound)
+		}
+		return typeName
+	}
+	suffix := ""
+	for strings.HasSuffix(typeName, "[]") {
+		typeName = strings.TrimSuffix(typeName, "[]")
+		suffix += "[]"
+	}
+	base, args := parseGenericType(typeName)
+	if !strings.Contains(base, ".") {
+		if key := r.resolveSimpleName(source, base); key != base && !isPlatformName(key) {
+			base = key
+		}
+	}
+	if len(args) > 0 {
+		base += "<" + strings.Join(r.qualifyTypeArgs(source, args), ", ") + ">"
+	}
+	return base + suffix
+}
+
+// isPlatformName reports whether a qualified name belongs to the JDK or the
+// Kotlin standard library.
+func isPlatformName(name string) bool {
+	for _, prefix := range []string{"java.", "javax.", "kotlin."} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func parseGenericType(rawType string) (string, []string) {

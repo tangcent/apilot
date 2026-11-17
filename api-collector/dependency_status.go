@@ -37,14 +37,26 @@ type DependencyResolution struct {
 	State DependencyResolutionState
 
 	// Detail explains a non-active state: it names the missing tool or
-	// artifacts with guidance for restoring them. Empty for Active, which
-	// needs no explanation.
+	// artifacts with guidance for restoring them. For Active it is usually
+	// empty; when set, it says why types may come from a version other than
+	// the one the project uses.
 	Detail string
 
 	// ResolvedTypes counts the distinct endpoint types expanded from
 	// dependencies during the last Collect call. Meaningful only for Active;
 	// zero there means the endpoints never referenced a dependency type.
 	ResolvedTypes int
+
+	// Unpinned lists the resolved types that could not be pinned to the
+	// version the project's dependency tree names, each as
+	// "type (artifact it was read from)". Meaningful only for Active.
+	Unpinned []string
+
+	// Failed lists the types whose lookup failed, each as "type: reason":
+	// the tool errored or answered in a shape the resolver does not know.
+	// A type the tool simply does not have is not a failure. Meaningful only
+	// for Active.
+	Failed []string
 }
 
 // DependencyResolutionReporter is an optional interface implemented by

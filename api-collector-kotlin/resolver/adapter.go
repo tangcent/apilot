@@ -28,6 +28,10 @@ type Resolver struct {
 	javaTypes  []javaparser.Class
 	// bindingTR resolves model attributes; it is built on first use.
 	bindingTR *javaresolver.TypeResolver
+	// The binding view is built on first use, so the settings it shares
+	// with tr are kept here.
+	dependencyResolver javaresolver.DependencyResolver
+	requiredFields     string
 }
 
 // New builds a resolver over all Kotlin declarations in the project.
@@ -76,6 +80,34 @@ func NewWithJavaTypes(classes []ktparser.Class, javaTypes []javaparser.Class) *R
 	return r
 }
 
+// SetDependencyResolver lets the resolver expand types declared in the
+// project's dependencies, such as a response envelope from a shared library.
+// The binding view, built later, receives it too.
+func (r *Resolver) SetDependencyResolver(dr javaresolver.DependencyResolver) {
+	dr = projectEnumsFirst{dr: dr, r: r}
+	r.dependencyResolver = dr
+	r.tr.SetDependencyResolver(dr)
+	if r.bindingTR != nil {
+		r.bindingTR.SetDependencyResolver(dr)
+	}
+}
+
+// projectEnumsFirst keeps the project's own enums away from the dependency
+// resolver. The Java type table does not hold them, since the adapter renders
+// them itself, so the Java resolver would otherwise ask the index for them and
+// read some installed release of the project instead.
+type projectEnumsFirst struct {
+	dr javaresolver.DependencyResolver
+	r  *Resolver
+}
+
+func (p projectEnumsFirst) ResolveClass(className string) *javaparser.Class {
+	if c, ok := p.r.byKey[className]; ok && c.IsEnum {
+		return nil
+	}
+	return p.dr.ResolveClass(className)
+}
+
 // ResolveForBinding expands a type the way Spring's data binder sees it when
 // it binds a model attribute from request parameters: properties go by their
 // Kotlin names, because @JsonProperty and @JsonIgnore only shape JSON, and a
@@ -96,6 +128,12 @@ func (r *Resolver) ResolveForBinding(source *ktparser.Class, rawType string, bin
 		javaClasses = append(javaClasses, r.javaTypes...)
 		r.bindingTR = javaresolver.NewTypeResolver(javaClasses)
 		r.bindingTR.SetUnresolved(r.unresolved)
+		if r.dependencyResolver != nil {
+			r.bindingTR.SetDependencyResolver(r.dependencyResolver)
+		}
+		if r.requiredFields != "" {
+			r.bindingTR.SetRequiredFields(r.requiredFields)
+		}
 	}
 	var normalizedBindings map[string]string
 	if len(bindings) > 0 {
@@ -111,8 +149,13 @@ func (r *Resolver) ResolveForBinding(source *ktparser.Class, rawType string, bin
 
 // SetRequiredFields selects how resolved fields are marked required: one of
 // collector.RequiredFieldsDefault or collector.RequiredFieldsConstraints.
+// The binding view, built later, uses the same mode.
 func (r *Resolver) SetRequiredFields(mode string) {
+	r.requiredFields = mode
 	r.tr.SetRequiredFields(mode)
+	if r.bindingTR != nil {
+		r.bindingTR.SetRequiredFields(mode)
+	}
 }
 
 // Unresolved returns type names the resolver could not expand, with enums
