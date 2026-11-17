@@ -17,7 +17,8 @@ import (
 // the missing information would look like source that does not carry it.
 //
 // Version 3: Class carries the compilation unit path and its imports.
-const cacheSchemaVersion = "3"
+// Version 4: Method, Class and Field carry RawJavaDoc, and Class carries EnumConstantDocs.
+const cacheSchemaVersion = "4"
 
 // Cache provides file-level caching based on content hash.
 type Cache struct {
