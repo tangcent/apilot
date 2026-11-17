@@ -2,10 +2,14 @@ package kotlincollector
 
 import (
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"testing"
 
 	collector "github.com/tangcent/apilot/api-collector"
+	ktparser "github.com/tangcent/apilot/api-collector-kotlin/parser"
+	"github.com/tangcent/apilot/api-collector-kotlin/resolver"
+	"github.com/tangcent/apilot/api-collector-kotlin/springmvc"
 	model "github.com/tangcent/apilot/api-model"
 )
 
@@ -43,7 +47,14 @@ var seeQueryExpectation = map[string][]string{
 
 func TestSeeTagGivesAFieldTheConstantsOfAnEnum(t *testing.T) {
 	endpoints, _ := collectDir(t, "testdata/see")
+	checkSeeTables(t, endpoints, seeExpectation, seeQueryExpectation)
+}
 
+// checkSeeTables asserts the options of the string fields in want on the
+// request body of the create endpoint, and the values of the query parameters
+// in wantQuery on the page endpoint. It returns the fields of the body.
+func checkSeeTables(t *testing.T, endpoints []collector.ApiEndpoint, want, wantQuery map[string][]string) map[string]*model.FieldModel {
+	t.Helper()
 	var create, page *collector.ApiEndpoint
 	for i := range endpoints {
 		switch endpoints[i].Name {
@@ -61,14 +72,14 @@ func TestSeeTagGivesAFieldTheConstantsOfAnEnum(t *testing.T) {
 		t.Fatalf("create has no request body")
 	}
 	fields := create.RequestBody.Body.Fields
-	for name, want := range seeExpectation {
+	for name, wantOptions := range want {
 		field := fields[name]
 		if field == nil {
 			t.Errorf("body field %s missing", name)
 			continue
 		}
-		if got := describeOptions(field.Options); !reflect.DeepEqual(got, want) {
-			t.Errorf("body field %s options:\n got  %q\n want %q", name, got, want)
+		if got := describeOptions(field.Options); !reflect.DeepEqual(got, wantOptions) {
+			t.Errorf("body field %s options:\n got  %q\n want %q", name, got, wantOptions)
 		}
 		if field.Model == nil || field.Model.TypeName != model.JsonTypeString {
 			t.Errorf("body field %s = %+v, want a string", name, field.Model)
@@ -79,10 +90,105 @@ func TestSeeTagGivesAFieldTheConstantsOfAnEnum(t *testing.T) {
 	for _, p := range page.Parameters {
 		params[p.Name] = p
 	}
-	for name, want := range seeQueryExpectation {
-		if got := params[name].Enum; !reflect.DeepEqual(got, want) {
-			t.Errorf("query parameter %s enum = %q, want %q", name, got, want)
+	for name, wantEnum := range wantQuery {
+		if got := params[name].Enum; !reflect.DeepEqual(got, wantEnum) {
+			t.Errorf("query parameter %s enum = %q, want %q", name, got, wantEnum)
 		}
+	}
+	return fields
+}
+
+// seeDependencyExpectation is the export of testdata/see-dependency, a form
+// whose `@see` tags point at classes of a library rather than of the project:
+// the options of each String property of the request body. The library's
+// OrderState, a Kotlin source, gives the options the project's own gives in
+// testdata/see. PayChannel, decompiled from a JAR without sources, gives its
+// constants without descriptions. A member reference, a library class that is
+// not an enum, a class the library does not have, a name the source neither
+// qualifies nor imports and a JDK class add nothing.
+//
+// The Java collector asserts the same table for the same form written in Java
+// (api-collector-java/see_test.go): keep the two in sync.
+var seeDependencyExpectation = map[string][]string{
+	"state":      seeExpectation["state"],
+	"qualified":  seeExpectation["state"],
+	"channel":    {"ALIPAY: ", "WECHAT: "},
+	"member":     nil,
+	"notAnEnum":  nil,
+	"missing":    nil,
+	"unimported": nil,
+	"platform":   nil,
+}
+
+// seeDependencyQueryExpectation is the same form bound from request
+// parameters. A property typed with the library's enum accepts its constants.
+var seeDependencyQueryExpectation = map[string][]string{
+	"state":      {"PENDING", "PAID", "CLOSED"},
+	"qualified":  {"PENDING", "PAID", "CLOSED"},
+	"channel":    {"ALIPAY", "WECHAT"},
+	"member":     nil,
+	"notAnEnum":  nil,
+	"missing":    nil,
+	"unimported": nil,
+	"platform":   nil,
+	"typed":      {"PENDING", "PAID", "CLOSED"},
+}
+
+func TestSeeTagReadsAnEnumOfADependency(t *testing.T) {
+	p, err := ktparser.NewParser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	dir, _ := filepath.Abs("testdata/see-dependency")
+	results, err := p.ParseDirectory(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	typeResolver := resolver.New(flattenClasses(results))
+	library := &libraryResolver{t: t}
+	typeResolver.SetDependencyResolver(library)
+	sm := springmvc.NewParser(typeResolver)
+	var endpoints []collector.ApiEndpoint
+	for _, ctrl := range sm.ExtractControllers(results) {
+		for _, ep := range ctrl.Endpoints {
+			endpoints = append(endpoints, springMVCEndpointToAPI(ep, ctrl.Name))
+		}
+	}
+
+	body := checkSeeTables(t, endpoints, seeDependencyExpectation, seeDependencyQueryExpectation)
+	// The JSON view exports a property typed with an enum the project does
+	// not declare by the enum's name.
+	if typed := body["typed"]; typed == nil || typed.Model.TypeName != "OrderState" || len(typed.Options) != 0 {
+		t.Errorf("body field typed = %+v, want the enum's name without options", typed)
+	}
+
+	// The library is asked for each name once by each view, however many
+	// fields refer to it, a miss included: the JSON view and the binding view
+	// keep a type table each. Only qualified names reach it.
+	asked := map[string]int{}
+	for _, name := range library.queried {
+		asked[name]++
+	}
+	wantAsked := []string{"com.example.lib.OrderState", "com.example.lib.PayChannel", "com.example.lib.PageQuery", "com.example.lib.Missing"}
+	for _, name := range wantAsked {
+		if asked[name] != 2 {
+			t.Errorf("%s was asked for %d times, want once by each view", name, asked[name])
+		}
+	}
+	if len(asked) != len(wantAsked) {
+		t.Errorf("asked = %v, want only %v", library.queried, wantAsked)
+	}
+	// The `@see` lookups report nothing; the enum-typed property is reported
+	// by the JSON view as before.
+	for name := range typeResolver.Unresolved() {
+		if name != "OrderState" {
+			t.Errorf("unresolved %s; unresolved = %v", name, typeResolver.Unresolved())
+		}
+	}
+	if warnings := sm.Warnings(); len(warnings) != 0 {
+		t.Errorf("warnings = %q", warnings)
 	}
 }
 
