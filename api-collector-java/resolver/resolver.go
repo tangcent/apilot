@@ -160,6 +160,9 @@ type TypeResolver struct {
 	bindingView bool
 	// requiredFields is a collector.RequiredFields mode; empty means default.
 	requiredFields string
+	// dependencyAnswers holds what dependencyResolver answered for each name,
+	// a miss as nil, so that no name is asked for twice.
+	dependencyAnswers map[string]*parser.Class
 }
 
 // SetRequiredFields selects how resolved fields are marked required: one of
@@ -300,11 +303,56 @@ func (r *TypeResolver) seeOptions(source parser.Class, rawDoc string) []model.Fi
 		if strings.Contains(ref, "#") {
 			continue
 		}
-		if enum, ok := r.enumClass(source, ref); ok {
+		if enum, ok := r.seeEnum(source, ref); ok {
 			return EnumOptions(enum)
 		}
 	}
 	return nil
+}
+
+// seeEnum returns the enum a `@see` reference names as seen from source. An
+// enum the scanned sources do not declare is read from the project's
+// dependencies: the enums such a reference names usually live in a shared
+// model library.
+//
+// Only a name the source qualifies, by writing it in full or importing it, is
+// looked up there: the index knows a class by its qualified name only. Names
+// of the JDK and the Kotlin standard library are skipped, as they are when
+// type arguments are qualified (see isPlatformName).
+//
+// The class read is not registered. A doc comment does not put a class in
+// scope, and once registered it would answer for its simple name wherever
+// nothing in scope declares that name (see resolveSimpleName), in place of a
+// project class of the same name.
+func (r *TypeResolver) seeEnum(source parser.Class, ref string) (parser.Class, bool) {
+	if enum, ok := r.enumClass(source, ref); ok || r.dependencyResolver == nil {
+		return enum, ok
+	}
+	// The name enumClass looked up, in the view that sees enums.
+	defer r.enterBindingView()()
+	key := r.resolveSimpleName(source, strings.TrimSpace(ref))
+	if _, known := r.classRegistry[key]; known || !strings.Contains(key, ".") || isPlatformName(key) {
+		return parser.Class{}, false
+	}
+	class := r.dependencyClass(key)
+	if class == nil || !class.IsEnum {
+		return parser.Class{}, false
+	}
+	return *class, true
+}
+
+// dependencyClass returns the class the dependency resolver reads for name,
+// or nil when it has none. Each name is asked for once.
+func (r *TypeResolver) dependencyClass(name string) *parser.Class {
+	if class, asked := r.dependencyAnswers[name]; asked {
+		return class
+	}
+	class := r.dependencyResolver.ResolveClass(name)
+	if r.dependencyAnswers == nil {
+		r.dependencyAnswers = make(map[string]*parser.Class)
+	}
+	r.dependencyAnswers[name] = class
+	return class
 }
 
 // ResolveForBinding expands a type the way Spring's data binder sees it when
@@ -394,10 +442,12 @@ func lastSegment(name string) string {
 
 func (r *TypeResolver) SetDependencyResolver(dr DependencyResolver) {
 	r.dependencyResolver = dr
+	r.dependencyAnswers = nil
 }
 
 func (r *TypeResolver) SetCollectorDependencyResolver(cdr collector.DependencyResolver) {
 	r.dependencyResolver = &collectorDependencyAdapter{resolver: cdr}
+	r.dependencyAnswers = nil
 }
 
 // SetUnresolved attaches a shared sink that records type names this resolver
@@ -584,7 +634,7 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	// An enum of the scanned sources is already known; the JSON view just
 	// does not see it, and a dependency's copy of it would not be seen either.
 	if r.dependencyResolver != nil && !r.isRegisteredEnum(name) {
-		if depClass := r.dependencyResolver.ResolveClass(name); depClass != nil {
+		if depClass := r.dependencyClass(name); depClass != nil {
 			r.register(*depClass, name)
 			if r.sees(*depClass) {
 				return r.resolveClass(*depClass, name, typeArgs, typeBindings)

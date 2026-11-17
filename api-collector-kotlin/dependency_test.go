@@ -44,10 +44,60 @@ class PageQuery {
     var size: Int? = null
 }
 `,
+	"com.example.lib.OrderState": `package com.example.lib
+
+/**
+ * State of an order.
+ */
+enum class OrderState(val code: String) {
+    /** Waiting for payment. */
+    PENDING("P"),
+    /**
+     * Paid.
+     *
+     * Ships within a day.
+     */
+    PAID("D"),
+    CLOSED("C"),
+    ;
+
+    companion object {
+        /** The state a code stands for. */
+        @JvmStatic
+        fun of(code: String?): OrderState? = values().firstOrNull { it.code == code }
+    }
+}
+`,
+}
+
+// decompiledLibrarySources are classes of the same library that the indexer
+// can only decompile, for want of a sources JAR: Java without doc comments.
+var decompiledLibrarySources = map[string]string{
+	"com.example.lib.PayChannel": `/*
+ * Decompiled with CFR 0.152.
+ */
+package com.example.lib;
+
+public enum PayChannel {
+    ALIPAY("alipay"),
+    WECHAT("wechat");
+
+    private final String code;
+
+    private PayChannel(String code) {
+        this.code = code;
+    }
+
+    public String getCode() {
+        return this.code;
+    }
+}
+`,
 }
 
 // libraryResolver answers dependency lookups from librarySources through the
-// parser the collector registers for Kotlin dependency sources.
+// parser the collector registers for Kotlin dependency sources, and from
+// decompiledLibrarySources through the Java parser.
 type libraryResolver struct {
 	t       *testing.T
 	queried []string
@@ -55,11 +105,15 @@ type libraryResolver struct {
 
 func (r *libraryResolver) ResolveClass(className string) *javaparser.Class {
 	r.queried = append(r.queried, className)
-	source, ok := librarySources[className]
-	if !ok {
+	var classes []javaparser.Class
+	var err error
+	if source, ok := decompiledLibrarySources[className]; ok {
+		classes, err = parseJavaSource(source)
+	} else if source, ok := librarySources[className]; ok {
+		classes, err = parseDependencySource(className, []byte(source))
+	} else {
 		return nil
 	}
-	classes, err := parseDependencySource(className, []byte(source))
 	if err != nil {
 		r.t.Fatalf("parsing %s: %v", className, err)
 	}
@@ -70,6 +124,15 @@ func (r *libraryResolver) ResolveClass(className string) *javaparser.Class {
 		}
 	}
 	return nil
+}
+
+func parseJavaSource(source string) ([]javaparser.Class, error) {
+	p, err := javaparser.NewParser(javaparser.ParserOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer p.Close()
+	return p.ParseSource([]byte(source))
 }
 
 func TestParseDependencySourceReadsKotlinLikeTheProject(t *testing.T) {

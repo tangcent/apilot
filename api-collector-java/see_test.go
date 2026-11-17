@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	collector "github.com/tangcent/apilot/api-collector"
+	"github.com/tangcent/apilot/api-collector-java/parser"
+	"github.com/tangcent/apilot/api-collector-java/springmvc"
 	model "github.com/tangcent/apilot/api-model"
 )
 
@@ -61,7 +63,14 @@ func checkSeeExport(t *testing.T, endpoints []collector.ApiEndpoint, extra map[s
 	for name, options := range extra {
 		want[name] = options
 	}
+	checkSeeTables(t, endpoints, want, seeQueryExpectation)
+}
 
+// checkSeeTables asserts the options of the string fields in want on the
+// request body of the create endpoint, and the values of the query parameters
+// in wantQuery on the page endpoint. It returns the fields of the body.
+func checkSeeTables(t *testing.T, endpoints []collector.ApiEndpoint, want, wantQuery map[string][]string) map[string]*model.FieldModel {
+	t.Helper()
 	var create, page *collector.ApiEndpoint
 	for i := range endpoints {
 		switch endpoints[i].Name {
@@ -97,10 +106,194 @@ func checkSeeExport(t *testing.T, endpoints []collector.ApiEndpoint, extra map[s
 	for _, p := range page.Parameters {
 		params[p.Name] = p
 	}
-	for name, wantEnum := range seeQueryExpectation {
+	for name, wantEnum := range wantQuery {
 		if got := params[name].Enum; !reflect.DeepEqual(got, wantEnum) {
 			t.Errorf("query parameter %s enum = %q, want %q", name, got, wantEnum)
 		}
+	}
+	return fields
+}
+
+// seeDependencyExpectation is the export of testdata/see-dependency, a form
+// whose `@see` tags point at classes of a library rather than of the project:
+// the options of each String field of the request body. The library's
+// OrderState gives the options the project's own gives in testdata/see.
+// PayChannel, decompiled from a JAR without sources, gives its constants
+// without descriptions. A member reference, a library class that is not an
+// enum, a class the library does not have, a name the source neither
+// qualifies nor imports and a JDK class add nothing.
+//
+// The Kotlin collector asserts the same table for the same form written in
+// Kotlin (api-collector-kotlin/see_test.go): keep the two in sync.
+var seeDependencyExpectation = map[string][]string{
+	"state":      seeExpectation["state"],
+	"qualified":  seeExpectation["state"],
+	"channel":    {"ALIPAY: ", "WECHAT: "},
+	"member":     nil,
+	"notAnEnum":  nil,
+	"missing":    nil,
+	"unimported": nil,
+	"platform":   nil,
+}
+
+// seeDependencyQueryExpectation is the same form bound from request
+// parameters. A field typed with the library's enum accepts its constants.
+var seeDependencyQueryExpectation = map[string][]string{
+	"state":      {"PENDING", "PAID", "CLOSED"},
+	"qualified":  {"PENDING", "PAID", "CLOSED"},
+	"channel":    {"ALIPAY", "WECHAT"},
+	"member":     nil,
+	"notAnEnum":  nil,
+	"missing":    nil,
+	"unimported": nil,
+	"platform":   nil,
+	"typed":      {"PENDING", "PAID", "CLOSED"},
+}
+
+// seeLibrarySources are the classes of the library testdata/see-dependency
+// refers to, as the indexer returns them: OrderState from a sources JAR, and
+// PayChannel decompiled from a JAR without one, so with no doc comments.
+var seeLibrarySources = map[string]string{
+	"com.example.lib.OrderState": `package com.example.lib;
+
+/**
+ * State of an order.
+ */
+public enum OrderState {
+    /** Waiting for payment. */
+    PENDING("P"),
+    /**
+     * Paid.
+     *
+     * Ships within a day.
+     */
+    PAID("D"),
+    CLOSED("C");
+
+    private final String code;
+
+    OrderState(String code) {
+        this.code = code;
+    }
+
+    public String getCode() {
+        return code;
+    }
+}
+`,
+	"com.example.lib.PayChannel": `/*
+ * Decompiled with CFR 0.152.
+ */
+package com.example.lib;
+
+public enum PayChannel {
+    ALIPAY("alipay"),
+    WECHAT("wechat");
+
+    private final String code;
+
+    private PayChannel(String code) {
+        this.code = code;
+    }
+
+    public String getCode() {
+        return this.code;
+    }
+}
+`,
+	"com.example.lib.PageQuery": `package com.example.lib;
+
+public class PageQuery {
+    private int page;
+    private int size;
+}
+`,
+}
+
+// seeLibrary answers dependency lookups from seeLibrarySources by qualified
+// name, as the indexer does, and records each lookup.
+type seeLibrary struct {
+	t      *testing.T
+	parser *parser.Parser
+	asked  []string
+}
+
+func (l *seeLibrary) ResolveClass(name string) *parser.Class {
+	l.asked = append(l.asked, name)
+	source, ok := seeLibrarySources[name]
+	if !ok {
+		return nil
+	}
+	classes, err := l.parser.ParseSource([]byte(source))
+	if err != nil {
+		l.t.Fatalf("parsing %s: %v", name, err)
+	}
+	for i := range classes {
+		if classes[i].Package+"."+classes[i].Name == name {
+			return &classes[i]
+		}
+	}
+	return nil
+}
+
+func TestSeeTagReadsAnEnumOfADependency(t *testing.T) {
+	abs, err := filepath.Abs("testdata/see-dependency")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := parser.NewParser(parser.ParserOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	results, err := p.ParseDirectory(abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	library := &seeLibrary{t: t, parser: p}
+	unresolved := collector.NewUnresolvedSet()
+	sm := springmvc.NewParser()
+	sm.SetDependencyResolver(library)
+	sm.SetUnresolved(unresolved)
+	var endpoints []collector.ApiEndpoint
+	for _, ctrl := range sm.ExtractControllers(results) {
+		for _, ep := range ctrl.Endpoints {
+			endpoints = append(endpoints, springmvcEndpointToAPI(ep, ctrl.Name))
+		}
+	}
+
+	body := checkSeeTables(t, endpoints, seeDependencyExpectation, seeDependencyQueryExpectation)
+	// The JSON view exports a field typed with an enum by the enum's name,
+	// whether the project or a library declares it.
+	if typed := body["typed"]; typed == nil || typed.Model.TypeName != "OrderState" || len(typed.Options) != 0 {
+		t.Errorf("body field typed = %+v, want the enum's name without options", typed)
+	}
+
+	// The library is asked for each name once, however many fields refer to
+	// it and in whichever view, a miss included. Only qualified names reach it.
+	asked := map[string]int{}
+	for _, name := range library.asked {
+		asked[name]++
+	}
+	wantAsked := []string{"com.example.lib.OrderState", "com.example.lib.PayChannel", "com.example.lib.PageQuery", "com.example.lib.Missing"}
+	for _, name := range wantAsked {
+		if asked[name] != 1 {
+			t.Errorf("%s was asked for %d times, want once", name, asked[name])
+		}
+	}
+	if len(asked) != len(wantAsked) {
+		t.Errorf("asked = %v, want only %v", library.asked, wantAsked)
+	}
+	// The `@see` lookups report nothing; the enum-typed field is reported by
+	// the JSON view as before.
+	for name := range unresolved.Counts() {
+		if name != "OrderState" {
+			t.Errorf("unresolved %s; unresolved = %v", name, unresolved.Counts())
+		}
+	}
+	if warnings := sm.Warnings(); len(warnings) != 0 {
+		t.Errorf("warnings = %q", warnings)
 	}
 }
 
