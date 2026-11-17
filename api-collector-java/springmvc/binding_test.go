@@ -178,3 +178,28 @@ class Operator {
 		t.Errorf("me parameters = %v", me)
 	}
 }
+
+func TestOptionalArgument(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		paramType   string
+		typeName    string
+		annotations []string
+		optional    bool
+		want        bool
+	}{
+		{"plain query parameter", "query", "String", nil, false, false},
+		{"Optional", "query", "Optional<String>", nil, false, true},
+		{"qualified Optional", "header", "java.util.Optional<Long>", nil, false, true},
+		{"a type merely named like it", "query", "OptionalFeature", nil, false, false},
+		{"@Nullable", "header", "String", []string{"RequestHeader", "Nullable"}, false, true},
+		{"Kotlin nullable or default", "form", "String", nil, true, true},
+		{"a constraint keeps it mandatory", "query", "Long", []string{"RequestParam", "NotNull"}, true, false},
+		{"path variable", "path", "Optional<String>", nil, true, false},
+		{"request body", "body", "String", []string{"Nullable"}, true, false},
+	} {
+		if got := OptionalArgument(tc.paramType, tc.typeName, tc.annotations, tc.optional); got != tc.want {
+			t.Errorf("%s: OptionalArgument = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

@@ -136,6 +136,43 @@ func ImplicitRequired(annotations []string) bool {
 	return false
 }
 
+// OptionalArgument reports whether Spring leaves a missing request parameter,
+// header or multipart part unbound instead of rejecting the request, although
+// its annotation does not say required = false. Spring checks
+// MethodParameter.isOptional, which holds for a java.util.Optional, for a
+// parameter annotated @Nullable (any annotation of that simple name), and in
+// Kotlin for a nullable type or a parameter with a default value; the
+// collector passes the last two as optional. A validation constraint such as
+// @NotNull still makes the value mandatory: binding leaves it null, and
+// validation rejects the request.
+func OptionalArgument(paramType, typeName string, annotations []string, optional bool) bool {
+	switch paramType {
+	case "query", "header", "form":
+	default:
+		return false
+	}
+	if ImplicitRequired(annotations) {
+		return false
+	}
+	if optional || isOptionalType(typeName) {
+		return true
+	}
+	for _, name := range annotations {
+		if name == "Nullable" {
+			return true
+		}
+	}
+	return false
+}
+
+func isOptionalType(typeName string) bool {
+	base := strings.TrimSpace(typeName)
+	if i := strings.Index(base, "<"); i >= 0 {
+		base = base[:i]
+	}
+	return base == "Optional" || base == "java.util.Optional"
+}
+
 // BoundField is one request parameter a model attribute is bound from.
 type BoundField struct {
 	Name        string

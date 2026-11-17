@@ -395,6 +395,12 @@ func extractFunction(node *tree_sitter.Node, source []byte, filePath string) (*F
 				if paramErr != nil {
 					return nil, paramErr
 				}
+				// The grammar puts a function parameter's default value
+				// next to the parameter node, not inside it.
+				if i+2 < params.ChildCount() && params.Child(i+1).Kind() == "=" {
+					param.HasDefault = true
+					param.DefaultValue = strings.TrimSpace(params.Child(i + 2).Utf8Text(source))
+				}
 				fn.Parameters = append(fn.Parameters, param)
 				pending = nil
 			}
@@ -432,6 +438,7 @@ func extractParameter(node *tree_sitter.Node, source []byte, annotations []Annot
 		Type:        typeAfterColon(node, source),
 		Annotations: annotations,
 	}
+	param.Nullable = nullableTypeAfterColon(node, source)
 	if eq := directIndexOf(node, "="); eq >= 0 && eq+1 < int(node.ChildCount()) {
 		param.HasDefault = true
 		param.DefaultValue = strings.TrimSpace(node.Child(uint(eq) + 1).Utf8Text(source))
