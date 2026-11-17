@@ -131,17 +131,30 @@ func normalizeNewlines(s string) string {
 	return strings.ReplaceAll(s, "\r", "\n")
 }
 
+// testdataJavaWildcardProject is a Maven module whose response types hold
+// wildcard collections, with every type in its own sources.
+func testdataJavaWildcardProject() string {
+	_, filename, _, _ := runtime.Caller(0)
+	return filepath.Join(filepath.Dir(filename), "testdata", "javawildcard")
+}
+
 // assertGolden runs the CLI with args and compares stdout against the golden
 // file of the given name, rewriting the file instead when -update is set.
 func assertGolden(t *testing.T, name string, args ...string) {
 	t.Helper()
+	assertGoldenFile(t, goldenFile(name), args...)
+}
+
+// assertGoldenFile is assertGolden for a golden file at any path.
+func assertGoldenFile(t *testing.T, path string, args ...string) {
+	t.Helper()
+	name := filepath.Base(path)
 
 	output, exitCode := runCLIOnStdout(args...)
 	if exitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d", exitCode)
 	}
 
-	path := goldenFile(name)
 	if *updateGolden {
 		// Store LF only. The markdown templates are embedded from disk, so
 		// their line endings follow the checkout and would otherwise leak a
@@ -654,6 +667,14 @@ func TestNoDepsFlag(t *testing.T) {
 	if !strings.Contains(stderr, "dependency type resolution disabled (--no-deps)") {
 		t.Errorf("stderr should confirm dependency resolution was disabled, got %q", stderr)
 	}
+}
+
+// TestJavaWildcardCollectionsNoDeps pins how wildcard type arguments export
+// with dependency resolution off: `List<? extends T>` holds T, also through a
+// generic class, while `List<? super T>` and `List<?>` hold open objects.
+func TestJavaWildcardCollectionsNoDeps(t *testing.T) {
+	dir := testdataJavaWildcardProject()
+	assertGoldenFile(t, filepath.Join(dir, "json.golden"), dir, "--collector", "java", "--formatter", "json", "--no-deps")
 }
 
 // TestEmptyCollectionFails is the end-to-end case from #161: a Java module that

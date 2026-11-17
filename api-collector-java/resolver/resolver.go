@@ -433,8 +433,13 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	// payload type, and rendering the argument as the payload name produced a
 	// table that said the type was literally "?" with an empty demo (issue
 	// #167). Without evidence of a concrete type the argument stays open, so
-	// the schema carries an empty object.
+	// the schema carries an empty object. An upper bound is that evidence:
+	// every element of a `List<? extends Order>` is an Order. A lower bound
+	// is not: a `List<? super Order>` may hold any supertype of Order.
 	if isWildcard(rawType) {
+		if bound, ok := wildcardUpperBound(rawType); ok {
+			return r.ResolveFrom(source, bound, typeBindings)
+		}
 		return model.EmptyObject()
 	}
 
@@ -581,6 +586,15 @@ func hasWildcardArg(rawType string) bool {
 // bounded (`? extends Order`) or not.
 func isWildcard(typeName string) bool {
 	return strings.HasPrefix(strings.TrimSpace(typeName), "?")
+}
+
+// wildcardUpperBound returns X of a wildcard `? extends X`.
+func wildcardUpperBound(typeName string) (string, bool) {
+	rest := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(typeName), "?"))
+	if !strings.HasPrefix(rest, "extends ") {
+		return "", false
+	}
+	return strings.TrimSpace(strings.TrimPrefix(rest, "extends ")), true
 }
 
 // fillWildcardArgs replaces the open type arguments of declared with the

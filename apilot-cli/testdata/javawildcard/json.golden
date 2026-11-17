@@ -1,0 +1,111 @@
+{
+  "endpoints": [
+    {
+      "name": "bounds",
+      "method": "GET",
+      "path": "/orders/bounds",
+      "protocol": "http",
+      "description": "Lines held as wildcard collections.",
+      "folder": "OrderController",
+      "response": {
+        "mediaType": "application/json",
+        "schema": {
+          "kind": "object",
+          "fields": [
+            {
+              "name": "contravariant",
+              "kind": "array",
+              "required": true,
+              "description": "Any supertype of OrderLine: the element type is open.",
+              "items": {
+                "kind": "object"
+              }
+            },
+            {
+              "name": "covariant",
+              "kind": "array",
+              "required": true,
+              "description": "Every element is an OrderLine.",
+              "items": {
+                "kind": "object",
+                "fields": [
+                  {
+                    "name": "quantity",
+                    "kind": "single",
+                    "type": "int",
+                    "required": true,
+                    "description": "Ordered quantity."
+                  },
+                  {
+                    "name": "sku",
+                    "kind": "single",
+                    "type": "string",
+                    "required": true,
+                    "description": "Stock keeping unit."
+                  }
+                ]
+              }
+            },
+            {
+              "name": "open",
+              "kind": "array",
+              "required": true,
+              "description": "Unknown element type.",
+              "items": {
+                "kind": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "lines",
+      "method": "GET",
+      "path": "/orders/lines",
+      "protocol": "http",
+      "description": "Page of order lines.",
+      "folder": "OrderController",
+      "response": {
+        "mediaType": "application/json",
+        "schema": {
+          "kind": "object",
+          "fields": [
+            {
+              "name": "rows",
+              "kind": "array",
+              "required": true,
+              "description": "Rows of this page; every element is a T.",
+              "items": {
+                "kind": "object",
+                "fields": [
+                  {
+                    "name": "quantity",
+                    "kind": "single",
+                    "type": "int",
+                    "required": true,
+                    "description": "Ordered quantity."
+                  },
+                  {
+                    "name": "sku",
+                    "kind": "single",
+                    "type": "string",
+                    "required": true,
+                    "description": "Stock keeping unit."
+                  }
+                ]
+              }
+            },
+            {
+              "name": "total",
+              "kind": "single",
+              "type": "long",
+              "required": true,
+              "description": "Total number of rows."
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
