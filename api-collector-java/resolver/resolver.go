@@ -510,6 +510,13 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 		if typeBindings != nil {
 			resolvedArgs := make([]string, len(typeArgs))
 			for i, arg := range typeArgs {
+				// A generic argument keeps its own arguments: the model of
+				// PageData<H> is named just PageData, so spelling the argument
+				// by the model's name would lose what H is bound to.
+				if strings.Contains(arg, "<") {
+					resolvedArgs[i] = bindTypeParams(arg, typeBindings)
+					continue
+				}
 				resolvedModel := r.ResolveFrom(source, arg, typeBindings)
 				if resolvedModel != nil {
 					resolvedArgs[i] = resolvedModel.TypeName
@@ -1039,6 +1046,40 @@ func splitTypeArgs(s string) []string {
 	}
 
 	return args
+}
+
+// bindTypeParams spells a type with the type parameters it mentions replaced
+// by their bindings: under H=Order, `PageData<H>` is `PageData<Order>` and
+// `Map<String, H[]>` is `Map<String, Order[]>`. Only names are substituted;
+// the structure of the spelling is kept.
+func bindTypeParams(typeName string, bindings map[string]string) string {
+	typeName = strings.TrimSpace(typeName)
+	if isWildcard(typeName) {
+		rest := strings.TrimSpace(strings.TrimPrefix(typeName, "?"))
+		for _, bound := range []string{"extends ", "super "} {
+			if strings.HasPrefix(rest, bound) {
+				return "? " + bound + bindTypeParams(strings.TrimPrefix(rest, bound), bindings)
+			}
+		}
+		return typeName
+	}
+	suffix := ""
+	for strings.HasSuffix(typeName, "[]") {
+		typeName = strings.TrimSpace(strings.TrimSuffix(typeName, "[]"))
+		suffix += "[]"
+	}
+	base, args := parseGenericType(typeName)
+	if len(args) == 0 {
+		if bound, ok := bindings[base]; ok {
+			return bound + suffix
+		}
+		return base + suffix
+	}
+	bound := make([]string, len(args))
+	for i, arg := range args {
+		bound[i] = bindTypeParams(arg, bindings)
+	}
+	return base + "<" + strings.Join(bound, ", ") + ">" + suffix
 }
 
 func isMapSubclass(class parser.Class) bool {
