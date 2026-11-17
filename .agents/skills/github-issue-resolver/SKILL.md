@@ -32,26 +32,29 @@ This skill provides a systematic workflow for handling GitHub issues from assign
 
 ### 4. Update Documentation
 
-**Check if docs/todo.md needs updates:**
+**Check whether README.md or a file under docs/ needs an update:**
 
-- If the issue introduces new features, update docs/todo.md
-- If the issue changes existing behavior, update relevant documentation
-- If the issue is a bug fix, consider adding notes to docs/todo.md if it affects user-facing behavior
+- If the issue introduces new features, update README.md
+- If the issue changes existing behavior, update the relevant file under docs/
+- If the issue is a bug fix, note user-facing changes in the relevant docs
 - Keep documentation concise and relevant
 
 ### 5. Create Commit in New Branch
 
 **Branch naming convention:**
 
-- Use descriptive branch name: `feature/issue-<number>-<short-description>`
-- Or: `fix/issue-<number>-<short-description>` for bug fixes
-- Or: `chore/issue-<number>-<short-description>` for maintenance tasks
+Follow the always-on constraints in `AGENTS.md` and the full rules in
+`CONTRIBUTING.md` → "Branch and commit conventions". Use
+`<type>/<issue>-<short-description>`, for example
+`feature/196-required-fields-mode` or `fix/190-implicit-binding`.
+Never use a tool or personal name as the prefix.
 
 **Commit process:**
 
-- Create new branch from main/master: `git checkout -b <branch-name>`
-- Stage changes: `git add <files>`
-- Commit with conventional commit message: `git commit -m "<type>: <description> (#<issue-number>)"`
+- Create the branch from `main`: `git checkout -b <branch-name> main`
+- Stage changes by path: `git add <files>`
+- Commit with a type from the CI whitelist: `git commit -m "<type>: <description> (#<issue-number>)"`
+- Do not merge `main` into the branch; rebase on `main` instead
 - Push branch: `git push -u origin <branch-name>`
 
 ### 6. Create Pull Request
@@ -59,6 +62,9 @@ This skill provides a systematic workflow for handling GitHub issues from assign
 **PR creation:**
 
 - Use GitHub CLI: `gh pr create`
+- PRs are squash-merged by default, so the **PR title must follow the commit
+  format** `<type>[(scope)][!]: <subject>` — it becomes the commit subject on
+  `main`. See `CONTRIBUTING.md` → "Merging pull requests"
 - Reference the original issue in PR description
 - Include "Closes #<issue-number>" or "Fixes #<issue-number>" in PR description
 - Provide clear description of changes
@@ -89,19 +95,19 @@ User: "Handle issue #123"
 1. gh issue edit 123 --add-assignee @me
 2. Read issue #123: "Add user authentication feature"
 3. Implement authentication in UserService
-4. Update docs/todo.md with new authentication feature
-5. git checkout -b feature/issue-123-user-authentication
-6. git add . && git commit -m "feat: add user authentication (#123)"
-7. git push -u origin feature/issue-123-user-authentication
-8. gh pr create --title "Add user authentication" --body "Closes #123"
+4. Update README.md with the new behavior
+5. git checkout -b feature/123-user-authentication main
+6. git add <files> && git commit -m "feat: add user authentication (#123)"
+7. git push -u origin feature/123-user-authentication
+8. gh pr create --title "feat: add user authentication (#123)" --body "Closes #123"
 ```
 
 ## Important Guidelines
 
 - **Always assign the issue first** - this prevents duplicate work
 - **Read the issue thoroughly** - understand requirements before coding
-- **Update documentation** - keep docs/todo.md in sync with changes
-- **Use conventional commits** - follow commit message conventions
+- **Update documentation** - keep README.md and docs/ in sync with changes
+- **Follow the git rules** - see `AGENTS.md` and `CONTRIBUTING.md` for branch names, commit types and PR titles
 - **Reference the issue** - always link PR to the original issue
 - **Test your changes** - ensure tests pass before creating PR
 - **Keep PRs focused** - one issue per PR when possible
