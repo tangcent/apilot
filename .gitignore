@@ -13,10 +13,10 @@ bin/
 .intellijPlatform/
 .DS_Store
 .cursor/
-.claude/
 .kiro/
 .trae/
-.qodo/
+.qoder/
+.workbuddy/
 .vscode/
 /vscode-plugin/node_modules/
 /vscode-plugin/out/
