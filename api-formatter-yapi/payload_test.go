@@ -131,6 +131,53 @@ func TestBuildInterfaceFallbacks(t *testing.T) {
 	}
 }
 
+// A deprecated endpoint is tagged "deprecated" and its description ends with
+// 「已废弃」 and the deprecation note, as in an EasyYapi export.
+func TestBuildInterfaceDeprecated(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		ep                    model.ApiEndpoint
+		title, markdown, desc string
+	}{
+		{
+			"note after the description",
+			model.ApiEndpoint{Name: "old", Description: "Old orders.\nKept for the app.", Deprecated: true, DeprecationNote: "Use /orders/v2"},
+			"Old orders.", "Kept for the app.\n「已废弃」Use /orders/v2", "<body><p>Kept for the app.\n「已废弃」Use /orders/v2</p></body>",
+		},
+		{
+			"a one-line description leaves the line alone in the description",
+			model.ApiEndpoint{Name: "old", Description: "Old orders.", Deprecated: true, DeprecationNote: "Use /orders/v2"},
+			"Old orders.", "「已废弃」Use /orders/v2", "<body><p>「已废弃」Use /orders/v2</p></body>",
+		},
+		{
+			"without a note, as for Java's @Deprecated",
+			model.ApiEndpoint{Name: "old", Description: "Old orders.", Deprecated: true},
+			"Old orders.", "「已废弃」", "<body><p>「已废弃」</p></body>",
+		},
+		{
+			"without a description the line is the title",
+			model.ApiEndpoint{Name: "old", Deprecated: true, DeprecationNote: "Use /orders/v2"},
+			"「已废弃」Use /orders/v2", "", "",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			it := buildInterface(tc.ep, &schemaBuilder{})
+			if it.Title != tc.title || it.Markdown != tc.markdown || it.Desc != tc.desc {
+				t.Errorf("title %q, markdown %q, desc %q\nwant  %q, %q, %q", it.Title, it.Markdown, it.Desc, tc.title, tc.markdown, tc.desc)
+			}
+			if !reflect.DeepEqual(it.Tag, []string{"deprecated"}) {
+				t.Errorf("tag = %q", it.Tag)
+			}
+		})
+	}
+
+	current := buildInterface(model.ApiEndpoint{Name: "list", Description: "Orders."}, &schemaBuilder{})
+	data, _ := json.Marshal(current)
+	if current.Tag != nil || strings.Contains(string(data), `"tag"`) {
+		t.Errorf("a current endpoint carries no tag, so tags set in YApi survive an upload: %s", data)
+	}
+}
+
 // Descriptions render as EasyYapi renders them: GitHub-flavoured Markdown
 // inside <body>, HTML from a doc comment passed through, and no line break
 // between blocks.
