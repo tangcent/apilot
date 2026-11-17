@@ -223,7 +223,7 @@ func (p *Parser) extractEndpoint(method *ktparser.Function, basePath string, cla
 	methodDocParams := javadoc.ParseJavaDocParams(method.KDoc)
 	for i := range method.Parameters {
 		param := &method.Parameters[i]
-		if ep := p.extractParameter(param, methodDocParams); ep != nil {
+		if ep := p.extractParameter(param, methodDocParams, method.Name, source); ep != nil {
 			params = append(params, *ep)
 			if ep.ParamType == "body" {
 				requestBodyType = param.Type
@@ -351,7 +351,10 @@ func extractHTTPMethodFromRequestMapping(ann ktparser.Annotation, allAnnotations
 	return GET
 }
 
-func (p *Parser) extractParameter(param *ktparser.Parameter, methodDocParams map[string]string) *EndpointParameter {
+// extractParameter builds a parameter bound by an annotation. source is the
+// declaration carrying the function, the scope a constant naming the
+// parameter resolves in.
+func (p *Parser) extractParameter(param *ktparser.Parameter, methodDocParams map[string]string, methodName string, source *ktparser.Class) *EndpointParameter {
 	paramType := detectParameterType(param.Annotations)
 	if paramType == "" {
 		return nil
@@ -397,9 +400,23 @@ func (p *Parser) extractParameter(param *ktparser.Parameter, methodDocParams map
 	}
 
 	// Kotlin never loses parameter names, so the identifier is the fallback.
-	// An explicit annotation name still wins: @RequestHeader("X-Tenant").
-	if name := explicitAnnotationName(param.Annotations); name != "" {
+	// An explicit annotation name still wins: @RequestHeader("X-Tenant"), or
+	// @RequestHeader(Headers.TENANT) for the string the constant holds.
+	name, unresolved := javaspringmvc.BindingName(toJavaAnnotations(param.Annotations), func(ref string) (string, bool) {
+		if p.typeResolver == nil {
+			return "", false
+		}
+		return p.typeResolver.ConstantValue(source, ref)
+	})
+	switch {
+	case name != "":
 		ep.Name = name
+	case unresolved != "":
+		className := ""
+		if source != nil {
+			className = source.Name
+		}
+		p.warnings = append(p.warnings, javaspringmvc.UnresolvedBindingNameWarning(className, methodName, param.Name, unresolved))
 	}
 	return ep
 }
@@ -498,25 +515,13 @@ func detectParameterType(annotations []ktparser.Annotation) string {
 	return ""
 }
 
-func explicitAnnotationName(annotations []ktparser.Annotation) string {
-	for _, ann := range annotations {
-		switch ann.Name {
-		case "PathVariable", "RequestParam", "RequestHeader", "CookieValue", "RequestPart":
-			if value := firstNonEmpty(ann.Params["value"], ann.Params["name"]); value != "" {
-				return value
-			}
-		}
-	}
-	return ""
-}
-
 func toJavaAnnotations(annotations []ktparser.Annotation) []javaparser.Annotation {
 	if len(annotations) == 0 {
 		return nil
 	}
 	out := make([]javaparser.Annotation, 0, len(annotations))
 	for _, ann := range annotations {
-		out = append(out, javaparser.Annotation{Name: ann.Name, Params: ann.Params})
+		out = append(out, javaparser.Annotation{Name: ann.Name, Params: ann.Params, Refs: ann.Refs})
 	}
 	return out
 }
@@ -541,15 +546,6 @@ func combinePaths(basePath, methodPath string) string {
 		return basePath
 	}
 	return path.Join(basePath, methodPath)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }
 
 var mediaTypeConstants = map[string]string{

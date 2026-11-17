@@ -5,6 +5,11 @@ package parser
 type Annotation struct {
 	Name   string            // e.g., "RestController", "GetMapping"
 	Params map[string]string // e.g., {"value": "/api/users"}
+	// Refs marks the params written as a name rather than a literal: a
+	// constant (@RequestHeader(Headers.VERSION)) or an enum constant. Params
+	// holds the name as written, and a string literal without its quotes, so
+	// the two cannot be told apart from Params alone.
+	Refs map[string]bool
 }
 
 // Method represents a Java method with annotations.
@@ -51,6 +56,11 @@ type Field struct {
 	// RawJavaDoc is the doc comment as written, block tags included, so a
 	// tag such as @see can be read.
 	RawJavaDoc string
+	// Constant is the initializer of a static final String field, as
+	// written, when an annotation can use the field in place of a string:
+	// a string literal ("\"X-Version\"") or the name of another constant
+	// ("Base.VERSION"). Empty for any other field or initializer.
+	Constant string
 }
 
 // Import is one import declaration of a compilation unit.

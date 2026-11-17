@@ -994,8 +994,12 @@ func (r *TypeResolver) resolveInheritedFields(class parser.Class, localBindings 
 	}
 
 	// A superclass's fields follow the subclass's own, which is the order a
-	// reader of the subclass meets them in.
+	// reader of the subclass meets them in. Its static fields are no more part
+	// of an instance than the subclass's own (see resolveClass).
 	for _, f := range superClass.Fields {
+		if f.IsStatic {
+			continue
+		}
 		if _, exists := obj.Fields[f.Name]; !exists {
 			// The field type is written in the superclass's own compilation
 			// unit, so that is the scope its simple names resolve in.

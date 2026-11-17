@@ -209,6 +209,61 @@ func TestResolveClass_ASourceGoesToTheParserOfItsLanguage(t *testing.T) {
 	}
 }
 
+// headersDecompiled is a Kotlin interface whose companion object declares a
+// const val, as CFR decompiles it when the library ships no sources JAR: the
+// constant is a static field of the interface.
+const headersDecompiled = `/*
+ * Decompiled with CFR 0.152.
+ */
+package com.example.lib;
+
+import kotlin.Metadata;
+import org.jetbrains.annotations.NotNull;
+
+@Metadata(mv={1, 9, 0}, k=1, xi=48, d2={"Lcom/example/lib/Headers;", "", "Companion", "lib"})
+public interface Headers {
+    @NotNull
+    public static final Companion Companion = Companion.$$INSTANCE;
+    @NotNull
+    public static final String VERSION = "X-Version";
+
+    public static final class Companion {
+        static final /* synthetic */ Companion $$INSTANCE;
+        @NotNull
+        public static final String VERSION = "X-Version";
+
+        private Companion() {
+        }
+
+        static {
+            $$INSTANCE = new Companion();
+        }
+    }
+}`
+
+func TestResolveClass_KeepsTheConstantsOfADecompiledClass(t *testing.T) {
+	var calls [][]string
+	r := newTestResolver(t, exploreAnswer("com.example.lib.Headers", "com.example:lib:2.0.0", "java", headersDecompiled, "project-pinned", "project-pinned"), &calls)
+
+	class := r.ResolveClass("com.example.lib.Headers")
+	if class == nil || class.Name != "Headers" {
+		t.Fatalf("class = %+v, want the interface rather than its companion", class)
+	}
+	var version *parser.Field
+	for i := range class.Fields {
+		if class.Fields[i].Name == "VERSION" {
+			version = &class.Fields[i]
+		}
+	}
+	if version == nil || version.Constant != `"X-Version"` || !version.IsStatic {
+		t.Fatalf("fields = %+v, want the static constant VERSION", class.Fields)
+	}
+	// A constant is still no property of the type.
+	if rt := r.ResolveType("com.example.lib.Headers"); rt == nil || len(rt.Fields) != 0 {
+		t.Errorf("resolved type = %+v, want no fields", rt)
+	}
+}
+
 func TestResolveClass_ASourceWithoutAParserIsAMiss(t *testing.T) {
 	var calls [][]string
 	r := newTestResolver(t, exploreAnswer("com.example.lib.Box", "com.example:lib:2.0.0", "scala", "case class Box(v: Int)", "project-pinned", "project-pinned"), &calls)

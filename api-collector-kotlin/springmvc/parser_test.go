@@ -198,7 +198,7 @@ func TestExtractParameter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := p.extractParameter(&tt.param, nil)
+			got := p.extractParameter(&tt.param, nil, "handler", nil)
 			if tt.wantNil {
 				if got != nil {
 					t.Fatalf("expected no parameter, got %#v", got)
@@ -224,6 +224,22 @@ func TestExtractParameter(t *testing.T) {
 	}
 }
 
+func TestExtractParameterNamedByAConstantThatCannotBeResolved(t *testing.T) {
+	p := NewParser(nil)
+	ann := testAnnotation("RequestHeader", map[string]string{"value": "Headers.TENANT"})
+	ann.Refs = map[string]bool{"value": true}
+	param := testParameter("tenant", "String", ann)
+
+	got := p.extractParameter(&param, nil, "handle", &ktparser.Class{Name: "Handler"})
+	if got == nil || got.Name != "tenant" || got.ParamType != "header" {
+		t.Fatalf("parameter = %+v, want the tenant header under the parameter's own name", got)
+	}
+	want := "Handler.handle: parameter tenant is bound by the name in Headers.TENANT, a constant whose value could not be resolved; it is exported under the parameter's own name"
+	if warnings := p.Warnings(); len(warnings) != 1 || warnings[0] != want {
+		t.Errorf("warnings = %q, want %q", warnings, want)
+	}
+}
+
 func TestExtractParameterDocumentation(t *testing.T) {
 	p := NewParser(nil)
 	param := testParameter("status", "String", testAnnotation("ApiParam", map[string]string{
@@ -232,7 +248,7 @@ func TestExtractParameterDocumentation(t *testing.T) {
 		"allowableValues": "ACTIVE,DISABLED",
 	}))
 
-	got := p.extractParameter(&param, map[string]string{"status": "the status filter"})
+	got := p.extractParameter(&param, map[string]string{"status": "the status filter"}, "handler", nil)
 	if got == nil {
 		t.Fatal("expected a parameter, got nil")
 	}

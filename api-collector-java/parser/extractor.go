@@ -102,11 +102,12 @@ func extractInterface(node *tree_sitter.Node, source []byte) Class {
 	// Extract interface annotations
 	class.Annotations = extractAnnotations(node, source)
 
-	// Extract methods from interface body
+	// Extract methods and constants from interface body
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "interface_body" {
 			class.Methods = extractMethods(child, source)
+			class.Fields = extractInterfaceConstants(child, source)
 			break
 		}
 	}
@@ -232,7 +233,7 @@ func extractAnnotation(node *tree_sitter.Node, source []byte) Annotation {
 		case "identifier", "scoped_identifier":
 			ann.Name = child.Utf8Text(source)
 		case "annotation_argument_list":
-			extractAnnotationParams(child, source, ann.Params)
+			extractAnnotationParams(child, source, &ann)
 		}
 	}
 
@@ -240,29 +241,41 @@ func extractAnnotation(node *tree_sitter.Node, source []byte) Annotation {
 }
 
 // extractAnnotationParams extracts annotation parameters.
-func extractAnnotationParams(node *tree_sitter.Node, source []byte, params map[string]string) {
+func extractAnnotationParams(node *tree_sitter.Node, source []byte, ann *Annotation) {
+	set := func(key string, valueNode *tree_sitter.Node) {
+		ann.Params[key] = extractAnnotationValue(valueNode, source)
+		if isNameNode(valueNode.Kind()) {
+			if ann.Refs == nil {
+				ann.Refs = make(map[string]bool)
+			}
+			ann.Refs[key] = true
+		}
+	}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 
 		if child.Kind() == "element_value_pair" {
-			var key, value string
-			for j := uint(0); j < child.ChildCount(); j++ {
-				subChild := child.Child(j)
-				if subChild.Kind() == "identifier" {
-					key = subChild.Utf8Text(source)
-				} else if subChild.Kind() != "=" {
-					value = extractAnnotationValue(subChild, source)
-				}
+			// The pair names its parts: the grammar labels the value, which
+			// may itself be an identifier naming a constant.
+			key := child.ChildByFieldName("key")
+			value := child.ChildByFieldName("value")
+			if key != nil && value != nil {
+				set(key.Utf8Text(source), value)
 			}
-			if key != "" {
-				params[key] = value
-			}
-		} else if child.Kind() == "string_literal" {
-			params["value"] = extractStringLiteral(child, source)
 		} else if isAnnotationValueNode(child.Kind()) {
-			params["value"] = extractAnnotationValue(child, source)
+			set("value", child)
 		}
 	}
+}
+
+// isNameNode reports whether an annotation value is written as a name, such as
+// VERSION or Headers.VERSION, rather than as a literal.
+func isNameNode(kind string) bool {
+	switch kind {
+	case "identifier", "scoped_identifier", "field_access":
+		return true
+	}
+	return false
 }
 
 // ExplicitAnnotationName returns the binding name carried by the named
@@ -515,14 +528,39 @@ func extractFields(classBody *tree_sitter.Node, source []byte) []Field {
 	return fields
 }
 
+// extractInterfaceConstants extracts the constants an interface declares.
+// Every field of an interface is implicitly public, static and final (JLS
+// 9.3), so they are constants whether or not the modifiers are written.
+func extractInterfaceConstants(body *tree_sitter.Node, source []byte) []Field {
+	var fields []Field
+	for i := uint(0); i < body.ChildCount(); i++ {
+		child := body.Child(i)
+		if child.Kind() != "constant_declaration" {
+			continue
+		}
+		if field := extractFieldDeclaration(child, source, true); field != nil {
+			fields = append(fields, *field)
+		}
+	}
+	return fields
+}
+
 // extractField extracts a single field declaration.
 func extractField(node *tree_sitter.Node, source []byte) *Field {
+	return extractFieldDeclaration(node, source, false)
+}
+
+// extractFieldDeclaration extracts a field declaration of a class, or of an
+// interface when inInterface is set.
+func extractFieldDeclaration(node *tree_sitter.Node, source []byte, inInterface bool) *Field {
 	field := &Field{JavaDoc: extractLeadingJavaDoc(node, source), RawJavaDoc: rawLeadingJavaDoc(node, source)}
+	field.IsStatic, field.IsFinal = inInterface, inInterface
 
 	field.Annotations = extractAnnotations(node, source)
 
 	var fieldType string
 	var fieldName string
+	var value *tree_sitter.Node
 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -551,7 +589,8 @@ func extractField(node *tree_sitter.Node, source []byte) *Field {
 			// The grammar carries the `= value` part as the declarator's
 			// `value` field (an expression or array_initializer), so initializer
 			// presence is read off that label rather than a node kind.
-			field.HasInitializer = child.ChildByFieldName("value") != nil
+			value = child.ChildByFieldName("value")
+			field.HasInitializer = value != nil
 		}
 	}
 
@@ -561,8 +600,29 @@ func extractField(node *tree_sitter.Node, source []byte) *Field {
 
 	field.Type = fieldType
 	field.Name = fieldName
+	if field.IsStatic && field.IsFinal && fieldType == "String" {
+		field.Constant = constantInitializer(value, source)
+	}
 
 	return field
+}
+
+// constantInitializer returns the initializer of a String constant as written,
+// when an annotation that names the constant can be given its value: a string
+// literal, or the name of another constant. A text block and an expression
+// such as a concatenation are left out.
+func constantInitializer(value *tree_sitter.Node, source []byte) string {
+	if value == nil {
+		return ""
+	}
+	text := strings.TrimSpace(value.Utf8Text(source))
+	switch {
+	case value.Kind() == "string_literal" && !strings.HasPrefix(text, `"""`):
+		return text
+	case isNameNode(value.Kind()):
+		return strings.Join(strings.Fields(text), "")
+	}
+	return ""
 }
 
 // extractSuperClass extracts superclass name and type arguments from a class declaration.

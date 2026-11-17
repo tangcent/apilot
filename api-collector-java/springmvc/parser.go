@@ -253,7 +253,7 @@ func (p *Parser) extractEndpoint(method parser.Method, basePath string, class, s
 	var params []EndpointParameter
 	var requestBodyType string
 	for _, param := range method.Parameters {
-		if ep := p.extractParameter(param, method.JavaDocParams); ep != nil {
+		if ep := p.extractParameter(param, method, source, typeResolver); ep != nil {
 			params = append(params, *ep)
 			if ep.ParamType == "body" {
 				requestBodyType = param.Type
@@ -376,15 +376,18 @@ func (p *Parser) extractHTTPMethodFromRequestMapping(ann parser.Annotation, allA
 	return GET
 }
 
-func (p *Parser) extractParameter(param parser.Parameter, methodJavaDocParams map[string]string) *EndpointParameter {
+// extractParameter builds a parameter bound by an annotation. method declares
+// it and source is the class whose declaration carries method, the scope a
+// constant naming the parameter resolves in.
+func (p *Parser) extractParameter(param parser.Parameter, method parser.Method, source parser.Class, typeResolver *resolver.TypeResolver) *EndpointParameter {
 	paramType := p.detectParameterType(param.Annotations)
 	if paramType == "" {
 		return nil
 	}
 
 	paramJavaDoc := param.JavaDoc
-	if paramJavaDoc == "" && methodJavaDocParams != nil {
-		paramJavaDoc = methodJavaDocParams[param.Name]
+	if paramJavaDoc == "" && method.JavaDocParams != nil {
+		paramJavaDoc = method.JavaDocParams[param.Name]
 	}
 	doc := javadoc.ParameterDocumentation(param.Annotations, paramJavaDoc)
 
@@ -424,13 +427,18 @@ func (p *Parser) extractParameter(param parser.Parameter, methodJavaDocParams ma
 		ep.Required = *doc.Required
 	}
 
-	// The header name on the wire comes from the annotation, not the Java
-	// parameter name: @RequestHeader("Authorization") String auth binds the
-	// Authorization header.
-	if ep.ParamType == "header" {
-		if name := parser.ExplicitAnnotationName(param.Annotations, "RequestHeader"); name != "" {
-			ep.Name = name
-		}
+	// The name on the wire comes from the annotation, not the Java parameter
+	// name: @RequestHeader("Authorization") String auth binds the
+	// Authorization header, and @RequestParam(Params.PAGE) int p binds the
+	// request parameter the constant names.
+	name, unresolved := BindingName(param.Annotations, func(ref string) (string, bool) {
+		return typeResolver.ConstantValue(source, ref)
+	})
+	switch {
+	case name != "":
+		ep.Name = name
+	case unresolved != "":
+		p.warnings = append(p.warnings, UnresolvedBindingNameWarning(source.Name, method.Name, param.Name, unresolved))
 	}
 
 	return ep
@@ -531,6 +539,8 @@ func (p *Parser) detectParameterType(annotations []parser.Annotation) string {
 			// A part of a multipart request is a form field, never a query
 			// argument.
 			return "form"
+		case "CookieValue":
+			return "cookie"
 		}
 	}
 	// @ApiParam as fallback: treat as query parameter when no explicit

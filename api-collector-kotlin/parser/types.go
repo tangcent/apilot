@@ -9,6 +9,10 @@ type Annotation struct {
 	Name          string
 	Params        map[string]string
 	UseSiteTarget string
+	// Refs marks the params written as a name rather than a literal, such as
+	// a constant (@RequestHeader(Headers.VERSION)); Params holds the name as
+	// written.
+	Refs map[string]bool
 }
 
 // Import is a Kotlin import. Path is the fully qualified name; OnDemand is true
@@ -40,6 +44,10 @@ type Property struct {
 	IsMutable    bool
 	// InConstructor marks a property declared in the primary constructor.
 	InConstructor bool
+	// IsConst marks a const val. On the JVM it is a static field of its class,
+	// not instance state; a const val of a companion object is read onto the
+	// class the companion belongs to, where Java and annotations see it.
+	IsConst bool
 }
 
 // Function is a Kotlin function declaration.
@@ -76,6 +84,11 @@ type Class struct {
 	// EnumValueKDocs holds the KDoc of each enum entry as written, in the
 	// order of EnumValues: "" for an entry without one.
 	EnumValueKDocs []string
+	// IsFileFacade marks the class the JVM holds a file's top-level
+	// declarations in, named after the file (Headers.kt declares HeadersKt).
+	// Only top-level const vals are read into it, as its fields: Kotlin code
+	// names them as members of their package.
+	IsFileFacade bool
 }
 
 // ParseResult is the outcome of parsing one file.

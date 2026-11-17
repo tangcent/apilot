@@ -5,7 +5,9 @@ package resolver
 import (
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
+	"unicode"
 
 	collector "github.com/tangcent/apilot/api-collector"
 	javadoc "github.com/tangcent/apilot/api-collector-java/doc"
@@ -26,6 +28,9 @@ type Resolver struct {
 	tr         *javaresolver.TypeResolver
 	unresolved *collector.UnresolvedSet
 	javaTypes  []javaparser.Class
+	// fileConstants maps the qualified name of a top-level const val
+	// (com.example.VERSION) to the file facade that holds it.
+	fileConstants map[string]*ktparser.Class
 	// bindingTR resolves model attributes; it is built on first use.
 	bindingTR *javaresolver.TypeResolver
 	// The binding view is built on first use, so the settings it shares
@@ -51,12 +56,19 @@ func NewWithJavaTypes(classes []ktparser.Class, javaTypes []javaparser.Class) *R
 		enumValues: make(map[string][]string),
 		unresolved: collector.NewUnresolvedSet(),
 		javaTypes:  javaTypes,
+
+		fileConstants: make(map[string]*ktparser.Class),
 	}
 
 	var javaClasses []javaparser.Class
 	for i := range classes {
 		class := &classes[i]
 		key := qualifiedName(*class)
+		if class.IsFileFacade {
+			for _, prop := range class.Fields {
+				r.fileConstants[qualify(class.Package, prop.Name)] = class
+			}
+		}
 		r.byKey[key] = class
 		r.bySimple[class.Name] = appendUnique(r.bySimple[class.Name], key)
 		if class.FilePath != "" {
@@ -202,6 +214,79 @@ func (r *Resolver) ResolveFrom(source *ktparser.Class, rawType string, bindings 
 	resolved := r.tr.ResolveFrom(javaSource, NormalizeModelType(rawType), normalizedBindings)
 	r.applyEnums(resolved)
 	return resolved
+}
+
+// maxConstantHops bounds a chain of top-level constants defined by one
+// another, so a cycle cannot loop.
+const maxConstantHops = 8
+
+// ConstantValue returns the value of the String constant that ref names as
+// written in source: VERSION, Headers.VERSION or com.example.Headers.VERSION.
+//
+// A const val of source, of its companion object or of a supertype, one of an
+// object or a companion named by its class, and one imported by name
+// (import com.example.Headers.VERSION) are static fields on the JVM and are
+// found by the Java resolver, in the scanned sources or the dependencies. A
+// top-level const val is a member of its package: it is found through an
+// import of its name, in the package of source, through a star import, or by
+// its qualified name.
+func (r *Resolver) ConstantValue(source *ktparser.Class, ref string) (string, bool) {
+	if source == nil {
+		return "", false
+	}
+	return r.constantValue(source, strings.Join(strings.Fields(ref), ""), 0)
+}
+
+func (r *Resolver) constantValue(source *ktparser.Class, ref string, hops int) (string, bool) {
+	if ref == "" || hops > maxConstantHops {
+		return "", false
+	}
+	if value, ok := r.tr.ConstantValue(toJavaClass(*source), ref); ok {
+		return value, true
+	}
+
+	candidates := []string{ref}
+	if !strings.Contains(ref, ".") {
+		candidates = nil
+		for _, imp := range source.Imports {
+			if !imp.OnDemand && lastSegment(imp.Path) == ref {
+				candidates = append(candidates, imp.Path)
+			}
+		}
+		candidates = append(candidates, qualify(source.Package, ref))
+		for _, imp := range source.Imports {
+			if imp.OnDemand {
+				candidates = append(candidates, imp.Path+"."+ref)
+			}
+		}
+	}
+	for _, key := range candidates {
+		facade, found := r.fileConstants[key]
+		if !found {
+			continue
+		}
+		name := lastSegment(key)
+		for _, prop := range facade.Fields {
+			if prop.Name != name {
+				continue
+			}
+			initializer := constantInitializer(prop)
+			if initializer != "" && !strings.HasPrefix(initializer, `"`) {
+				// The initializer names another constant, as written in the
+				// file that declares this one.
+				return r.constantValue(facade, initializer, hops+1)
+			}
+			return r.tr.ConstantValue(toJavaClass(*facade), name)
+		}
+	}
+	return "", false
+}
+
+func qualify(pkg, name string) string {
+	if pkg == "" {
+		return name
+	}
+	return pkg + "." + name
 }
 
 // FindClass resolves a Kotlin class in the same precedence order the Java
@@ -398,6 +483,19 @@ func toJavaClass(class ktparser.Class) javaparser.Class {
 		if hasAnnotation(prop.Annotations, "JsonIgnore") && annotationValue(prop.Annotations, "JsonIgnore") != "false" {
 			continue
 		}
+		if prop.IsConst {
+			// A const val is a static field on the JVM: no JSON property, but
+			// a constant an annotation can name.
+			out.Fields = append(out.Fields, javaparser.Field{
+				Name:           prop.Name,
+				Type:           NormalizeModelType(prop.Type),
+				IsStatic:       true,
+				IsFinal:        true,
+				HasInitializer: prop.HasDefault,
+				Constant:       constantInitializer(prop),
+			})
+			continue
+		}
 		name := prop.Name
 		if jsonName := propertyName(prop.Annotations); jsonName != "" {
 			name = jsonName
@@ -530,9 +628,72 @@ func toJavaAnnotations(annotations []ktparser.Annotation) []javaparser.Annotatio
 	}
 	out := make([]javaparser.Annotation, 0, len(annotations))
 	for _, ann := range annotations {
-		out = append(out, javaparser.Annotation{Name: ann.Name, Params: ann.Params})
+		out = append(out, javaparser.Annotation{Name: ann.Name, Params: ann.Params, Refs: ann.Refs})
 	}
 	return out
+}
+
+// constantInitializer returns the initializer of a String const val the way
+// the Java model keeps a constant's: a string literal, quoted, or the name of
+// another constant. A string template, a raw string spanning lines, and any
+// other expression are left out: their value cannot be read off the source.
+func constantInitializer(prop ktparser.Property) string {
+	switch NormalizeModelType(prop.Type) {
+	case "", "String":
+	default:
+		return ""
+	}
+	value := strings.TrimSpace(prop.DefaultValue)
+	switch {
+	case strings.HasPrefix(value, `"""`):
+		if len(value) < 6 || !strings.HasSuffix(value, `"""`) || strings.ContainsAny(value, "$\n") {
+			return ""
+		}
+		return strconv.Quote(value[3 : len(value)-3])
+	case strings.HasPrefix(value, `"`):
+		if hasTemplate(value) {
+			return ""
+		}
+		return value
+	case isQualifiedName(value):
+		return value
+	}
+	return ""
+}
+
+// hasTemplate reports whether a Kotlin string literal interpolates a value:
+// a $ before a name or a brace that no backslash escapes.
+func hasTemplate(literal string) bool {
+	for i := 0; i < len(literal)-1; i++ {
+		switch literal[i] {
+		case '\\':
+			i++
+		case '$':
+			if next := literal[i+1]; next == '{' || next == '_' || unicode.IsLetter(rune(next)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isQualifiedName reports whether text is a name such as VERSION or
+// Headers.VERSION.
+func isQualifiedName(text string) bool {
+	if text == "" {
+		return false
+	}
+	for _, part := range strings.Split(text, ".") {
+		if part == "" {
+			return false
+		}
+		for i, r := range part {
+			if r != '_' && !unicode.IsLetter(r) && (i == 0 || !unicode.IsDigit(r)) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func fieldAnnotations(annotations []ktparser.Annotation) []javaparser.Annotation {

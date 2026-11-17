@@ -3,6 +3,7 @@ package springmvc
 import (
 	"strings"
 
+	"github.com/tangcent/apilot/api-collector-java/parser"
 	model "github.com/tangcent/apilot/api-model"
 )
 
@@ -121,6 +122,59 @@ func ElementType(typeName string) string {
 func ImplicitNoneWarning(class, method, param, annotation string) string {
 	return class + "." + method + ": parameter " + param + " carries @" + annotation +
 		", which no Spring binding covers; it is left to a custom argument resolver and not exported"
+}
+
+// bindingAnnotations give the request value a handler parameter is bound to a
+// name of their own, in their value or name attribute.
+var bindingAnnotations = map[string]bool{
+	"PathVariable": true, "RequestParam": true, "RequestHeader": true, "CookieValue": true, "RequestPart": true,
+}
+
+// BindingName returns the name a binding annotation gives the request value a
+// handler parameter is bound to: @RequestHeader("X-Tenant") binds the
+// X-Tenant header whatever the parameter is called. An empty name means the
+// annotation names nothing, and Spring binds the parameter's own name.
+//
+// Spring reads the name from the compiled annotation, where the compiler has
+// already substituted a constant for its value, so the name may be written as
+// a reference to a String constant: @RequestHeader(Headers.TENANT). constant
+// resolves such a reference. When it cannot, name is empty and unresolved is
+// the reference as written, so the caller can fall back to the parameter's
+// own name and say why.
+func BindingName(annotations []parser.Annotation, constant func(ref string) (string, bool)) (name, unresolved string) {
+	for _, ann := range annotations {
+		if !bindingAnnotations[ann.Name] {
+			continue
+		}
+		for _, key := range []string{"value", "name"} {
+			value := strings.TrimSpace(ann.Params[key])
+			if value == "" {
+				continue
+			}
+			if !ann.Refs[key] {
+				return value, ""
+			}
+			if constant != nil {
+				if resolved, ok := constant(value); ok && resolved != "" {
+					return resolved, ""
+				}
+			}
+			return "", value
+		}
+	}
+	return "", ""
+}
+
+// UnresolvedBindingNameWarning says why a handler parameter is exported under
+// its own name although its binding annotation names another: the name is a
+// constant whose value could not be found, neither among the scanned sources
+// nor in the dependencies. The reference itself is source code, never a name
+// on the wire; the parameter's name is what Spring binds when the annotation
+// names nothing, and is often what the constant holds. The warning keeps that
+// guess from passing for a fact.
+func UnresolvedBindingNameWarning(class, method, param, ref string) string {
+	return class + "." + method + ": parameter " + param + " is bound by the name in " + ref +
+		", a constant whose value could not be resolved; it is exported under the parameter's own name"
 }
 
 // ImplicitRequired reports whether an implicitly bound simple parameter must
