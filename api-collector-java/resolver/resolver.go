@@ -252,12 +252,52 @@ func (r *TypeResolver) enterBindingView() func() {
 // from source, and whether it denotes an enum of the scanned sources at all.
 // Enums take part in the binding view only, so the name is looked up there.
 func (r *TypeResolver) EnumConstants(source parser.Class, name string) ([]string, bool) {
-	defer r.enterBindingView()()
-	c, found := r.Class(source, strings.TrimSpace(name))
-	if !found || !c.IsEnum {
+	c, found := r.enumClass(source, name)
+	if !found {
 		return nil, false
 	}
 	return c.EnumConstants, true
+}
+
+// enumClass returns the enum a type name denotes as seen from source.
+func (r *TypeResolver) enumClass(source parser.Class, name string) (parser.Class, bool) {
+	defer r.enterBindingView()()
+	c, found := r.Class(source, strings.TrimSpace(name))
+	if !found || !c.IsEnum {
+		return parser.Class{}, false
+	}
+	return c, true
+}
+
+// EnumOptions lists the constants of an enum as the values a field takes,
+// each described by the constant's doc comment.
+func EnumOptions(enum parser.Class) []model.FieldOption {
+	options := make([]model.FieldOption, 0, len(enum.EnumConstants))
+	for i, constant := range enum.EnumConstants {
+		option := model.FieldOption{Value: constant}
+		if i < len(enum.EnumConstantDocs) {
+			option.Desc = enum.EnumConstantDocs[i]
+		}
+		options = append(options, option)
+	}
+	return options
+}
+
+// seeOptions returns the values a field documented with `@see SomeEnum`
+// takes: the constants of that enum, as EasyYapi reads them. A field such as
+// `String state` whose doc points at the enum holds one of its constant
+// names. A reference to a member, `SomeEnum#code`, names another value set
+// and is left alone, as is a reference to anything but an enum.
+func (r *TypeResolver) seeOptions(source parser.Class, rawDoc string) []model.FieldOption {
+	for _, ref := range javadoc.SeeReferences(rawDoc) {
+		if strings.Contains(ref, "#") {
+			continue
+		}
+		if enum, ok := r.enumClass(source, ref); ok {
+			return EnumOptions(enum)
+		}
+	}
+	return nil
 }
 
 // ResolveForBinding expands a type the way Spring's data binder sees it when
@@ -759,13 +799,16 @@ func (r *TypeResolver) resolveField(source parser.Class, f parser.Field, localBi
 	}
 	// In the binding view, an enum field is one of the enum's constants.
 	if r.bindingView {
-		if constants, ok := r.EnumConstants(source, f.Type); ok {
-			for _, constant := range constants {
-				fm.Options = append(fm.Options, model.FieldOption{Value: constant})
-			}
+		if enum, ok := r.enumClass(source, f.Type); ok {
+			fm.Options = EnumOptions(enum)
 		}
 	}
 	javadoc.FieldDocumentationFor(f.Annotations, f.JavaDoc).Normalize().ApplyTo(fm)
+	// Values the field declares in its own way win over the ones its doc
+	// points at.
+	if len(fm.Options) == 0 {
+		fm.Options = r.seeOptions(source, f.RawJavaDoc)
+	}
 	if r.isUnboundTypeParam(f.Type, localBindings, typeParamSet) {
 		fm.Generic = true
 	} else if fieldModel != nil && fieldModel.Kind == model.KindSingle && r.allTypeParams[fieldModel.TypeName] {
@@ -805,6 +848,7 @@ func (r *TypeResolver) addGetterProperties(source parser.Class, localBindings ma
 			Type:        m.ReturnType,
 			Annotations: m.Annotations,
 			JavaDoc:     m.JavaDoc,
+			RawJavaDoc:  m.RawJavaDoc,
 		}, localBindings, typeParamSet)
 
 		// A derived boolean is computed state rather than stored data. The

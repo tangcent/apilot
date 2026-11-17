@@ -3,6 +3,7 @@
 package resolver
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
@@ -61,6 +62,9 @@ func NewWithJavaTypes(classes []ktparser.Class, javaTypes []javaparser.Class) *R
 			r.enumValues[class.Name] = class.EnumValues
 			r.enumValues[key] = class.EnumValues
 			// Enums are rendered as string options, not as empty objects.
+			// The JSON view never sees the declaration; it is there for the
+			// fields whose doc points at it with @see.
+			javaClasses = append(javaClasses, toJavaEnum(*class))
 			continue
 		}
 		javaClasses = append(javaClasses, toJavaClass(*class))
@@ -83,7 +87,9 @@ func (r *Resolver) ResolveForBinding(source *ktparser.Class, rawType string, bin
 	if r.bindingTR == nil {
 		var javaClasses []javaparser.Class
 		for _, class := range r.classes {
-			if !class.IsEnum {
+			if class.IsEnum {
+				javaClasses = append(javaClasses, toJavaEnum(class))
+			} else {
 				javaClasses = append(javaClasses, toBindingClass(class))
 			}
 		}
@@ -214,9 +220,9 @@ func (r *Resolver) applyEnums(m *model.ObjectModel) {
 				continue
 			}
 			if field.Model.Kind == model.KindSingle {
-				if values := r.EnumValues(field.Model.TypeName); len(values) > 0 {
+				if options := r.enumOptions(field.Model.TypeName); len(options) > 0 {
 					field.Model = model.SingleModel(model.JsonTypeString)
-					field.Options = enumOptions(values)
+					field.Options = options
 					continue
 				}
 			}
@@ -230,12 +236,23 @@ func (r *Resolver) applyEnums(m *model.ObjectModel) {
 	}
 }
 
-func enumOptions(values []string) []model.FieldOption {
-	out := make([]model.FieldOption, 0, len(values))
-	for _, value := range values {
-		out = append(out, model.FieldOption{Value: value})
+// enumOptions returns the values of the enum a type name denotes, by its
+// simple name as EnumValues goes, each described by the KDoc of its entry.
+func (r *Resolver) enumOptions(name string) []model.FieldOption {
+	values := r.EnumValues(name)
+	if len(values) == 0 {
+		return nil
 	}
-	return out
+	for _, key := range r.bySimple[lastSegment(name)] {
+		if c := r.byKey[key]; c != nil && c.IsEnum && slices.Equal(c.EnumValues, values) {
+			return javaresolver.EnumOptions(toJavaEnum(*c))
+		}
+	}
+	options := make([]model.FieldOption, 0, len(values))
+	for _, value := range values {
+		options = append(options, model.FieldOption{Value: value})
+	}
+	return options
 }
 
 // ToJavaClasses converts Kotlin declarations to the Java model, so a Java
@@ -245,17 +262,31 @@ func ToJavaClasses(classes []ktparser.Class) []javaparser.Class {
 	out := make([]javaparser.Class, 0, len(classes))
 	for _, class := range classes {
 		if class.IsEnum {
-			out = append(out, javaparser.Class{
-				Name:          class.Name,
-				Package:       class.Package,
-				FilePath:      class.FilePath,
-				Imports:       toJavaImports(class.Imports),
-				IsEnum:        true,
-				EnumConstants: append([]string(nil), class.EnumValues...),
-			})
+			out = append(out, toJavaEnum(class))
 			continue
 		}
 		out = append(out, toJavaClass(class))
+	}
+	return out
+}
+
+// toJavaEnum converts an enum to the Java model: its entries, each with its
+// doc comment cleaned.
+func toJavaEnum(class ktparser.Class) javaparser.Class {
+	out := javaparser.Class{
+		Name:          class.Name,
+		Package:       class.Package,
+		FilePath:      class.FilePath,
+		Imports:       toJavaImports(class.Imports),
+		IsEnum:        true,
+		EnumConstants: append([]string(nil), class.EnumValues...),
+	}
+	for i := range class.EnumValues {
+		doc := ""
+		if i < len(class.EnumValueKDocs) {
+			doc = javadoc.CleanJavaDoc(class.EnumValueKDocs[i])
+		}
+		out.EnumConstantDocs = append(out.EnumConstantDocs, doc)
 	}
 	return out
 }
@@ -288,6 +319,7 @@ func toBindingClass(class ktparser.Class) javaparser.Class {
 			Annotations: fieldAnnotations(prop.Annotations),
 			JavaDoc:     javadoc.CleanJavaDoc(prop.KDoc),
 			IsFinal:     !prop.IsMutable,
+			RawJavaDoc:  prop.KDoc,
 		})
 	}
 	return out
@@ -333,6 +365,7 @@ func toJavaClass(class ktparser.Class) javaparser.Class {
 			Annotations: fieldAnnotations(prop.Annotations),
 			JavaDoc:     javadoc.CleanJavaDoc(prop.KDoc),
 			IsFinal:     !prop.IsMutable,
+			RawJavaDoc:  prop.KDoc,
 		})
 	}
 	// Methods are deliberately not copied: Kotlin data-class getters,

@@ -48,6 +48,9 @@ type Field struct {
 	// part. A static final field with one is a compile-time constant — the
 	// distinction between a constant and an instance-final piece of data.
 	HasInitializer bool
+	// RawJavaDoc is the doc comment as written, block tags included, so a
+	// tag such as @see can be read.
+	RawJavaDoc string
 }
 
 // Import is one import declaration of a compilation unit.
@@ -89,6 +92,9 @@ type Class struct {
 	// declaration order.
 	IsEnum        bool
 	EnumConstants []string
+	// EnumConstantDocs holds the doc comment of each constant, cleaned, in
+	// the order of EnumConstants: "" for a constant without one.
+	EnumConstantDocs []string
 }
 
 // ParseResult contains the parsing result for a single file.

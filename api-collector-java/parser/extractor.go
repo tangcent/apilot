@@ -136,6 +136,7 @@ func extractEnum(node *tree_sitter.Node, source []byte) Class {
 				}
 				if name := constant.ChildByFieldName("name"); name != nil {
 					enum.EnumConstants = append(enum.EnumConstants, name.Utf8Text(source))
+					enum.EnumConstantDocs = append(enum.EnumConstantDocs, extractLeadingJavaDoc(constant, source))
 				}
 			}
 		}
@@ -516,7 +517,7 @@ func extractFields(classBody *tree_sitter.Node, source []byte) []Field {
 
 // extractField extracts a single field declaration.
 func extractField(node *tree_sitter.Node, source []byte) *Field {
-	field := &Field{JavaDoc: extractLeadingJavaDoc(node, source)}
+	field := &Field{JavaDoc: extractLeadingJavaDoc(node, source), RawJavaDoc: rawLeadingJavaDoc(node, source)}
 
 	field.Annotations = extractAnnotations(node, source)
 
