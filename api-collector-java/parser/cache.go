@@ -18,7 +18,9 @@ import (
 //
 // Version 3: Class carries the compilation unit path and its imports.
 // Version 4: Method, Class and Field carry RawJavaDoc, and Class carries EnumConstantDocs.
-const cacheSchemaVersion = "4"
+// Version 5: Annotation carries Refs, Field carries Constant, and an interface
+// carries its constants as fields.
+const cacheSchemaVersion = "5"
 
 // Cache provides file-level caching based on content hash.
 type Cache struct {

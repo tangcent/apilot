@@ -46,6 +46,27 @@ func extractFile(root *tree_sitter.Node, source []byte, filePath string, result 
 					result.Error = err
 					return
 				}
+			case "property_declaration":
+				if result.Error != nil {
+					return
+				}
+				// Of the top-level properties only a const val can stand for
+				// a string in an annotation.
+				if !hasModifier(child, "const") {
+					continue
+				}
+				if skipDamaged && declarationDamaged(child, source) {
+					skip(child)
+					continue
+				}
+				prop, err := extractProperty(child, source, filePath)
+				if err != nil {
+					result.Error = err
+					return
+				}
+				if prop != nil {
+					addFileConstant(result, packageName, filePath, imports, *prop)
+				}
 			case "annotated_expression":
 				// A declaration can be wrapped in annotation expressions at
 				// file scope. Descend so the class is not missed.
@@ -57,6 +78,47 @@ func extractFile(root *tree_sitter.Node, source []byte, filePath string, result 
 		}
 	}
 	visit(root)
+}
+
+// addFileConstant records a top-level const val in the file facade of its
+// file, creating the facade with the first one. A damaged file is extracted a
+// declaration at a time, so the facade may already exist.
+func addFileConstant(result *ParseResult, packageName, filePath string, imports []Import, prop Property) {
+	for i := range result.Classes {
+		if result.Classes[i].IsFileFacade && result.Classes[i].FilePath == filePath {
+			result.Classes[i].Fields = append(result.Classes[i].Fields, prop)
+			return
+		}
+	}
+	result.Classes = append(result.Classes, Class{
+		Name:         fileFacadeName(filePath),
+		Package:      packageName,
+		FilePath:     filePath,
+		Imports:      imports,
+		Fields:       []Property{prop},
+		IsFileFacade: true,
+	})
+}
+
+// fileFacadeName is the name of the class the JVM holds the top-level
+// declarations of a file in: the file name, capitalised, followed by Kt.
+// @file:JvmName is not read; Kotlin code never names the facade.
+func fileFacadeName(filePath string) string {
+	name := filePath
+	if i := strings.LastIndexAny(name, `/\`); i >= 0 {
+		name = name[i+1:]
+	}
+	if strings.HasSuffix(strings.ToLower(name), ".kt") {
+		name = name[:len(name)-len(".kt")]
+	}
+	// A dependency source is named after the class it was fetched for.
+	if i := strings.LastIndex(name, "."); i >= 0 {
+		name = name[i+1:]
+	}
+	if name == "" {
+		return "Kt"
+	}
+	return strings.ToUpper(name[:1]) + name[1:] + "Kt"
 }
 
 func extractPackageName(root *tree_sitter.Node, source []byte) string {
@@ -193,6 +255,10 @@ func extractClassBody(body *tree_sitter.Node, source []byte, filePath string, cl
 			if err := extractClass(child, source, class.Package, class.FilePath, class.Imports, result); err != nil {
 				return err
 			}
+		case "companion_object":
+			if err := extractCompanionConstants(child, source, filePath, class); err != nil {
+				return err
+			}
 		case "enum_class_body":
 			if err := extractClassBody(child, source, filePath, class, result); err != nil {
 				return err
@@ -200,6 +266,40 @@ func extractClassBody(body *tree_sitter.Node, source []byte, filePath string, cl
 		}
 	}
 	return nil
+}
+
+// extractCompanionConstants reads the const vals of a companion object onto
+// the class it belongs to. On the JVM they are static fields of that class,
+// which is how Java and annotations reach them: Headers.VERSION. The rest of
+// the companion is not instance state of the class and is not read.
+func extractCompanionConstants(companion *tree_sitter.Node, source []byte, filePath string, class *Class) error {
+	body := firstChildOfKind(companion, "class_body")
+	if body == nil {
+		return nil
+	}
+	for i := uint(0); i < body.ChildCount(); i++ {
+		child := body.Child(i)
+		if child.Kind() != "property_declaration" || !hasModifier(child, "const") {
+			continue
+		}
+		prop, err := extractProperty(child, source, filePath)
+		if err != nil {
+			return err
+		}
+		if prop != nil {
+			class.Fields = append(class.Fields, *prop)
+		}
+	}
+	return nil
+}
+
+// hasModifier reports whether a declaration carries the modifier keyword.
+func hasModifier(node *tree_sitter.Node, keyword string) bool {
+	flags := map[string]bool{}
+	if modifiers := firstChildOfKind(node, "modifiers"); modifiers != nil {
+		collectModifierFlags(modifiers, flags)
+	}
+	return flags[keyword]
 }
 
 func extractSuperTypes(node *tree_sitter.Node, source []byte, class *Class) {
@@ -328,7 +428,6 @@ func extractProperty(node *tree_sitter.Node, source []byte, filePath string) (*P
 	if err != nil {
 		return nil, err
 	}
-	_ = flags
 	decl := firstChildOfKind(node, "variable_declaration")
 	if decl == nil {
 		return nil, nil
@@ -346,6 +445,7 @@ func extractProperty(node *tree_sitter.Node, source []byte, filePath string) (*P
 		Annotations: anns,
 		IsMutable:   directIndexOf(node, "var") >= 0,
 		KDoc:        leadingKDoc(node, source),
+		IsConst:     flags["const"],
 	}
 	if prop.Type == "" {
 		for i := uint(0); i < decl.ChildCount(); i++ {
@@ -472,7 +572,7 @@ func collectModifierFlags(node *tree_sitter.Node, flags map[string]bool) {
 	switch node.Kind() {
 	case "data", "enum", "sealed", "open", "abstract", "final", "override", "suspend",
 		"vararg", "value", "inner", "annotation", "fun", "interface", "private",
-		"protected", "public", "internal":
+		"protected", "public", "internal", "const":
 		flags[node.Kind()] = true
 	}
 	if node.Kind() == "annotation" {
@@ -567,7 +667,7 @@ func extractAnnotation(node *tree_sitter.Node, argsOverride *tree_sitter.Node, s
 	// A use-site target (@field:, @get:, ...) is kept on the annotation. Whether
 	// it can change the exported name is decided per property, where every
 	// annotation of that property is in view; see checkPropertyAnnotations.
-	extractAnnotationParams(argsNode, source, ann.Params)
+	extractAnnotationParams(argsNode, source, &ann)
 	return ann, nil
 }
 
@@ -656,7 +756,7 @@ func checkPropertyAnnotations(anns []Annotation, propName, filePath string) erro
 	return nil
 }
 
-func extractAnnotationParams(node *tree_sitter.Node, source []byte, params map[string]string) {
+func extractAnnotationParams(node *tree_sitter.Node, source []byte, ann *Annotation) {
 	if node == nil {
 		return
 	}
@@ -664,18 +764,18 @@ func extractAnnotationParams(node *tree_sitter.Node, source []byte, params map[s
 		for i := uint(0); i < node.ChildCount(); i++ {
 			child := node.Child(i)
 			if child.Kind() == "value_argument" {
-				readValueArgument(child, source, params)
+				readValueArgument(child, source, ann)
 				continue
 			}
 			if isAnnotationValueNode(child.Kind()) {
-				setPositional(params, extractAnnotationValue(child, source))
+				setPositional(ann, child, source)
 			}
 		}
 		return
 	}
 }
 
-func readValueArgument(node *tree_sitter.Node, source []byte, params map[string]string) {
+func readValueArgument(node *tree_sitter.Node, source []byte, ann *Annotation) {
 	eq := directIndexOf(node, "=")
 	if eq >= 0 {
 		nameNode := firstChildOfKind(node, "identifier")
@@ -683,37 +783,70 @@ func readValueArgument(node *tree_sitter.Node, source []byte, params map[string]
 			// Read the children after "=" only. Booleans such as
 			// "required = false" arrive as identifier nodes, so skipping every
 			// identifier would drop the value.
-			var value string
+			key := nameNode.Utf8Text(source)
+			ann.Params[key] = ""
 			for i := uint(eq) + 1; i < node.ChildCount(); i++ {
 				child := node.Child(i)
 				if child.Kind() == "=" || child.Kind() == "," {
 					continue
 				}
-				value = extractAnnotationValue(child, source)
+				setParam(ann, key, child, source)
 				break
 			}
-			params[nameNode.Utf8Text(source)] = value
 			return
 		}
 	}
+	// Without "=", the argument is positional and a lone identifier is its
+	// value: a constant such as @RequestHeader(TENANT).
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
-		if child.Kind() == "identifier" || child.Kind() == "=" || child.Kind() == "," {
+		if child.Kind() == "=" || child.Kind() == "," {
 			continue
 		}
 		if isAnnotationValueNode(child.Kind()) || child.Kind() == "collection_literal" || child.Kind() == "unary_expression" {
-			setPositional(params, extractAnnotationValue(child, source))
+			setPositional(ann, child, source)
 			return
 		}
 	}
 }
 
-func setPositional(params map[string]string, value string) {
-	if current, ok := params["value"]; ok && current != "" {
-		params["value"] = current + "," + value
+// setParam records one argument, marking it when it is written as a name.
+func setParam(ann *Annotation, key string, value *tree_sitter.Node, source []byte) {
+	ann.Params[key] = extractAnnotationValue(value, source)
+	if isNameValue(value, source) {
+		if ann.Refs == nil {
+			ann.Refs = map[string]bool{}
+		}
+		ann.Refs[key] = true
+	}
+}
+
+// setPositional records a positional argument as the value param. A second
+// one joins the first, so the param is a list and no longer a single name.
+func setPositional(ann *Annotation, value *tree_sitter.Node, source []byte) {
+	if current, ok := ann.Params["value"]; ok && current != "" {
+		ann.Params["value"] = current + "," + extractAnnotationValue(value, source)
+		delete(ann.Refs, "value")
 		return
 	}
-	params["value"] = value
+	setParam(ann, "value", value, source)
+}
+
+// isNameValue reports whether an annotation argument is written as a name,
+// such as VERSION or Headers.VERSION, rather than as a literal. The grammar
+// reads true, false and null as identifiers too.
+func isNameValue(node *tree_sitter.Node, source []byte) bool {
+	switch node.Kind() {
+	case "identifier":
+		switch strings.TrimSpace(node.Utf8Text(source)) {
+		case "true", "false", "null":
+			return false
+		}
+		return true
+	case "navigation_expression", "qualified_identifier":
+		return true
+	}
+	return false
 }
 
 func extractAnnotationValue(node *tree_sitter.Node, source []byte) string {
