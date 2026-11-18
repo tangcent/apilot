@@ -72,7 +72,57 @@ enum class OrderState(val code: String) {
 
 // decompiledLibrarySources are classes of the same library that the indexer
 // can only decompile, for want of a sources JAR: Java without doc comments.
+// The decompiler prints a Java enum as an enum, and a Kotlin enum as a class
+// that extends Enum.
 var decompiledLibrarySources = map[string]string{
+	"com.example.lib.Region": `/*
+ * Decompiled with CFR 0.152.
+ */
+package com.example.lib;
+
+import kotlin.Metadata;
+import kotlin.enums.EnumEntries;
+import kotlin.enums.EnumEntriesKt;
+import org.jetbrains.annotations.NotNull;
+
+@Metadata(mv={1, 9, 0}, k=1, xi=48)
+public final class Region
+extends Enum<Region> {
+    public static final /* enum */ Region NORTH = new Region("n");
+    public static final /* enum */ Region SOUTH = new Region("s");
+    private static final /* synthetic */ Region[] $VALUES;
+    private static final /* synthetic */ EnumEntries $ENTRIES;
+    @NotNull
+    private final String code;
+
+    private Region(String code) {
+        this.code = code;
+    }
+
+    @NotNull
+    public final String getCode() {
+        return this.code;
+    }
+
+    public static Region[] values() {
+        return (Region[])$VALUES.clone();
+    }
+
+    public static Region valueOf(String value) {
+        return Enum.valueOf(Region.class, value);
+    }
+
+    @NotNull
+    public static EnumEntries<Region> getEntries() {
+        return $ENTRIES;
+    }
+
+    static {
+        $VALUES = regionArray = new Region[]{Region.NORTH, Region.SOUTH};
+        $ENTRIES = EnumEntriesKt.enumEntries((Enum[])$VALUES);
+    }
+}
+`,
 	"com.example.lib.PayChannel": `/*
  * Decompiled with CFR 0.152.
  */

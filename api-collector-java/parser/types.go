@@ -98,7 +98,8 @@ type Class struct {
 	Imports []Import
 	// RawJavaDoc is the doc comment as written, block tags included.
 	RawJavaDoc string
-	// IsEnum marks an enum declaration; EnumConstants lists its constants in
+	// IsEnum marks an enum declaration, or a class that extends java.lang.Enum
+	// (how CFR prints a Kotlin enum); EnumConstants lists its constants in
 	// declaration order.
 	IsEnum        bool
 	EnumConstants []string

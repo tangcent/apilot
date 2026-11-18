@@ -2,6 +2,7 @@ package com.example.seedep;
 
 import com.example.lib.OrderState;
 import com.example.lib.PayChannel;
+import com.example.lib.Region;
 
 public class LibraryOrderForm {
     /**
@@ -36,4 +37,10 @@ public class LibraryOrderForm {
 
     /** A field typed with the library's enum. */
     private OrderState typed;
+
+    /** @see Region */
+    private String region;
+
+    /** A field typed with a library enum that was decompiled from Kotlin. */
+    private Region kotlinEnum;
 }

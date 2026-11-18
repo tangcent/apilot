@@ -20,7 +20,9 @@ import (
 // Version 4: Method, Class and Field carry RawJavaDoc, and Class carries EnumConstantDocs.
 // Version 5: Annotation carries Refs, Field carries Constant, and an interface
 // carries its constants as fields.
-const cacheSchemaVersion = "5"
+// Version 6: a class that extends java.lang.Enum is an enum and carries its
+// constants, as CFR prints a Kotlin enum.
+const cacheSchemaVersion = "6"
 
 // Cache provides file-level caching based on content hash.
 type Cache struct {

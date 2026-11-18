@@ -2,6 +2,7 @@ package com.example.seedep
 
 import com.example.lib.OrderState
 import com.example.lib.PayChannel
+import com.example.lib.Region
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
@@ -41,6 +42,12 @@ class LibraryOrderForm {
 
     /** A property typed with the library's enum. */
     var typed: OrderState? = null
+
+    /** @see Region */
+    var region: String? = null
+
+    /** A property typed with a library enum that was decompiled from Kotlin. */
+    var kotlinEnum: Region? = null
 }
 
 @RestController

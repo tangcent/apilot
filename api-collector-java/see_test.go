@@ -119,9 +119,10 @@ func checkSeeTables(t *testing.T, endpoints []collector.ApiEndpoint, want, wantQ
 // the options of each String field of the request body. The library's
 // OrderState gives the options the project's own gives in testdata/see.
 // PayChannel, decompiled from a JAR without sources, gives its constants
-// without descriptions. A member reference, a library class that is not an
-// enum, a class the library does not have, a name the source neither
-// qualifies nor imports and a JDK class add nothing.
+// without descriptions, and so does Region, a Kotlin enum decompiled from one:
+// CFR prints that as a class rather than an enum. A member reference, a
+// library class that is not an enum, a class the library does not have, a name
+// the source neither qualifies nor imports and a JDK class add nothing.
 //
 // The Kotlin collector asserts the same table for the same form written in
 // Kotlin (api-collector-kotlin/see_test.go): keep the two in sync.
@@ -129,6 +130,7 @@ var seeDependencyExpectation = map[string][]string{
 	"state":      seeExpectation["state"],
 	"qualified":  seeExpectation["state"],
 	"channel":    {"ALIPAY: ", "WECHAT: "},
+	"region":     {"NORTH: ", "SOUTH: "},
 	"member":     nil,
 	"notAnEnum":  nil,
 	"missing":    nil,
@@ -142,17 +144,21 @@ var seeDependencyQueryExpectation = map[string][]string{
 	"state":      {"PENDING", "PAID", "CLOSED"},
 	"qualified":  {"PENDING", "PAID", "CLOSED"},
 	"channel":    {"ALIPAY", "WECHAT"},
+	"region":     {"NORTH", "SOUTH"},
 	"member":     nil,
 	"notAnEnum":  nil,
 	"missing":    nil,
 	"unimported": nil,
 	"platform":   nil,
 	"typed":      {"PENDING", "PAID", "CLOSED"},
+	"kotlinEnum": {"NORTH", "SOUTH"},
 }
 
 // seeLibrarySources are the classes of the library testdata/see-dependency
 // refers to, as the indexer returns them: OrderState from a sources JAR, and
-// PayChannel decompiled from a JAR without one, so with no doc comments.
+// PayChannel and Region decompiled from a JAR without one, so with no doc
+// comments. The decompiler prints a Java enum as an enum, and a Kotlin enum as
+// a class that extends Enum.
 var seeLibrarySources = map[string]string{
 	"com.example.lib.OrderState": `package com.example.lib;
 
@@ -198,6 +204,54 @@ public enum PayChannel {
 
     public String getCode() {
         return this.code;
+    }
+}
+`,
+	"com.example.lib.Region": `/*
+ * Decompiled with CFR 0.152.
+ */
+package com.example.lib;
+
+import kotlin.Metadata;
+import kotlin.enums.EnumEntries;
+import kotlin.enums.EnumEntriesKt;
+import org.jetbrains.annotations.NotNull;
+
+@Metadata(mv={1, 9, 0}, k=1, xi=48)
+public final class Region
+extends Enum<Region> {
+    public static final /* enum */ Region NORTH = new Region("n");
+    public static final /* enum */ Region SOUTH = new Region("s");
+    private static final /* synthetic */ Region[] $VALUES;
+    private static final /* synthetic */ EnumEntries $ENTRIES;
+    @NotNull
+    private final String code;
+
+    private Region(String code) {
+        this.code = code;
+    }
+
+    @NotNull
+    public final String getCode() {
+        return this.code;
+    }
+
+    public static Region[] values() {
+        return (Region[])$VALUES.clone();
+    }
+
+    public static Region valueOf(String value) {
+        return Enum.valueOf(Region.class, value);
+    }
+
+    @NotNull
+    public static EnumEntries<Region> getEntries() {
+        return $ENTRIES;
+    }
+
+    static {
+        $VALUES = regionArray = new Region[]{Region.NORTH, Region.SOUTH};
+        $ENTRIES = EnumEntriesKt.enumEntries((Enum[])$VALUES);
     }
 }
 `,
@@ -269,6 +323,11 @@ func TestSeeTagReadsAnEnumOfADependency(t *testing.T) {
 	if typed := body["typed"]; typed == nil || typed.Model.TypeName != "OrderState" || len(typed.Options) != 0 {
 		t.Errorf("body field typed = %+v, want the enum's name without options", typed)
 	}
+	// A Kotlin enum decompiled to a class is an enum all the same: not an
+	// object of its properties.
+	if typed := body["kotlinEnum"]; typed == nil || typed.Model.TypeName != "Region" || typed.Model.Kind != model.KindSingle || len(typed.Options) != 0 {
+		t.Errorf("body field kotlinEnum = %+v, want the enum's name without options", typed)
+	}
 
 	// The library is asked for each name once, however many fields refer to
 	// it and in whichever view, a miss included. Only qualified names reach it.
@@ -276,7 +335,7 @@ func TestSeeTagReadsAnEnumOfADependency(t *testing.T) {
 	for _, name := range library.asked {
 		asked[name]++
 	}
-	wantAsked := []string{"com.example.lib.OrderState", "com.example.lib.PayChannel", "com.example.lib.PageQuery", "com.example.lib.Missing"}
+	wantAsked := []string{"com.example.lib.OrderState", "com.example.lib.PayChannel", "com.example.lib.Region", "com.example.lib.PageQuery", "com.example.lib.Missing"}
 	for _, name := range wantAsked {
 		if asked[name] != 1 {
 			t.Errorf("%s was asked for %d times, want once", name, asked[name])
@@ -285,10 +344,10 @@ func TestSeeTagReadsAnEnumOfADependency(t *testing.T) {
 	if len(asked) != len(wantAsked) {
 		t.Errorf("asked = %v, want only %v", library.asked, wantAsked)
 	}
-	// The `@see` lookups report nothing; the enum-typed field is reported by
+	// The `@see` lookups report nothing; the enum-typed fields are reported by
 	// the JSON view as before.
 	for name := range unresolved.Counts() {
-		if name != "OrderState" {
+		if name != "OrderState" && name != "Region" {
 			t.Errorf("unresolved %s; unresolved = %v", name, unresolved.Counts())
 		}
 	}

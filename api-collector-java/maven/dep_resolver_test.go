@@ -264,6 +264,65 @@ func TestResolveClass_KeepsTheConstantsOfADecompiledClass(t *testing.T) {
 	}
 }
 
+// switchDecompiled is a Kotlin enum with a companion object, as CFR decompiles
+// it when the library ships no sources JAR: a class that extends Enum.
+const switchDecompiled = `/*
+ * Decompiled with CFR 0.152.
+ */
+package com.example.lib;
+
+import kotlin.Metadata;
+import kotlin.jvm.internal.DefaultConstructorMarker;
+import org.jetbrains.annotations.NotNull;
+
+@Metadata(mv={1, 9, 0}, k=1, xi=48)
+public final class Switch
+extends Enum<Switch> {
+    @NotNull
+    public static final Companion Companion;
+    private final int flag;
+    public static final /* enum */ Switch ON;
+    public static final /* enum */ Switch OFF;
+    private static final /* synthetic */ Switch[] $VALUES;
+
+    private Switch(int flag) {
+        this.flag = flag;
+    }
+
+    public final int getFlag() {
+        return this.flag;
+    }
+
+    static {
+        ON = new Switch(1);
+        OFF = new Switch(0);
+        $VALUES = switchArray = new Switch[]{Switch.ON, Switch.OFF};
+        Companion = new Companion(null);
+    }
+
+    public static final class Companion {
+        private Companion() {
+        }
+
+        public /* synthetic */ Companion(DefaultConstructorMarker $constructor_marker) {
+            this();
+        }
+    }
+}`
+
+func TestResolveClass_ReadsADecompiledKotlinEnumAsAnEnum(t *testing.T) {
+	var calls [][]string
+	r := newTestResolver(t, exploreAnswer("com.example.lib.Switch", "com.example:lib:2.0.0", "java", switchDecompiled, "project-pinned", "project-pinned"), &calls)
+
+	class := r.ResolveClass("com.example.lib.Switch")
+	if class == nil || class.Name != "Switch" {
+		t.Fatalf("class = %+v, want the enum rather than its companion", class)
+	}
+	if !class.IsEnum || !reflect.DeepEqual(class.EnumConstants, []string{"ON", "OFF"}) {
+		t.Errorf("IsEnum = %v, constants = %v, want the enum's constants in order", class.IsEnum, class.EnumConstants)
+	}
+}
+
 func TestResolveClass_ASourceWithoutAParserIsAMiss(t *testing.T) {
 	var calls [][]string
 	r := newTestResolver(t, exploreAnswer("com.example.lib.Box", "com.example:lib:2.0.0", "scala", "case class Box(v: Int)", "project-pinned", "project-pinned"), &calls)
