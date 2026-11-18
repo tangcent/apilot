@@ -1,0 +1,241 @@
+{
+  "endpoints": [
+    {
+      "name": "list",
+      "method": "GET",
+      "path": "/files/items",
+      "protocol": "http",
+      "description": "Items in stock.",
+      "folder": "FilesItemController",
+      "response": {
+        "mediaType": "application/json",
+        "schema": {
+          "kind": "object",
+          "fields": [
+            {
+              "name": "rows",
+              "kind": "array",
+              "required": true,
+              "description": "Rows of this page.",
+              "items": {
+                "kind": "object",
+                "fields": [
+                  {
+                    "name": "age",
+                    "kind": "single",
+                    "type": "int",
+                    "required": true
+                  },
+                  {
+                    "name": "loginName",
+                    "kind": "single",
+                    "type": "string",
+                    "required": true,
+                    "description": "Login name."
+                  }
+                ]
+              }
+            },
+            {
+              "name": "total",
+              "kind": "single",
+              "type": "long",
+              "required": true,
+              "description": "Total number of rows."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "create",
+      "method": "POST",
+      "path": "/files/orders",
+      "protocol": "http",
+      "description": "Place an order.",
+      "folder": "FilesOrderController",
+      "request": {
+        "body": {
+          "mediaType": "application/json",
+          "schema": {
+            "kind": "object",
+            "fields": [
+              {
+                "name": "quantity",
+                "kind": "single",
+                "type": "int",
+                "required": true
+              },
+              {
+                "name": "sku",
+                "kind": "single",
+                "type": "string",
+                "required": true,
+                "description": "Stock keeping unit."
+              }
+            ]
+          }
+        }
+      },
+      "response": {
+        "mediaType": "application/json",
+        "schema": {
+          "kind": "object",
+          "fields": [
+            {
+              "name": "rows",
+              "kind": "array",
+              "required": true,
+              "description": "Rows of this page.",
+              "items": {
+                "kind": "object",
+                "fields": [
+                  {
+                    "name": "quantity",
+                    "kind": "single",
+                    "type": "int",
+                    "required": true
+                  },
+                  {
+                    "name": "sku",
+                    "kind": "single",
+                    "type": "string",
+                    "required": true,
+                    "description": "Stock keeping unit."
+                  }
+                ]
+              }
+            },
+            {
+              "name": "total",
+              "kind": "single",
+              "type": "long",
+              "required": true,
+              "description": "Total number of rows."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "list",
+      "method": "GET",
+      "path": "/files/orders",
+      "protocol": "http",
+      "description": "Orders of the current user.",
+      "folder": "FilesOrderController",
+      "response": {
+        "mediaType": "application/json",
+        "schema": {
+          "kind": "array",
+          "items": {
+            "kind": "object",
+            "fields": [
+              {
+                "name": "quantity",
+                "kind": "single",
+                "type": "int",
+                "required": true
+              },
+              {
+                "name": "sku",
+                "kind": "single",
+                "type": "string",
+                "required": true,
+                "description": "Stock keeping unit."
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "get",
+      "method": "GET",
+      "path": "/files/users/{id}",
+      "protocol": "http",
+      "description": "One user.",
+      "folder": "FilesUserController",
+      "request": {
+        "parameters": {
+          "path": [
+            {
+              "name": "id",
+              "type": "text",
+              "typeName": "Long",
+              "required": true
+            }
+          ]
+        }
+      },
+      "response": {
+        "mediaType": "application/json",
+        "schema": {
+          "kind": "object",
+          "fields": [
+            {
+              "name": "age",
+              "kind": "single",
+              "type": "int",
+              "required": true
+            },
+            {
+              "name": "loginName",
+              "kind": "single",
+              "type": "string",
+              "required": true,
+              "description": "Login name."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "list",
+      "method": "GET",
+      "path": "/files/users",
+      "protocol": "http",
+      "description": "Page of users.",
+      "folder": "FilesUserController",
+      "response": {
+        "mediaType": "application/json",
+        "schema": {
+          "kind": "object",
+          "fields": [
+            {
+              "name": "rows",
+              "kind": "array",
+              "required": true,
+              "description": "Rows of this page.",
+              "items": {
+                "kind": "object",
+                "fields": [
+                  {
+                    "name": "age",
+                    "kind": "single",
+                    "type": "int",
+                    "required": true
+                  },
+                  {
+                    "name": "loginName",
+                    "kind": "single",
+                    "type": "string",
+                    "required": true,
+                    "description": "Login name."
+                  }
+                ]
+              }
+            },
+            {
+              "name": "total",
+              "kind": "single",
+              "type": "long",
+              "required": true,
+              "description": "Total number of rows."
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

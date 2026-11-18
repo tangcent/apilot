@@ -16,6 +16,7 @@ type Parser struct {
 	collectorDepResolver collector.DependencyResolver
 	unresolved           *collector.UnresolvedSet
 	requiredFields       string
+	selection            *collector.FileSelection
 }
 
 // NewParser creates a new Feign client parser.
@@ -43,6 +44,15 @@ func (p *Parser) SetRequiredFields(mode string) {
 	p.requiredFields = mode
 }
 
+// SetSelection limits ExtractClients to the clients declared in the selected
+// files. The type table still holds every class of the parse results, so a
+// selected client resolves types declared anywhere in the project, but nothing
+// is extracted or resolved for a client outside the selection. Optional; a nil
+// selection extracts every client.
+func (p *Parser) SetSelection(selection *collector.FileSelection) {
+	p.selection = selection
+}
+
 // ExtractClients extracts Feign clients from parse results.
 // It supports both Spring Cloud OpenFeign (Spring MVC annotations) and
 // Netflix Feign (@RequestLine annotations).
@@ -62,6 +72,9 @@ func (p *Parser) ExtractClients(results []parser.ParseResult) []FeignClient {
 			continue
 		}
 		for _, class := range result.Classes {
+			if !p.selection.Contains(class.FilePath) {
+				continue
+			}
 			if client := p.extractClient(class, typeResolver); client != nil {
 				clients = append(clients, *client)
 			}

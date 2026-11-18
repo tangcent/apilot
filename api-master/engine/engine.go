@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -18,8 +19,12 @@ import (
 )
 
 type Config struct {
-	SourceDir      string
-	SourceFile     string
+	// SourceDir is the path to export: a directory, or a single source file.
+	SourceDir  string
+	SourceFile string
+	// SourcePaths, when set, is the path list to export in place of SourceDir:
+	// one directory, or one or more source files of the same project.
+	SourcePaths    []string
 	MethodFilter   string
 	ProjectRoot    string
 	CollectorName  string
@@ -37,36 +42,86 @@ type Config struct {
 	RequiredFields string
 }
 
-func Run(cfg Config) error {
-	sourceDir := cfg.SourceDir
-	// The path as given by the caller. Error messages report this one: for a
-	// file-level export sourceDir is rewritten to the project root, which is not
-	// what the user asked to export.
-	requestedPath := cfg.SourceDir
-	var sourceFile string
+// sourceTarget is what one run exports.
+type sourceTarget struct {
+	// dir is the project directory the collector reads.
+	dir string
+	// files holds the absolute paths of the selected source files; empty for an
+	// export of the whole of dir.
+	files []string
+	// requested is the path list as given by the caller. Error messages report
+	// it: for a file-level export dir is rewritten to the project root, which is
+	// not what the user asked to export.
+	requested string
+}
 
-	info, err := os.Stat(sourceDir)
-	if err != nil {
-		return fmt.Errorf("source path %q: %w", sourceDir, err)
-	}
+// resolveSources decides what a run exports from the paths it was given: one
+// directory, or one or more source files. Files are exported as part of the
+// project they belong to, found by walking up from each of them unless
+// projectRoot names it, and all of them must belong to the same one.
+func resolveSources(paths []string, projectRoot string) (sourceTarget, error) {
+	target := sourceTarget{requested: strings.Join(paths, ", ")}
 
-	if !info.IsDir() {
-		sourceFile, err = filepath.Abs(sourceDir)
+	isDir := make([]bool, len(paths))
+	for i, path := range paths {
+		info, err := os.Stat(path)
 		if err != nil {
-			return fmt.Errorf("resolving source file path: %w", err)
+			return target, fmt.Errorf("source path %q: %w", path, err)
 		}
-		if cfg.ProjectRoot != "" {
-			sourceDir = cfg.ProjectRoot
-		} else {
-			projectRoot, findErr := findProjectRoot(filepath.Dir(sourceFile))
-			if findErr != nil {
-				return fmt.Errorf("could not find project root for %q: %w", sourceDir, findErr)
-			}
-			sourceDir = projectRoot
-		}
-	} else if cfg.ProjectRoot != "" {
-		sourceDir = cfg.ProjectRoot
+		isDir[i] = info.IsDir()
 	}
+
+	if len(paths) == 1 && isDir[0] {
+		target.dir = paths[0]
+		if projectRoot != "" {
+			target.dir = projectRoot
+		}
+		return target, nil
+	}
+	for i, path := range paths {
+		if isDir[i] {
+			return target, fmt.Errorf("source path %q is a directory: export either one directory or one or more source files, not both", path)
+		}
+	}
+
+	var firstPath string
+	for _, path := range paths {
+		file, err := filepath.Abs(path)
+		if err != nil {
+			return target, fmt.Errorf("resolving source file path: %w", err)
+		}
+		if slices.Contains(target.files, file) {
+			continue
+		}
+		root := projectRoot
+		if root == "" {
+			found, findErr := findProjectRoot(filepath.Dir(file))
+			if findErr != nil {
+				return target, fmt.Errorf("could not find project root for %q: %w", path, findErr)
+			}
+			root = found
+		}
+		if len(target.files) == 0 {
+			target.dir, firstPath = root, path
+		} else if root != target.dir {
+			return target, fmt.Errorf("source files belong to different projects: %q is in %q but %q is in %q; export them separately, or pass --project-root to export them together",
+				firstPath, target.dir, path, root)
+		}
+		target.files = append(target.files, file)
+	}
+	return target, nil
+}
+
+func Run(cfg Config) error {
+	paths := cfg.SourcePaths
+	if len(paths) == 0 {
+		paths = []string{cfg.SourceDir}
+	}
+	target, err := resolveSources(paths, cfg.ProjectRoot)
+	if err != nil {
+		return err
+	}
+	sourceDir, sourceFiles, requestedPath := target.dir, target.files, target.requested
 
 	c, err := resolveCollectorWithDir(cfg, sourceDir)
 	if err != nil {
@@ -74,9 +129,14 @@ func Run(cfg Config) error {
 	}
 
 	ctx := collector.CollectContext{
-		SourceDir:  sourceDir,
-		SourceFile: sourceFile,
-		NoDeps:     cfg.NoDeps,
+		SourceDir:   sourceDir,
+		SourceFiles: sourceFiles,
+		NoDeps:      cfg.NoDeps,
+	}
+	// A collector that reads only SourceFile must never take one file of
+	// several for the whole selection, so it is set for a single file only.
+	if len(sourceFiles) == 1 {
+		ctx.SourceFile = sourceFiles[0]
 	}
 	if cfg.RequiredFields != "" {
 		ctx.Config = map[string]string{collector.ConfigRequiredFields: cfg.RequiredFields}
@@ -112,8 +172,14 @@ func Run(cfg Config) error {
 
 	collected := len(endpoints)
 
-	if sourceFile != "" {
-		endpoints = filterEndpointsByFile(endpoints, sourceFile)
+	// A collector that honours the selected files has already limited its result
+	// to them, by the file each declaration came from. Any other collector
+	// returns the endpoints of the whole project, and the file name is all that
+	// is left to tell which of them belong to the selected files.
+	if fs, ok := c.(collector.FileSelector); !ok || !fs.SelectsFiles() {
+		if len(sourceFiles) > 0 {
+			endpoints = filterEndpointsByFiles(endpoints, sourceFiles)
+		}
 	}
 
 	if cfg.MethodFilter != "" {
@@ -345,11 +411,17 @@ var projectRootIndicators = []string{
 	"pyproject.toml",
 }
 
+// findProjectRoot returns the project root of a source file that sits in dir:
+// the nearest directory at or above dir with a build file, lifted to the
+// topmost aggregator when that directory is a module of a multi-module build
+// (see topmostAggregator). The nearest directory alone would leave the sibling
+// modules a controller depends on outside the project, to be looked up in the
+// dependency index one type at a time.
 func findProjectRoot(dir string) (string, error) {
 	for {
 		for _, indicator := range projectRootIndicators {
 			if _, err := os.Stat(filepath.Join(dir, indicator)); err == nil {
-				return dir, nil
+				return topmostAggregator(dir), nil
 			}
 		}
 		parent := filepath.Dir(dir)
@@ -361,17 +433,18 @@ func findProjectRoot(dir string) (string, error) {
 	return "", fmt.Errorf("no project root indicator found")
 }
 
-func filterEndpointsByFile(endpoints []collector.ApiEndpoint, sourceFile string) []collector.ApiEndpoint {
-	absFile, err := filepath.Abs(sourceFile)
-	if err != nil {
-		absFile = sourceFile
+// filterEndpointsByFiles keeps the endpoints whose folder is named after one of
+// the files, the way a controller is named after the file that declares it.
+func filterEndpointsByFiles(endpoints []collector.ApiEndpoint, sourceFiles []string) []collector.ApiEndpoint {
+	classNames := make(map[string]bool, len(sourceFiles))
+	for _, sourceFile := range sourceFiles {
+		baseName := filepath.Base(sourceFile)
+		classNames[strings.TrimSuffix(baseName, filepath.Ext(baseName))] = true
 	}
-	baseName := filepath.Base(absFile)
-	className := strings.TrimSuffix(baseName, filepath.Ext(baseName))
 
 	var filtered []collector.ApiEndpoint
 	for _, ep := range endpoints {
-		if ep.Folder == className {
+		if classNames[ep.Folder] {
 			filtered = append(filtered, ep)
 		}
 	}
@@ -652,8 +725,8 @@ func handleExport(args []string) {
 		printExportHelp()
 	}
 
-	reordered := reorderArgs(args)
-	if err := fs.Parse(reordered); err != nil {
+	sourcePaths, err := parseInterleaved(fs, args)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		printExportHelp()
 		os.Exit(1)
@@ -683,21 +756,19 @@ func handleExport(args []string) {
 		return
 	}
 
-	remaining := fs.Args()
-	if len(remaining) == 0 {
+	if len(sourcePaths) == 0 {
 		fmt.Fprintf(os.Stderr, "error: source path required\n\n")
 		printExportHelp()
 		os.Exit(1)
 	}
-
-	sourceDir := remaining[0]
 
 	if formatVariant != "" && formatParams == "" {
 		formatParams = fmt.Sprintf(`{"variant":"%s"}`, formatVariant)
 	}
 
 	cfg := Config{
-		SourceDir:      sourceDir,
+		SourceDir:      sourcePaths[0],
+		SourcePaths:    sourcePaths,
 		CollectorName:  collectorName,
 		FormatterName:  formatterName,
 		FormatParams:   formatParams,
@@ -748,10 +819,15 @@ func printHelp() {
 func printExportHelp() {
 	fmt.Println("Usage: apilot <source-path> [flags]")
 	fmt.Println("")
-	fmt.Println("  source-path can be a directory or a single source file.")
-	fmt.Println("  When a file is given, the project root is auto-detected by walking up")
+	fmt.Println("  source-path can be a directory, or one or more source files.")
+	fmt.Println("  When files are given, the project root is auto-detected by walking up")
 	fmt.Println("  to find pom.xml, build.gradle, go.mod, package.json, etc.")
-	fmt.Println("  For multi-module projects, the nearest directory with an indicator is used.")
+	fmt.Println("  For multi-module projects, the topmost aggregator is used: the directory")
+	fmt.Println("  whose pom.xml lists the module, or that holds the settings.gradle(.kts)")
+	fmt.Println("  of its Gradle build. A project that no build above lists keeps its own.")
+	fmt.Println("  All files must belong to the same project; use --project-root otherwise.")
+	fmt.Println("  Files of one project are exported in one run, sharing one parse of the")
+	fmt.Println("  project and one dependency lookup session.")
 	fmt.Println("")
 	fmt.Println("Flags:")
 	fmt.Println("  --collector string")
@@ -761,7 +837,8 @@ func printExportHelp() {
 	fmt.Println("  --format string")
 	fmt.Println("        format variant, e.g. simple, detailed (default: simple)")
 	fmt.Println("  --method string")
-	fmt.Println("        filter to a specific method name (used with file-level export)")
+	fmt.Println("        filter to a specific method name (used with file-level export;")
+	fmt.Println("        applies to every selected file)")
 	fmt.Println("  --project-root string")
 	fmt.Println("        override auto-detected project root directory")
 	fmt.Println("  --no-deps")
@@ -815,23 +892,23 @@ func printFormatters() {
 	}
 }
 
-func reorderArgs(args []string) []string {
-	var flags []string
+// parseInterleaved parses args with fs, accepting flags before, between and
+// after the source paths, and returns the paths in the order given. The flag
+// set decides which flags take a value, so a boolean flag such as --no-deps
+// never swallows the path that follows it.
+func parseInterleaved(fs *flag.FlagSet, args []string) ([]string, error) {
 	var positional []string
-	for i := 0; i < len(args); i++ {
-		if strings.HasPrefix(args[i], "-") {
-			flags = append(flags, args[i])
-			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				if !strings.Contains(args[i], "=") {
-					flags = append(flags, args[i+1])
-					i++
-				}
-			}
-		} else {
-			positional = append(positional, args[i])
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
 		}
+		rest := fs.Args()
+		if len(rest) == 0 {
+			return positional, nil
+		}
+		positional = append(positional, rest[0])
+		args = rest[1:]
 	}
-	return append(flags, positional...)
 }
 
 func resolveProjectName(sourceDir string) string {

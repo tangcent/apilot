@@ -37,13 +37,15 @@ apilot export ./my-service --formatter json --output api.json
 
 Scan source code and export API endpoints.
 
-`source-path` can be a **directory** or a **single source file**. When a file is given, the project root is auto-detected by walking up to find `pom.xml`, `build.gradle`, `go.mod`, `package.json`, etc. For multi-module projects, the topmost directory with an indicator is used as the project root.
+`source-path` can be a **directory**, or **one or more source files**. When files are given, the project root is auto-detected by walking up to find `pom.xml`, `build.gradle`, `go.mod`, `package.json`, etc. For multi-module projects, the topmost aggregator is used as the project root: starting from the nearest directory with a build file, the search climbs while the build above declares that directory as a module. For Maven that is a `pom.xml` whose `<modules>` (also inside a profile) lists the directory, found in any ancestor or through the module's `<parent><relativePath>`. For Gradle it is the nearest `settings.gradle(.kts)` at or above the directory, provided its directory also has a `build.gradle(.kts)`; the `include` statements are not read. A project that no build above lists keeps its nearest directory, and files of different modules of one repository share the aggregator. All the files must belong to the same project: files of projects with different roots are rejected unless `--project-root` names the root they share. A directory cannot be combined with files.
+
+Name several files in one run rather than running once per file: the project is read once, and the dependency lookups are set up once, for all of them. The Java and Kotlin collectors read the whole project for the types the files refer to, but build endpoints and look up dependency types only for the controllers the selected files declare. The endpoints come in the order of a directory export, whatever the order of the arguments.
 
 **Flags:**
 - `--collector <name>` — Collector to use (auto-detected if omitted)
 - `--formatter <name>` — Output format: `markdown`, `curl`, `postman`, `json` (default: `markdown`)
 - `--format <variant>` — Format variant: `simple`, `detailed` (default: `simple`)
-- `--method <name>` — Filter to a specific method name (used with file-level export)
+- `--method <name>` — Filter to a specific method name (used with file-level export; applies to every selected file)
 - `--project-root <path>` — Override auto-detected project root directory
 - `--no-deps` — Disable resolving request/response types from dependencies
 - `--allow-empty` — Exit 0 when the collection yields no endpoints (default: fail)
@@ -364,6 +366,9 @@ apilot export UserController.java --formatter postman --output user-api.json
 
 # Export all APIs from a specific file in a Go project
 apilot export handlers/user.go --formatter markdown
+
+# Export the APIs of several controllers of one project in one run
+apilot export UserController.java OrderController.java --formatter postman --output api.json
 ```
 
 ### Export a specific method from a file
@@ -382,6 +387,7 @@ apilot export OrderController.java --method createOrder --formatter postman
 |---------|-------|
 | `apilot export ./project` | All APIs in project |
 | `apilot export UserController.java` | All APIs in that file |
+| `apilot export UserController.java OrderController.java` | All APIs in those files |
 | `apilot export UserController.java --method getUser` | One specific API |
 
 ### Manage collection bindings
@@ -404,8 +410,9 @@ apilot collections remove old-project
 - The project name is auto-inferred from the source directory basename
 - Output to stdout by default — redirect or use `--output` to save to file
 - When pointing at a single file, the project root is auto-detected by walking up to find build files (pom.xml, build.gradle, go.mod, etc.)
-- For multi-module projects, auto-detection walks to the topmost directory with an indicator — use `--project-root` to override
+- For multi-module projects, auto-detection walks to the topmost aggregator (the Maven `pom.xml` that lists the module, or the Gradle `settings.gradle(.kts)` of its build) — use `--project-root` to override
 - Use `--method` with a file path to export a single API endpoint — great for quick lookups
+- To export several controllers, pass all their files to one `apilot export` — much cheaper than one run per file
 
 ## Plugin System
 

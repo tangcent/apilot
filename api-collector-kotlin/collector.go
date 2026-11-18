@@ -24,12 +24,27 @@ type KotlinCollector struct {
 	warnings      []string
 	frameworks    []string
 	depResolution collector.DependencyResolution
+	// shared, when set, is the dependency resolution of a Collect call that
+	// spans another collector as well; its owner closes it.
+	shared *javacollector.Dependencies
 }
 
 // New returns a new KotlinCollector.
 func New() collector.Collector { return &KotlinCollector{} }
 
 func (c *KotlinCollector) Name() string { return "kotlin" }
+
+// SelectsFiles reports that Collect limits its result to the files a context
+// selects: it extracts and resolves endpoints only for the declarations of
+// those files, so the engine takes the result as it is.
+func (c *KotlinCollector) SelectsFiles() bool { return true }
+
+// ShareDependencies makes the next Collect call resolve dependency types
+// through deps instead of setting up its own. The caller keeps ownership of
+// deps and closes it.
+func (c *KotlinCollector) ShareDependencies(deps *javacollector.Dependencies) {
+	c.shared = deps
+}
 
 // SupportedLanguages reports kotlin: this collector is the collection path for
 // .kt sources.
@@ -75,6 +90,11 @@ func (c *KotlinCollector) DependencyResolution() collector.DependencyResolution 
 // endpoints come from the Java collector, Kotlin declarations are visible to
 // Java endpoints and Java declarations to Kotlin endpoints, and the
 // diagnostics of both halves are reported together.
+//
+// When ctx selects files, the whole tree is still parsed, because the selected
+// files refer to types declared anywhere in it, but endpoints are extracted and
+// resolved only for the controllers the selected files declare, Kotlin and
+// Java alike. The result is what a directory export holds for those files.
 func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEndpoint, error) {
 	requiredFields, err := ctx.RequiredFields()
 	if err != nil {
@@ -86,50 +106,77 @@ func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 	}
 	defer p.Close()
 
-	ext := strings.ToLower(filepath.Ext(ctx.SourceFile))
 	mixed := hasJavaSources(ctx.SourceDir)
 
-	var results []ktparser.ParseResult
-	if ctx.SourceFile != "" && ext == ".java" && mixed {
-		// A Java file of a mixed tree: the Java collector reads the file; the
-		// Kotlin sources are only needed as types.
-		results, err = p.ParseDirectory(ctx.SourceDir)
-		if err != nil {
+	// A file-level export parses the whole project all the same, because the
+	// selected files refer to types declared anywhere in it, but extracts and
+	// resolves endpoints only for the declarations of the selected files.
+	selection := ctx.FileSelection()
+	var kotlinSelected, javaSelected []string
+	for _, file := range ctx.SelectedFiles() {
+		switch ext := strings.ToLower(filepath.Ext(file)); {
+		case ext == ".kt":
+			kotlinSelected = append(kotlinSelected, file)
+		case ext == ".java" && mixed:
+			// A Java file of a mixed tree: the Java collector reads the file;
+			// the Kotlin sources are only needed as types.
+			javaSelected = append(javaSelected, file)
+		default:
+			return nil, fmt.Errorf("%s is not a Kotlin source file", file)
+		}
+	}
+
+	var warnings []string
+	results, err := p.ParseDirectory(ctx.SourceDir)
+	if err != nil {
+		if selection == nil {
 			return nil, fmt.Errorf("failed to parse directory %s: %w", ctx.SourceDir, err)
 		}
-	} else if ctx.SourceFile != "" {
-		if ext != ".kt" {
-			return nil, fmt.Errorf("%s is not a Kotlin source file", ctx.SourceFile)
-		}
-		fileResult, parseErr := p.ParseFile(ctx.SourceFile)
+		// The project cannot be read as a whole: the selected files stand alone.
+		warnings = append(warnings, fmt.Sprintf(
+			"could not read the project under %s (%v): types declared outside the selected files are not available",
+			ctx.SourceDir, err))
+		results = nil
+	}
+
+	// A selected file the walk did not reach, such as one in a build directory
+	// or outside the project, is parsed on its own and added.
+	paths := make([]string, 0, len(results))
+	for _, result := range results {
+		paths = append(paths, result.FilePath)
+	}
+	for _, file := range collector.NewFileSelection(kotlinSelected).Unmatched(paths) {
+		fileResult, parseErr := p.ParseFile(file)
 		if parseErr != nil {
-			return nil, fmt.Errorf("failed to parse file %s: %w", ctx.SourceFile, parseErr)
+			return nil, fmt.Errorf("failed to parse file %s: %w", file, parseErr)
 		}
 		results = append(results, *fileResult)
-		// Parse the rest of the project so cross-file DTO references resolve.
-		dirResults, dirErr := p.ParseDirectory(ctx.SourceDir)
-		if dirErr == nil {
-			results = append(results, dirResults...)
-		}
-	} else {
-		results, err = p.ParseDirectory(ctx.SourceDir)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse directory %s: %w", ctx.SourceDir, err)
-		}
 	}
 
 	for _, result := range results {
-		if result.Error != nil {
+		if result.Error == nil {
+			continue
+		}
+		// A file that declares a controller cannot be read without dropping
+		// endpoints, so it stops a run that exports it. A file outside the
+		// selection exports nothing: the run goes on, the file is named, and a
+		// type declared in it shows up as unresolved where an endpoint uses it.
+		if selection.Contains(result.FilePath) {
 			return nil, result.Error
 		}
+		warnings = append(warnings, result.Error.Error()+
+			"; the file is not selected, so it is skipped and the types declared in it are not available")
 	}
 
 	classes := flattenClasses(results)
-	warnings := collectWarnings(results, classes)
+	warnings = append(warnings, collectWarnings(results, classes, selection)...)
 
 	// One dependency resolution serves both halves of a mixed tree.
-	deps := javacollector.SetupDependencies(ctx.SourceDir, ctx.NoDeps)
-	defer deps.Close()
+	deps := c.shared
+	if deps == nil {
+		deps = javacollector.SetupDependencies(ctx.SourceDir, ctx.NoDeps)
+		defer deps.Close()
+	}
 
 	var endpoints []collector.ApiEndpoint
 	var matched []string
@@ -139,20 +186,29 @@ func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 	var javaEndpoints []collector.ApiEndpoint
 	var javaTypes []javaparser.Class
 	var java *javacollector.JavaCollector
-	if mixed {
+	switch {
+	case mixed && (selection == nil || len(javaSelected) > 0):
 		java = javacollector.New().(*javacollector.JavaCollector)
 		java.ShareDependencies(deps)
 		javaCtx := ctx
-		if ext == ".kt" {
-			javaCtx.SourceFile = ""
+		javaCtx.SourceFile, javaCtx.SourceFiles = "", nil
+		if selection != nil {
+			javaCtx.SourceFiles = javaSelected
 		}
 		javaEndpoints, javaTypes, err = java.CollectWithTypes(javaCtx, resolver.ToJavaClasses(classes))
 		if err != nil {
 			return nil, fmt.Errorf("collecting the Java sources of %s: %w", ctx.SourceDir, err)
 		}
+	case mixed:
+		// Only Kotlin files are selected: the Java sources are types, nothing
+		// of them is extracted or resolved.
+		javaTypes, err = javacollector.ParseTypes(ctx.SourceDir)
+		if err != nil {
+			return nil, fmt.Errorf("reading the Java sources of %s: %w", ctx.SourceDir, err)
+		}
 	}
 
-	if springMVCDisabled(ctx.Frameworks) {
+	if springMVCDisabled(ctx.Frameworks) || (selection != nil && len(kotlinSelected) == 0) {
 		endpoints = nil
 		unresolved = map[string]int{}
 	} else {
@@ -162,6 +218,7 @@ func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 		}
 		typeResolver.SetRequiredFields(requiredFields)
 		sm := springmvc.NewParser(typeResolver)
+		sm.SetSelection(selection)
 		before := len(endpoints)
 		for _, ctrl := range sm.ExtractControllers(results) {
 			for _, ep := range ctrl.Endpoints {
@@ -253,10 +310,17 @@ func flattenClasses(results []ktparser.ParseResult) []ktparser.Class {
 	return classes
 }
 
-func collectWarnings(results []ktparser.ParseResult, classes []ktparser.Class) []string {
+// collectWarnings gathers the diagnostics of the parse. What the parser says of
+// a file it had to read in part concerns the export only when the file is one
+// the export reads endpoints from, so a file outside the selection of a
+// file-level export stays quiet. A sealed class is reported wherever it is
+// declared: whether an endpoint reaches it is known only to the resolver.
+func collectWarnings(results []ktparser.ParseResult, classes []ktparser.Class, selection *collector.FileSelection) []string {
 	var warnings []string
 	for _, result := range results {
-		warnings = append(warnings, result.Warnings...)
+		if selection.Contains(result.FilePath) {
+			warnings = append(warnings, result.Warnings...)
+		}
 	}
 	for _, class := range classes {
 		if class.IsSealed {
