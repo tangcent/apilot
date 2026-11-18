@@ -74,16 +74,91 @@ func extractClass(node *tree_sitter.Node, source []byte) Class {
 	class.TypeParameters = extractTypeParameters(node, source)
 	class.Interfaces = extractInterfaces(node, source)
 
+	// A class that extends java.lang.Enum is an enum: the language gives no
+	// other class that right. CFR prints a Kotlin enum this way, as a class
+	// rather than an `enum` declaration, so a source decompiled from a JAR
+	// without sources reaches the resolver in this form.
+	class.IsEnum = extendsEnum(node, source)
+
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "class_body" {
 			class.Methods = extractMethods(child, source)
 			class.Fields = extractFields(child, source)
+			if class.IsEnum {
+				class.EnumConstants = decompiledEnumConstants(child, source)
+				class.EnumConstantDocs = make([]string, len(class.EnumConstants))
+			}
 			break
 		}
 	}
 
 	return class
+}
+
+// extendsEnum reports whether a class declaration names java.lang.Enum as its
+// superclass, spelled `Enum<Self>` or `java.lang.Enum<Self>`.
+func extendsEnum(node *tree_sitter.Node, source []byte) bool {
+	for i := uint(0); i < node.ChildCount(); i++ {
+		superclass := node.Child(i)
+		if superclass.Kind() != "superclass" {
+			continue
+		}
+		for j := uint(0); j < superclass.ChildCount(); j++ {
+			typeNode := superclass.Child(j)
+			if typeNode.Kind() == "generic_type" {
+				// The base type is the first child, before the type arguments.
+				if typeNode = typeNode.Child(0); typeNode == nil {
+					return false
+				}
+			}
+			switch typeNode.Kind() {
+			case "type_identifier", "scoped_type_identifier":
+				name := strings.Join(strings.Fields(typeNode.Utf8Text(source)), "")
+				return name == "Enum" || name == "java.lang.Enum"
+			}
+		}
+	}
+	return false
+}
+
+// decompiledEnumConstants lists the constants of an enum that CFR printed as a
+// class, in declaration order. CFR marks the field of each constant with an
+// `/* enum */` comment after its modifiers:
+//
+//	public static final /* enum */ State PENDING = new State("PENDING");
+//
+// Only the marker tells a constant from another static field of the enum's own
+// type, such as one a Kotlin companion object declares. The constants of a
+// Kotlin enum are not always initialised at their declaration: CFR leaves the
+// initializer out when the class initializer assigns them. The synthetic
+// $VALUES and $ENTRIES carry no marker, so they are not constants.
+func decompiledEnumConstants(classBody *tree_sitter.Node, source []byte) []string {
+	var constants []string
+	for i := uint(0); i < classBody.ChildCount(); i++ {
+		field := classBody.Child(i)
+		if field.Kind() != "field_declaration" || !hasEnumMarker(field, source) {
+			continue
+		}
+		if declarator := field.ChildByFieldName("declarator"); declarator != nil {
+			if name := declarator.ChildByFieldName("name"); name != nil {
+				constants = append(constants, name.Utf8Text(source))
+			}
+		}
+	}
+	return constants
+}
+
+// hasEnumMarker reports whether a field declaration carries CFR's `/* enum */`
+// comment.
+func hasEnumMarker(field *tree_sitter.Node, source []byte) bool {
+	for i := uint(0); i < field.ChildCount(); i++ {
+		child := field.Child(i)
+		if child.Kind() == "block_comment" && strings.TrimSpace(child.Utf8Text(source)) == "/* enum */" {
+			return true
+		}
+	}
+	return false
 }
 
 // extractInterface extracts interface information including annotations and methods.

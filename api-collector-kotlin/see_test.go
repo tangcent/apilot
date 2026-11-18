@@ -103,9 +103,11 @@ func checkSeeTables(t *testing.T, endpoints []collector.ApiEndpoint, want, wantQ
 // the options of each String property of the request body. The library's
 // OrderState, a Kotlin source, gives the options the project's own gives in
 // testdata/see. PayChannel, decompiled from a JAR without sources, gives its
-// constants without descriptions. A member reference, a library class that is
-// not an enum, a class the library does not have, a name the source neither
-// qualifies nor imports and a JDK class add nothing.
+// constants without descriptions, and so does Region, a Kotlin enum decompiled
+// from one: the decompiler prints that as a class rather than an enum. A
+// member reference, a library class that is not an enum, a class the library
+// does not have, a name the source neither qualifies nor imports and a JDK
+// class add nothing.
 //
 // The Java collector asserts the same table for the same form written in Java
 // (api-collector-java/see_test.go): keep the two in sync.
@@ -113,6 +115,7 @@ var seeDependencyExpectation = map[string][]string{
 	"state":      seeExpectation["state"],
 	"qualified":  seeExpectation["state"],
 	"channel":    {"ALIPAY: ", "WECHAT: "},
+	"region":     {"NORTH: ", "SOUTH: "},
 	"member":     nil,
 	"notAnEnum":  nil,
 	"missing":    nil,
@@ -126,12 +129,14 @@ var seeDependencyQueryExpectation = map[string][]string{
 	"state":      {"PENDING", "PAID", "CLOSED"},
 	"qualified":  {"PENDING", "PAID", "CLOSED"},
 	"channel":    {"ALIPAY", "WECHAT"},
+	"region":     {"NORTH", "SOUTH"},
 	"member":     nil,
 	"notAnEnum":  nil,
 	"missing":    nil,
 	"unimported": nil,
 	"platform":   nil,
 	"typed":      {"PENDING", "PAID", "CLOSED"},
+	"kotlinEnum": {"NORTH", "SOUTH"},
 }
 
 func TestSeeTagReadsAnEnumOfADependency(t *testing.T) {
@@ -163,6 +168,11 @@ func TestSeeTagReadsAnEnumOfADependency(t *testing.T) {
 	if typed := body["typed"]; typed == nil || typed.Model.TypeName != "OrderState" || len(typed.Options) != 0 {
 		t.Errorf("body field typed = %+v, want the enum's name without options", typed)
 	}
+	// A Kotlin enum decompiled to a class is an enum all the same: not an
+	// object of its properties.
+	if typed := body["kotlinEnum"]; typed == nil || typed.Model.TypeName != "Region" || typed.Model.Kind != model.KindSingle || len(typed.Options) != 0 {
+		t.Errorf("body field kotlinEnum = %+v, want the enum's name without options", typed)
+	}
 
 	// The library is asked for each name once by each view, however many
 	// fields refer to it, a miss included: the JSON view and the binding view
@@ -171,7 +181,7 @@ func TestSeeTagReadsAnEnumOfADependency(t *testing.T) {
 	for _, name := range library.queried {
 		asked[name]++
 	}
-	wantAsked := []string{"com.example.lib.OrderState", "com.example.lib.PayChannel", "com.example.lib.PageQuery", "com.example.lib.Missing"}
+	wantAsked := []string{"com.example.lib.OrderState", "com.example.lib.PayChannel", "com.example.lib.Region", "com.example.lib.PageQuery", "com.example.lib.Missing"}
 	for _, name := range wantAsked {
 		if asked[name] != 2 {
 			t.Errorf("%s was asked for %d times, want once by each view", name, asked[name])
@@ -183,7 +193,7 @@ func TestSeeTagReadsAnEnumOfADependency(t *testing.T) {
 	// The `@see` lookups report nothing; the enum-typed property is reported
 	// by the JSON view as before.
 	for name := range typeResolver.Unresolved() {
-		if name != "OrderState" {
+		if name != "OrderState" && name != "Region" {
 			t.Errorf("unresolved %s; unresolved = %v", name, typeResolver.Unresolved())
 		}
 	}
