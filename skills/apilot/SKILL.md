@@ -37,7 +37,7 @@ apilot export ./my-service --formatter json --output api.json
 
 Scan source code and export API endpoints.
 
-`source-path` can be a **directory**, or **one or more source files**. When files are given, the project root is auto-detected by walking up to find `pom.xml`, `build.gradle`, `go.mod`, `package.json`, etc. For multi-module projects, the nearest directory with an indicator is used as the project root. All the files must belong to the same project: files of different modules, each with its own build file, are rejected unless `--project-root` names the root they share. A directory cannot be combined with files.
+`source-path` can be a **directory**, or **one or more source files**. When files are given, the project root is auto-detected by walking up to find `pom.xml`, `build.gradle`, `go.mod`, `package.json`, etc. For multi-module projects, the topmost aggregator is used as the project root: starting from the nearest directory with a build file, the search climbs while the build above declares that directory as a module. For Maven that is a `pom.xml` whose `<modules>` (also inside a profile) lists the directory, found in any ancestor or through the module's `<parent><relativePath>`. For Gradle it is the nearest `settings.gradle(.kts)` at or above the directory, provided its directory also has a `build.gradle(.kts)`; the `include` statements are not read. A project that no build above lists keeps its nearest directory, and files of different modules of one repository share the aggregator. All the files must belong to the same project: files of projects with different roots are rejected unless `--project-root` names the root they share. A directory cannot be combined with files.
 
 Name several files in one run rather than running once per file: the project is read once, and the dependency lookups are set up once, for all of them. The Java and Kotlin collectors read the whole project for the types the files refer to, but build endpoints and look up dependency types only for the controllers the selected files declare. The endpoints come in the order of a directory export, whatever the order of the arguments.
 
@@ -410,7 +410,7 @@ apilot collections remove old-project
 - The project name is auto-inferred from the source directory basename
 - Output to stdout by default — redirect or use `--output` to save to file
 - When pointing at a single file, the project root is auto-detected by walking up to find build files (pom.xml, build.gradle, go.mod, etc.)
-- For multi-module projects, auto-detection stops at the nearest directory with an indicator — use `--project-root` to override, or to export files of several modules together
+- For multi-module projects, auto-detection walks to the topmost aggregator (the Maven `pom.xml` that lists the module, or the Gradle `settings.gradle(.kts)` of its build) — use `--project-root` to override
 - Use `--method` with a file path to export a single API endpoint — great for quick lookups
 - To export several controllers, pass all their files to one `apilot export` — much cheaper than one run per file
 

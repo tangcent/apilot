@@ -847,7 +847,7 @@ func TestFindProjectRoot_MultiModule(t *testing.T) {
 	if err := os.MkdirAll(subDir, 0755); err != nil {
 		t.Fatalf("Failed to create subdirectory: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "pom.xml"), []byte{}, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "pom.xml"), []byte(pomListing("user-service")), 0644); err != nil {
 		t.Fatalf("Failed to create parent pom.xml: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(moduleDir, "pom.xml"), []byte{}, 0644); err != nil {
@@ -858,8 +858,8 @@ func TestFindProjectRoot_MultiModule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
-	if root != moduleDir {
-		t.Errorf("Expected nearest root %q, got %q", moduleDir, root)
+	if root != tmpDir {
+		t.Errorf("Expected topmost aggregator %q, got %q", tmpDir, root)
 	}
 }
 
@@ -873,6 +873,9 @@ func TestFindProjectRoot_GradleMultiModule(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmpDir, "build.gradle"), []byte{}, 0644); err != nil {
 		t.Fatalf("Failed to create root build.gradle: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.gradle"), []byte("include 'user-service'"), 0644); err != nil {
+		t.Fatalf("Failed to create root settings.gradle: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(moduleDir, "build.gradle"), []byte{}, 0644); err != nil {
 		t.Fatalf("Failed to create module build.gradle: %v", err)
 	}
@@ -881,8 +884,8 @@ func TestFindProjectRoot_GradleMultiModule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
-	if root != moduleDir {
-		t.Errorf("Expected nearest root %q, got %q", moduleDir, root)
+	if root != tmpDir {
+		t.Errorf("Expected topmost aggregator %q, got %q", tmpDir, root)
 	}
 }
 

@@ -411,11 +411,17 @@ var projectRootIndicators = []string{
 	"pyproject.toml",
 }
 
+// findProjectRoot returns the project root of a source file that sits in dir:
+// the nearest directory at or above dir with a build file, lifted to the
+// topmost aggregator when that directory is a module of a multi-module build
+// (see topmostAggregator). The nearest directory alone would leave the sibling
+// modules a controller depends on outside the project, to be looked up in the
+// dependency index one type at a time.
 func findProjectRoot(dir string) (string, error) {
 	for {
 		for _, indicator := range projectRootIndicators {
 			if _, err := os.Stat(filepath.Join(dir, indicator)); err == nil {
-				return dir, nil
+				return topmostAggregator(dir), nil
 			}
 		}
 		parent := filepath.Dir(dir)
@@ -816,7 +822,9 @@ func printExportHelp() {
 	fmt.Println("  source-path can be a directory, or one or more source files.")
 	fmt.Println("  When files are given, the project root is auto-detected by walking up")
 	fmt.Println("  to find pom.xml, build.gradle, go.mod, package.json, etc.")
-	fmt.Println("  For multi-module projects, the nearest directory with an indicator is used.")
+	fmt.Println("  For multi-module projects, the topmost aggregator is used: the directory")
+	fmt.Println("  whose pom.xml lists the module, or that holds the settings.gradle(.kts)")
+	fmt.Println("  of its Gradle build. A project that no build above lists keeps its own.")
 	fmt.Println("  All files must belong to the same project; use --project-root otherwise.")
 	fmt.Println("  Files of one project are exported in one run, sharing one parse of the")
 	fmt.Println("  project and one dependency lookup session.")

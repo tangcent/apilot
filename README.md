@@ -149,7 +149,9 @@ apilot export <source-path> [flags]
   source-path can be a directory, or one or more source files.
   When files are given, the project root is auto-detected by walking up
   to find pom.xml, build.gradle, go.mod, package.json, etc.
-  For multi-module projects, the nearest directory with an indicator is used.
+  For multi-module projects, the topmost aggregator is used: the directory
+  whose pom.xml lists the module, or that holds the settings.gradle(.kts)
+  of its Gradle build. A project that no build above lists keeps its own.
   All files must belong to the same project; use --project-root otherwise.
 
 Flags:
@@ -313,8 +315,25 @@ dependency lookups, once, where one run per file would repeat both. The
 document holds the endpoints in the order of a directory export, whatever the
 order of the arguments.
 
-The files must belong to one project. When they sit in different modules, each
-with its own build file, name the root they share with `--project-root`.
+The files must belong to one project. The project root of a file starts at the
+nearest directory with a build file and climbs while the build above declares
+that directory as one of its modules, up to the topmost aggregator:
+
+- **Maven**: a `pom.xml` whose `<modules>`, in the project or in a profile, lists
+  the directory. A module path may be nested (`services/user`) or climb
+  (`../user`). The pom is looked for in every ancestor and in the place the
+  module's `<parent><relativePath>` names.
+- **Gradle**: the nearest `settings.gradle` or `settings.gradle.kts` at or above
+  the directory, as Gradle itself finds the root of a build. The directory that
+  holds it must also have a `build.gradle(.kts)`. The `include` statements are
+  not read.
+
+The controllers of every module of a repository then share one root, so the
+types they take from their sibling modules are read from the sources instead of
+being looked up in the dependency index, and files of different modules can be
+exported in one run. A project that no build above lists keeps its nearest
+directory as its root. When files still belong to different projects, or the
+detected root is not the one wanted, name it with `--project-root`.
 `--method` applies to every selected file.
 
 ### Machine-readable JSON
