@@ -82,6 +82,13 @@ func NewMavenDependencyResolver() (*MavenDependencyResolver, error) {
 	}, nil
 }
 
+// SetRunner replaces how the resolver reaches the indexer CLI: run receives the
+// arguments of one invocation and returns what the CLI printed. It lets a test
+// script the indexer's answers, and count the lookups made, without the tool.
+func (r *MavenDependencyResolver) SetRunner(run func(args ...string) ([]byte, error)) {
+	r.run = run
+}
+
 // SetProjectPath names the project whose dependency tree pins class versions.
 func (r *MavenDependencyResolver) SetProjectPath(projectPath string) {
 	r.projectPath = projectPath

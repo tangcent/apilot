@@ -19,6 +19,7 @@ type Parser struct {
 	unresolved           *collector.UnresolvedSet
 	requiredFields       string
 	warnings             []string
+	selection            *collector.FileSelection
 }
 
 // NewParser creates a new JAX-RS parser.
@@ -44,6 +45,15 @@ func (p *Parser) SetUnresolved(u *collector.UnresolvedSet) {
 // collector.RequiredFieldsDefault or collector.RequiredFieldsConstraints.
 func (p *Parser) SetRequiredFields(mode string) {
 	p.requiredFields = mode
+}
+
+// SetSelection limits ExtractResources to the resources declared in the
+// selected files. The type table still holds every class of the parse results,
+// so a selected resource resolves types declared anywhere in the project, but
+// nothing is extracted or resolved for a resource outside the selection.
+// Optional; a nil selection extracts every resource.
+func (p *Parser) SetSelection(selection *collector.FileSelection) {
+	p.selection = selection
 }
 
 // Warnings returns the diagnostics raised by the last ExtractResources call.
@@ -77,6 +87,9 @@ func (p *Parser) ExtractResources(results []parser.ParseResult) []Resource {
 			continue
 		}
 		for _, class := range result.Classes {
+			if !p.selection.Contains(class.FilePath) {
+				continue
+			}
 			if resource := p.extractResource(class, typeResolver); resource != nil {
 				resources = append(resources, *resource)
 			}

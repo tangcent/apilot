@@ -16,6 +16,7 @@ type Parser struct {
 	unresolved           *collector.UnresolvedSet
 	warnings             []string
 	requiredFields       string
+	selection            *collector.FileSelection
 }
 
 // Warnings returns the diagnostics of the last extraction: handler
@@ -48,6 +49,15 @@ func (p *Parser) SetRequiredFields(mode string) {
 	p.requiredFields = mode
 }
 
+// SetSelection limits ExtractControllers to the controllers declared in the
+// selected files. The type table still holds every class of results, so a
+// selected controller resolves types declared anywhere in the project, but
+// nothing is extracted or resolved for a controller outside the selection.
+// Optional; a nil selection extracts every controller.
+func (p *Parser) SetSelection(selection *collector.FileSelection) {
+	p.selection = selection
+}
+
 func (p *Parser) ExtractControllers(results []parser.ParseResult) []Controller {
 	typeResolver := resolver.NewTypeResolver(flattenClasses(results))
 	if p.dependencyResolver != nil {
@@ -66,6 +76,9 @@ func (p *Parser) ExtractControllers(results []parser.ParseResult) []Controller {
 		}
 
 		for _, class := range result.Classes {
+			if !p.selection.Contains(class.FilePath) {
+				continue
+			}
 			if controller := p.extractController(class, typeResolver); controller != nil {
 				controllers = append(controllers, *controller)
 			}

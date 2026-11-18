@@ -753,7 +753,7 @@ func TestFilterEndpointsByFile(t *testing.T) {
 		{Name: "getOrder", Folder: "OrderController", Path: "/orders/{id}", Method: "GET", Protocol: "http"},
 	}
 
-	filtered := filterEndpointsByFile(endpoints, "/project/src/UserController.java")
+	filtered := filterEndpointsByFiles(endpoints, []string{"/project/src/UserController.java"})
 	if len(filtered) != 2 {
 		t.Fatalf("Expected 2 endpoints for UserController, got %d", len(filtered))
 	}
@@ -764,12 +764,29 @@ func TestFilterEndpointsByFile(t *testing.T) {
 	}
 }
 
+func TestFilterEndpointsByFiles_SeveralFiles(t *testing.T) {
+	endpoints := []collector.ApiEndpoint{
+		{Name: "getUser", Folder: "UserController", Path: "/users/{id}", Method: "GET", Protocol: "http"},
+		{Name: "getOrder", Folder: "OrderController", Path: "/orders/{id}", Method: "GET", Protocol: "http"},
+		{Name: "getItem", Folder: "ItemController", Path: "/items/{id}", Method: "GET", Protocol: "http"},
+	}
+
+	filtered := filterEndpointsByFiles(endpoints, []string{"/project/src/UserController.java", "/project/src/ItemController.kt"})
+	var names []string
+	for _, ep := range filtered {
+		names = append(names, ep.Name)
+	}
+	if got := strings.Join(names, ","); got != "getUser,getItem" {
+		t.Fatalf("Expected getUser,getItem, got %s", got)
+	}
+}
+
 func TestFilterEndpointsByFile_NoMatch(t *testing.T) {
 	endpoints := []collector.ApiEndpoint{
 		{Name: "getOrder", Folder: "OrderController", Path: "/orders/{id}", Method: "GET", Protocol: "http"},
 	}
 
-	filtered := filterEndpointsByFile(endpoints, "/project/src/UserController.java")
+	filtered := filterEndpointsByFiles(endpoints, []string{"/project/src/UserController.java"})
 	if len(filtered) != 0 {
 		t.Fatalf("Expected 0 endpoints, got %d", len(filtered))
 	}

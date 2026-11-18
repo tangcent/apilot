@@ -36,6 +36,28 @@ If the flag is not supported or fails, the method returns `nil`.
 }
 ```
 
+When the user exports source files rather than the whole directory, `sourceDir`
+is the root of the project the files belong to, and the files are named in
+`sourceFiles`, as absolute paths:
+
+```json
+{
+  "sourceDir": "/path/to/project",
+  "sourceFile": "/path/to/project/src/UserController.java",
+  "sourceFiles": ["/path/to/project/src/UserController.java"]
+}
+```
+
+`sourceFile` is present only when exactly one file is selected, so a plugin that
+reads only `sourceFile` never takes one file of several for the whole selection.
+Both keys are absent for a directory export.
+
+A plugin may ignore them and return every endpoint of the project: `api-master`
+keeps the endpoints whose `folder` is named after a selected file, without its
+extension. A plugin that reads the whole project, which supplies the types the
+files refer to, but builds endpoints only for the declarations of the selected
+files, does less work.
+
 ### Output (stdout)
 
 The plugin writes a JSON array of `ApiEndpoint` objects:

@@ -137,22 +137,20 @@ func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Cla
 	}
 	defer p.Close()
 
-	var results []parser.ParseResult
-	if ctx.SourceFile != "" {
-		if filepath.Ext(ctx.SourceFile) == ".kt" {
-			return nil, nil, fmt.Errorf("%s is a Kotlin source file but the java collector only parses Java", ctx.SourceFile)
+	// A file-level export parses the whole project all the same, because the
+	// selected files refer to types declared anywhere in it, but the framework
+	// parsers below extract endpoints only for the declarations of the
+	// selected files.
+	selection := ctx.FileSelection()
+	for _, file := range ctx.SelectedFiles() {
+		if filepath.Ext(file) == ".kt" {
+			return nil, nil, fmt.Errorf("%s is a Kotlin source file but the java collector only parses Java", file)
 		}
-		r, parseErr := p.ParseFile(ctx.SourceFile)
-		if parseErr != nil {
-			return nil, nil, fmt.Errorf("failed to parse file %s: %w", ctx.SourceFile, parseErr)
-		}
-		results = []parser.ParseResult{*r}
+	}
 
-		resolverResults, resolverErr := p.ParseDirectory(ctx.SourceDir)
-		if resolverErr == nil {
-			results = append(results, resolverResults...)
-		}
-	} else {
+	var warnings []string
+	var results []parser.ParseResult
+	if selection == nil {
 		results, err = p.ParseDirectory(ctx.SourceDir)
 		if err != nil {
 			// A Kotlin-only project must fail loudly: the Java grammar
@@ -162,6 +160,11 @@ func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Cla
 				return nil, nil, err
 			}
 			return nil, nil, fmt.Errorf("failed to parse directory %s: %w", ctx.SourceDir, err)
+		}
+	} else {
+		results, warnings, err = parseSelectedProject(p, ctx.SourceDir, selection)
+		if err != nil {
+			return nil, nil, err
 		}
 	}
 
@@ -177,7 +180,6 @@ func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Cla
 
 	frameworks := resolveFrameworks(ctx)
 	var endpoints []collector.ApiEndpoint
-	var warnings []string
 	// Only a framework that produced endpoints was actually in use: a project
 	// written for Spring MVC still has its JAX-RS parser run over it.
 	var matched []string
@@ -193,6 +195,7 @@ func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Cla
 		}
 		sm.SetUnresolved(unresolved)
 		sm.SetRequiredFields(requiredFields)
+		sm.SetSelection(selection)
 		before := len(endpoints)
 		controllers := sm.ExtractControllers(results)
 		warnings = append(warnings, sm.Warnings()...)
@@ -215,6 +218,7 @@ func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Cla
 		}
 		jr.SetUnresolved(unresolved)
 		jr.SetRequiredFields(requiredFields)
+		jr.SetSelection(selection)
 		before := len(endpoints)
 		for _, res := range jr.ExtractResources(results) {
 			for _, ep := range res.Endpoints {
@@ -236,6 +240,7 @@ func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Cla
 		}
 		fg.SetUnresolved(unresolved)
 		fg.SetRequiredFields(requiredFields)
+		fg.SetSelection(selection)
 		before := len(endpoints)
 		for _, client := range fg.ExtractClients(results) {
 			for _, ep := range client.Endpoints {
@@ -254,9 +259,7 @@ func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Cla
 	c.frameworks = matched
 	c.mu.Unlock()
 
-	// Deduplicate endpoints by (Folder, Path, Method, Name) to avoid
-	// duplicates when a single file is parsed both individually and as
-	// part of directory scanning for type resolution.
+	// Deduplicate endpoints by (Folder, Path, Method, Name).
 	seen := make(map[string]bool, len(endpoints))
 	deduped := make([]collector.ApiEndpoint, 0, len(endpoints))
 	for _, ep := range endpoints {
@@ -269,6 +272,72 @@ func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Cla
 	return deduped, parsed, nil
 }
 
+// SelectsFiles reports that Collect limits its result to the files a context
+// selects: it extracts and resolves endpoints only for the declarations of
+// those files, so the engine takes the result as it is.
+func (c *JavaCollector) SelectsFiles() bool { return true }
+
+// ParseTypes parses the Java sources under dir and returns their declarations
+// without extracting any endpoint. A collector of another JVM language whose
+// selected files hold no Java needs them only as types its endpoints may refer
+// to.
+func ParseTypes(dir string) ([]parser.Class, error) {
+	p, err := parser.NewParser(parser.ParserOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create java parser: %w", err)
+	}
+	defer p.Close()
+
+	results, err := p.ParseDirectory(dir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse directory %s: %w", dir, err)
+	}
+	var classes []parser.Class
+	for _, r := range results {
+		if r.Error == nil {
+			classes = append(classes, r.Classes...)
+		}
+	}
+	return classes, nil
+}
+
+// parseSelectedProject parses the project under dir for a file-level export.
+//
+// The project is parsed as a directory export parses it, and each selected file
+// is read as part of that parse, once. A selected file the directory walk did
+// not reach, such as one outside dir, is parsed on its own and added. A
+// selected file that cannot be parsed fails the export; a project that cannot
+// be read as a whole leaves the selected files alone, and says so in a
+// warning, because the types declared elsewhere are then unavailable.
+func parseSelectedProject(p *parser.Parser, dir string, selection *collector.FileSelection) ([]parser.ParseResult, []string, error) {
+	var warnings []string
+	results, err := p.ParseDirectory(dir)
+	if err != nil {
+		warnings = append(warnings, fmt.Sprintf(
+			"could not read the project under %s (%v): types declared outside the selected files are not available", dir, err))
+		results = nil
+	}
+
+	paths := make([]string, 0, len(results))
+	for _, r := range results {
+		paths = append(paths, r.FilePath)
+	}
+	for _, file := range selection.Unmatched(paths) {
+		r, parseErr := p.ParseFile(file)
+		if parseErr != nil {
+			return nil, nil, fmt.Errorf("failed to parse file %s: %w", file, parseErr)
+		}
+		results = append(results, *r)
+	}
+
+	for _, r := range results {
+		if r.Error != nil && selection.Contains(r.FilePath) {
+			return nil, nil, fmt.Errorf("failed to parse file %s: %w", r.FilePath, r.Error)
+		}
+	}
+	return results, warnings, nil
+}
+
 // installGuidance tells how to get the indexer CLI.
 const installGuidance = "Install it with `npm install -g maven-indexer-cli` (https://github.com/tangcent/maven-indexer-mcp) and make sure it is on PATH"
 
@@ -276,6 +345,18 @@ const installGuidance = "Install it with `npm install -g maven-indexer-cli` (htt
 type Dependencies struct {
 	resolution collector.DependencyResolution
 	resolver   *maven.MavenDependencyResolver
+}
+
+// NewDependencies returns the active dependency resolution that reads classes
+// through dr. SetupDependencies builds one when the project's build file and
+// the indexer allow it; a caller that brings a resolver of its own, such as a
+// test that scripts the indexer's answers, shares it between collectors the
+// same way. The caller closes the result.
+func NewDependencies(dr *maven.MavenDependencyResolver) *Dependencies {
+	return &Dependencies{
+		resolution: collector.DependencyResolution{State: collector.DependencyResolutionActive},
+		resolver:   dr,
+	}
 }
 
 // SetupDependencies decides whether dependency-based type resolution runs for

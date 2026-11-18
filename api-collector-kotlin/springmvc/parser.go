@@ -5,6 +5,7 @@ import (
 	"path"
 	"strings"
 
+	collector "github.com/tangcent/apilot/api-collector"
 	javadoc "github.com/tangcent/apilot/api-collector-java/doc"
 	javaparser "github.com/tangcent/apilot/api-collector-java/parser"
 	javaspringmvc "github.com/tangcent/apilot/api-collector-java/springmvc"
@@ -16,11 +17,21 @@ import (
 type Parser struct {
 	typeResolver *resolver.Resolver
 	warnings     []string
+	selection    *collector.FileSelection
 }
 
 // NewParser creates a Spring MVC parser backed by the Kotlin type resolver.
 func NewParser(typeResolver *resolver.Resolver) *Parser {
 	return &Parser{typeResolver: typeResolver}
+}
+
+// SetSelection limits ExtractControllers to the controllers declared in the
+// selected files. The type resolver still holds every class of the project, so
+// a selected controller resolves types declared anywhere in it, but nothing is
+// extracted or resolved for a controller outside the selection. Optional; a nil
+// selection extracts every controller.
+func (p *Parser) SetSelection(selection *collector.FileSelection) {
+	p.selection = selection
 }
 
 // Warnings returns non-fatal findings accumulated while extracting.
@@ -38,6 +49,11 @@ func (p *Parser) ExtractControllers(results []ktparser.ParseResult) []Controller
 		}
 		for i := range result.Classes {
 			class := &result.Classes[i]
+			// Only the selected files take part: a same-named class of another
+			// file must not shadow the one that was asked for.
+			if !p.selection.Contains(class.FilePath) {
+				continue
+			}
 			key := class.Package + "." + class.Name
 			if seen[key] {
 				continue

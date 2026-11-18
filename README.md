@@ -146,16 +146,18 @@ After making code changes, just re-run `./scripts/install-local.sh` to rebuild a
 ```
 apilot export <source-path> [flags]
 
-  source-path can be a directory or a single source file.
-  When a file is given, the project root is auto-detected by walking up
+  source-path can be a directory, or one or more source files.
+  When files are given, the project root is auto-detected by walking up
   to find pom.xml, build.gradle, go.mod, package.json, etc.
-  For multi-module projects, the topmost directory with an indicator is used.
+  For multi-module projects, the nearest directory with an indicator is used.
+  All files must belong to the same project; use --project-root otherwise.
 
 Flags:
   --collector      string   Collector name (auto-detected if omitted)
   --formatter      string   Output format: markdown, curl, postman, json, yapi (default: markdown)
   --format         string   Format variant, e.g. simple, detailed (default: simple)
-  --method         string   Filter to a specific method name (used with file-level export)
+  --method         string   Filter to a specific method name (used with file-level export;
+                            applies to every selected file)
   --project-root   string   Override auto-detected project root directory
   --no-deps                 Disable resolving request/response types from dependencies
   --allow-empty             Exit 0 when the collection yields no endpoints (default: fail)
@@ -180,6 +182,9 @@ apilot export ./backend --formatter curl
 
 # Export all APIs from a specific file
 apilot export UserController.java --formatter markdown
+
+# Export several files of one project in one run
+apilot export UserController.java OrderController.java --formatter markdown
 
 # Export a single method from a file
 apilot export UserController.java --method getUser --formatter curl
@@ -296,7 +301,21 @@ no endpoints yet — pass `--allow-empty` to keep the run at exit 0.
 |---------|-------|
 | `apilot export ./project` | All APIs in project |
 | `apilot export UserController.java` | All APIs in that file |
+| `apilot export UserController.java OrderController.java` | All APIs in those files |
 | `apilot export UserController.java --method getUser` | One specific API |
+
+The whole project is read for the types the selected files refer to, but
+endpoints are built, and dependency types looked up, only for the controllers
+the selected files declare. The Java and Kotlin collectors work this way, so
+exporting a few controllers of a large service costs far less than exporting the
+service. Naming the files in one run reads the project, and sets up the
+dependency lookups, once, where one run per file would repeat both. The
+document holds the endpoints in the order of a directory export, whatever the
+order of the arguments.
+
+The files must belong to one project. When they sit in different modules, each
+with its own build file, name the root they share with `--project-root`.
+`--method` applies to every selected file.
 
 ### Machine-readable JSON
 

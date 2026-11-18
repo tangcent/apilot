@@ -78,6 +78,7 @@ func (c *RustCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 3. **Protocol** — Always populate `ApiEndpoint.Protocol`. Use `"http"` for REST endpoints.
 4. **Folder** — Use `ApiEndpoint.Folder` to group related endpoints (maps to Postman folders / Markdown sections).
 5. **Frameworks** — Use `ctx.Frameworks` as a hint to limit which framework parsers run. If empty, run all.
+6. **File selection** — `ctx.SelectedFiles()` names the files of a file-level export, one or several, all inside `ctx.SourceDir`; it is empty for a directory export. A collector may ignore it: the engine then keeps the endpoints whose `Folder` is named after a selected file. A collector that can tell which file declared each endpoint should honour it: parse the whole project, which supplies the types the selected files refer to, but build and resolve endpoints only for the declarations of the selected files (`ctx.FileSelection().Contains(path)` answers per file), and implement `collector.FileSelector` so the engine takes its result as it is.
 
 ---
 

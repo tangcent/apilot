@@ -22,10 +22,25 @@ type CollectContext struct {
 	SourceDir string `json:"sourceDir"`
 
 	// SourceFile is the absolute path to a specific source file when file-level
-	// export is requested. When empty, all files under SourceDir are scanned.
-	// Collectors may use this to optimize parsing (e.g. only parse one file)
-	// or ignore it and rely on post-collection filtering by the engine.
+	// export of exactly one file is requested. When empty, all files under
+	// SourceDir are scanned, unless SourceFiles selects several.
+	//
+	// It is left empty when several files are selected, so a collector that
+	// reads only SourceFile never mistakes one file of many for the whole
+	// selection; read the selection through SelectedFiles.
 	SourceFile string `json:"sourceFile,omitempty"`
+
+	// SourceFiles holds the absolute paths of every selected source file when
+	// file-level export is requested, one or several. When empty, all files
+	// under SourceDir are scanned. The files all belong to the project at
+	// SourceDir.
+	//
+	// A collector may use the selection to limit the work it does: parse the
+	// whole project, which supplies the types the selected files refer to, but
+	// build endpoints only for the declarations of the selected files (see
+	// FileSelection and FileSelector). A collector may also ignore it and rely
+	// on post-collection filtering by the engine.
+	SourceFiles []string `json:"sourceFiles,omitempty"`
 
 	// Frameworks is an optional list of framework hints (e.g. ["spring-mvc", "feign"]).
 	Frameworks []string `json:"frameworks,omitempty"`
