@@ -22,7 +22,11 @@ import (
 // carries its constants as fields.
 // Version 6: a class that extends java.lang.Enum is an enum and carries its
 // constants, as CFR prints a Kotlin enum.
-const cacheSchemaVersion = "6"
+// Version 7: a field or return type that is an array or a qualified name is
+// read instead of skipped, and `String tags[]` is the type `String[]`.
+// Version 8: every declarator of a field declaration is a field, and a varargs
+// parameter is read as an array.
+const cacheSchemaVersion = "8"
 
 // Cache provides file-level caching based on content hash.
 type Cache struct {

@@ -256,7 +256,7 @@ func extractRecordComponents(params *tree_sitter.Node, source []byte) []Field {
 
 	for i := uint(0); i < params.ChildCount(); i++ {
 		child := params.Child(i)
-		if child.Kind() != "formal_parameter" {
+		if child.Kind() != "formal_parameter" && child.Kind() != "spread_parameter" {
 			continue
 		}
 		param := extractParameter(child, source)
@@ -528,8 +528,9 @@ func extractMethod(node *tree_sitter.Node, source []byte) Method {
 		switch child.Kind() {
 		case "identifier":
 			method.Name = child.Utf8Text(source)
-		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type", "void_type":
-			method.ReturnType = child.Utf8Text(source)
+		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type", "void_type",
+			"array_type", "scoped_type_identifier":
+			method.ReturnType = typeNodeText(child, source)
 		case "formal_parameters":
 			method.Parameters = extractParameters(child, source)
 		case "modifiers":
@@ -556,7 +557,7 @@ func extractParameters(node *tree_sitter.Node, source []byte) []Parameter {
 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
-		if child.Kind() == "formal_parameter" {
+		if child.Kind() == "formal_parameter" || child.Kind() == "spread_parameter" {
 			param := extractParameter(child, source)
 			params = append(params, param)
 		}
@@ -565,9 +566,12 @@ func extractParameters(node *tree_sitter.Node, source []byte) []Parameter {
 	return params
 }
 
-// extractParameter extracts a single parameter.
+// extractParameter extracts a single parameter. A varargs parameter
+// (`String... ids`, a spread_parameter) is the array its type spells:
+// `String[]`, which is what the method receives.
 func extractParameter(node *tree_sitter.Node, source []byte) Parameter {
 	param := Parameter{}
+	dimensions := ""
 
 	param.JavaDoc = extractLeadingJavaDoc(node, source)
 	param.Annotations = extractAnnotations(node, source)
@@ -578,13 +582,53 @@ func extractParameter(node *tree_sitter.Node, source []byte) Parameter {
 		switch child.Kind() {
 		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type",
 			"array_type", "scoped_type_identifier":
-			param.Type = child.Utf8Text(source)
+			param.Type = typeNodeText(child, source)
 		case "identifier":
 			param.Name = child.Utf8Text(source)
+		case "variable_declarator":
+			// A varargs parameter keeps its name in a declarator.
+			if name := child.ChildByFieldName("name"); name != nil {
+				param.Name = name.Utf8Text(source)
+			}
+		case "dimensions":
+			// `String tags[]`: the brackets follow the name.
+			dimensions = dimensionSuffix(child)
 		}
+	}
+	param.Type += dimensions
+	if node.Kind() == "spread_parameter" && param.Type != "" {
+		param.Type += "[]"
 	}
 
 	return param
+}
+
+// typeNodeText spells a type node as written, except that an array type is
+// always its element type followed by one `[]` per dimension: `String []`
+// and `String[]` are the same type, and the resolver reads the brackets off
+// the end of the spelling.
+func typeNodeText(node *tree_sitter.Node, source []byte) string {
+	if node.Kind() == "array_type" {
+		element := node.ChildByFieldName("element")
+		dimensions := node.ChildByFieldName("dimensions")
+		if element != nil && dimensions != nil {
+			return typeNodeText(element, source) + dimensionSuffix(dimensions)
+		}
+	}
+	return node.Utf8Text(source)
+}
+
+// dimensionSuffix spells the dimensions node of an array type, or of the
+// brackets written after a variable's name, as one `[]` per dimension. An
+// annotation among the brackets (`String @A []`) is not part of the spelling.
+func dimensionSuffix(dimensions *tree_sitter.Node) string {
+	count := 0
+	for i := uint(0); i < dimensions.ChildCount(); i++ {
+		if dimensions.Child(i).Kind() == "[" {
+			count++
+		}
+	}
+	return strings.Repeat("[]", count)
 }
 
 // extractFields extracts all field declarations from a class body.
@@ -594,9 +638,7 @@ func extractFields(classBody *tree_sitter.Node, source []byte) []Field {
 	for i := uint(0); i < classBody.ChildCount(); i++ {
 		child := classBody.Child(i)
 		if child.Kind() == "field_declaration" {
-			if field := extractField(child, source); field != nil {
-				fields = append(fields, *field)
-			}
+			fields = append(fields, extractFieldDeclaration(child, source, false)...)
 		}
 	}
 
@@ -613,29 +655,25 @@ func extractInterfaceConstants(body *tree_sitter.Node, source []byte) []Field {
 		if child.Kind() != "constant_declaration" {
 			continue
 		}
-		if field := extractFieldDeclaration(child, source, true); field != nil {
-			fields = append(fields, *field)
-		}
+		fields = append(fields, extractFieldDeclaration(child, source, true)...)
 	}
 	return fields
 }
 
-// extractField extracts a single field declaration.
-func extractField(node *tree_sitter.Node, source []byte) *Field {
-	return extractFieldDeclaration(node, source, false)
-}
+// extractFieldDeclaration extracts the fields one declaration of a class
+// declares, or of an interface when inInterface is set, in the order they are
+// written: `String a, b[] = {};` declares two. The fields share the
+// modifiers, the annotations, the doc comment and the element type of the
+// declaration; the brackets after a name and the initializer are each
+// declarator's own.
+func extractFieldDeclaration(node *tree_sitter.Node, source []byte, inInterface bool) []Field {
+	template := Field{JavaDoc: extractLeadingJavaDoc(node, source), RawJavaDoc: rawLeadingJavaDoc(node, source)}
+	template.IsStatic, template.IsFinal = inInterface, inInterface
 
-// extractFieldDeclaration extracts a field declaration of a class, or of an
-// interface when inInterface is set.
-func extractFieldDeclaration(node *tree_sitter.Node, source []byte, inInterface bool) *Field {
-	field := &Field{JavaDoc: extractLeadingJavaDoc(node, source), RawJavaDoc: rawLeadingJavaDoc(node, source)}
-	field.IsStatic, field.IsFinal = inInterface, inInterface
-
-	field.Annotations = extractAnnotations(node, source)
+	template.Annotations = extractAnnotations(node, source)
 
 	var fieldType string
-	var fieldName string
-	var value *tree_sitter.Node
+	var declarators []*tree_sitter.Node
 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -646,40 +684,48 @@ func extractFieldDeclaration(node *tree_sitter.Node, source []byte, inInterface 
 				modChild := child.Child(j)
 				switch modChild.Kind() {
 				case "static":
-					field.IsStatic = true
+					template.IsStatic = true
 				case "final":
-					field.IsFinal = true
+					template.IsFinal = true
 				}
 			}
-		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type":
-			fieldType = child.Utf8Text(source)
+		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type",
+			"array_type", "scoped_type_identifier":
+			fieldType = typeNodeText(child, source)
 		case "variable_declarator":
-			for j := uint(0); j < child.ChildCount(); j++ {
-				vdChild := child.Child(j)
-				if vdChild.Kind() == "identifier" {
-					fieldName = vdChild.Utf8Text(source)
-					break
-				}
-			}
-			// The grammar carries the `= value` part as the declarator's
-			// `value` field (an expression or array_initializer), so initializer
-			// presence is read off that label rather than a node kind.
-			value = child.ChildByFieldName("value")
-			field.HasInitializer = value != nil
+			declarators = append(declarators, child)
 		}
 	}
 
-	if fieldType == "" || fieldName == "" {
+	if fieldType == "" {
 		return nil
 	}
 
-	field.Type = fieldType
-	field.Name = fieldName
-	if field.IsStatic && field.IsFinal && fieldType == "String" {
-		field.Constant = constantInitializer(value, source)
+	var fields []Field
+	for _, declarator := range declarators {
+		name := declarator.ChildByFieldName("name")
+		if name == nil {
+			continue
+		}
+		field := template
+		field.Name = name.Utf8Text(source)
+		field.Type = fieldType
+		// `String tags[]`: the brackets follow the name.
+		if brackets := declarator.ChildByFieldName("dimensions"); brackets != nil {
+			field.Type += dimensionSuffix(brackets)
+		}
+		// The grammar carries the `= value` part as the declarator's
+		// `value` field (an expression or array_initializer), so initializer
+		// presence is read off that label rather than a node kind.
+		value := declarator.ChildByFieldName("value")
+		field.HasInitializer = value != nil
+		if field.IsStatic && field.IsFinal && field.Type == "String" {
+			field.Constant = constantInitializer(value, source)
+		}
+		fields = append(fields, field)
 	}
 
-	return field
+	return fields
 }
 
 // constantInitializer returns the initializer of a String constant as written,
