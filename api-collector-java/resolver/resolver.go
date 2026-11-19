@@ -540,6 +540,20 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 		return model.EmptyObject()
 	}
 
+	// An array serialises as a JSON array of its element type, the same as a
+	// collection does: `String[]` and `List<String>` are one shape, and
+	// `Order[][]` is an array of arrays of Order.
+	if element, ok := strings.CutSuffix(strings.TrimSpace(rawType), "[]"); ok {
+		// A byte[] is the exception: Jackson writes it as one Base64 string,
+		// where `Byte[]` and `List<Byte>` are arrays of numbers. Only the JSON
+		// view is Jackson's; the binding view leaves the array as it is, since
+		// Spring's data binder does not read a byte[] as Base64.
+		if !r.bindingView && element == "byte" {
+			return model.SingleModel(model.JsonTypeString)
+		}
+		return model.ArrayModel(r.ResolveFrom(source, element, typeBindings))
+	}
+
 	if jsonType, ok := primitiveTypes[rawType]; ok {
 		return model.SingleModel(jsonType)
 	}
