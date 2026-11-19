@@ -142,6 +142,8 @@ func extractImports(root *tree_sitter.Node, source []byte) []Import {
 		}
 		text := strings.TrimSpace(child.Utf8Text(source))
 		text = strings.TrimSpace(strings.TrimPrefix(text, "import"))
+		// A semicolon may end the import, as it ends a Java one.
+		text = strings.TrimSpace(strings.TrimSuffix(text, ";"))
 		if idx := strings.Index(text, " as "); idx >= 0 {
 			text = strings.TrimSpace(text[:idx])
 		}
