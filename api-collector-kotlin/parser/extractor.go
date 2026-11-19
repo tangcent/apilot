@@ -482,20 +482,30 @@ func extractFunction(node *tree_sitter.Node, source []byte, filePath string) (*F
 
 	if params := firstChildOfKind(node, "function_value_parameters"); params != nil {
 		var pending []Annotation
+		vararg := false
 		for i := uint(0); i < params.ChildCount(); i++ {
 			child := params.Child(i)
 			switch child.Kind() {
 			case "parameter_modifiers", "modifiers":
-				pendingAnns, _, modErr := parseModifiers(child, source, filePath)
+				pendingAnns, flags, modErr := parseModifiers(child, source, filePath)
 				if modErr != nil {
 					return nil, modErr
 				}
 				pending = append(pending, pendingAnns...)
+				vararg = vararg || flags["vararg"]
 			case "parameter":
 				param, paramErr := extractParameter(child, source, pending)
 				if paramErr != nil {
 					return nil, paramErr
 				}
+				// `vararg ids: String` is declared with the type of one
+				// element; the function receives an array of them, and the
+				// array itself is never null.
+				if vararg && param.Type != "" {
+					param.Type = "Array<" + param.Type + ">"
+					param.Nullable = false
+				}
+				vararg = false
 				// The grammar puts a function parameter's default value
 				// next to the parameter node, not inside it.
 				if i+2 < params.ChildCount() && params.Child(i+1).Kind() == "=" {
