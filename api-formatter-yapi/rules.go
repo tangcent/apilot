@@ -275,7 +275,7 @@ var javaPrimitive = map[string]string{
 	"java.lang.String": "string", "String": "string", "java.lang.CharSequence": "string",
 	"java.lang.Long": "long", "Long": "long", "long": "long", "java.math.BigInteger": "long",
 	"java.lang.Integer": "int", "Integer": "int", "int": "int",
-	"java.lang.Short": "int", "short": "int", "java.lang.Byte": "int", "byte": "int",
+	"java.lang.Short": "int", "Short": "int", "short": "int", "java.lang.Byte": "int", "Byte": "int", "byte": "int",
 	"java.lang.Double": "double", "Double": "double", "double": "double", "java.math.BigDecimal": "double",
 	"java.lang.Float": "float", "Float": "float", "float": "float",
 	"java.lang.Boolean": "boolean", "Boolean": "boolean", "boolean": "boolean",
