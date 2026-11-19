@@ -540,6 +540,13 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 		return model.EmptyObject()
 	}
 
+	// An array serialises as a JSON array of its element type, the same as a
+	// collection does: `String[]` and `List<String>` are one shape, and
+	// `Order[][]` is an array of arrays of Order.
+	if element, ok := strings.CutSuffix(strings.TrimSpace(rawType), "[]"); ok {
+		return model.ArrayModel(r.ResolveFrom(source, element, typeBindings))
+	}
+
 	if jsonType, ok := primitiveTypes[rawType]; ok {
 		return model.SingleModel(jsonType)
 	}
