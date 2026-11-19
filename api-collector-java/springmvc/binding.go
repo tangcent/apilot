@@ -66,7 +66,9 @@ func ClassifyImplicit(typeName string, annotations []string, isEnum func(string)
 	simpleOrEnum := func(t string) bool {
 		return simpleValueTypes[simpleName(t)] || (isEnum != nil && isEnum(t))
 	}
-	base, args := splitType(typeName)
+	// Spring binds an Optional parameter as the type it holds, and leaves it
+	// empty when the request has no value for it.
+	base, args := splitType(unwrapOptional(typeName))
 	simple := simpleName(base)
 	element := ""
 	switch {
@@ -101,9 +103,11 @@ func ClassifyImplicit(typeName string, annotations []string, isEnum func(string)
 }
 
 // ElementType returns the element type of a collection or array type, or the
-// type itself when it is neither.
+// type itself when it is neither. An Optional is looked through: a parameter of
+// type `Optional<List<MultipartFile>>` holds files, as one of type
+// `List<MultipartFile>` does.
 func ElementType(typeName string) string {
-	base, args := splitType(typeName)
+	base, args := splitType(unwrapOptional(typeName))
 	switch {
 	case strings.HasSuffix(base, "[]"):
 		return strings.TrimSpace(strings.TrimSuffix(base, "[]"))
@@ -227,6 +231,16 @@ func isOptionalType(typeName string) bool {
 	return base == "Optional" || base == "java.util.Optional"
 }
 
+// unwrapOptional returns T of a type spelled `Optional<T>`, and any other type
+// as written.
+func unwrapOptional(typeName string) string {
+	base, args := splitType(typeName)
+	if isOptionalType(base) && len(args) == 1 {
+		return args[0]
+	}
+	return strings.TrimSpace(typeName)
+}
+
 // BoundField is one request parameter a model attribute is bound from.
 type BoundField struct {
 	Name        string
@@ -301,6 +315,13 @@ func SortFields() []BoundField {
 	return PageableFields()[2:]
 }
 
+// isFileList reports whether a resolved property is a collection or an array
+// of multipart files. The resolver answers a MultipartFile with a single value
+// named after it.
+func isFileList(m *model.ObjectModel) bool {
+	return m.IsArray() && m.Items.IsSingle() && m.Items.TypeName == "MultipartFile"
+}
+
 // maxModelDepth bounds how deep nested objects are flattened; a type that
 // refers back to itself would otherwise expand forever.
 const maxModelDepth = 3
@@ -325,9 +346,15 @@ func appendModelFields(out *[]BoundField, prefix string, m *model.ObjectModel, d
 				enum = append(enum, value)
 			}
 		}
+		typeName := field.Model.TypeName
+		if isFileList(field.Model) {
+			// The type is how the collector tells a part of a multipart request
+			// from a value: `array` would hide it.
+			typeName = "MultipartFile[]"
+		}
 		*out = append(*out, BoundField{
 			Name:        path,
-			TypeName:    field.Model.TypeName,
+			TypeName:    typeName,
 			Required:    field.Required,
 			Default:     field.DefaultValue,
 			Description: field.Comment,
