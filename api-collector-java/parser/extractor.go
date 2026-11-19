@@ -88,6 +88,7 @@ func extractClass(node *tree_sitter.Node, source []byte) Class {
 			if class.IsEnum {
 				class.EnumConstants = decompiledEnumConstants(child, source)
 				class.EnumConstantDocs = make([]string, len(class.EnumConstants))
+				class.EnumJsonValue = declaresJsonValue(class.Methods, class.Fields)
 			}
 			break
 		}
@@ -193,7 +194,8 @@ func extractInterface(node *tree_sitter.Node, source []byte) Class {
 // extractEnum reads an enum declaration: its name and its constants. The
 // fields and methods of its body are not read: Spring binds a request
 // parameter to an enum by the name of a constant, so the constants are the
-// values it accepts.
+// values it accepts. Only whether a member of the body carries @JsonValue is
+// kept, because that changes the value Jackson writes (see Class.EnumJsonValue).
 func extractEnum(node *tree_sitter.Node, source []byte) Class {
 	enum := Class{IsEnum: true, JavaDoc: extractLeadingJavaDoc(node, source), RawJavaDoc: rawLeadingJavaDoc(node, source)}
 	enum.Annotations = extractAnnotations(node, source)
@@ -206,18 +208,66 @@ func extractEnum(node *tree_sitter.Node, source []byte) Class {
 			}
 		case "enum_body":
 			for j := uint(0); j < child.ChildCount(); j++ {
-				constant := child.Child(j)
-				if constant.Kind() != "enum_constant" {
-					continue
-				}
-				if name := constant.ChildByFieldName("name"); name != nil {
-					enum.EnumConstants = append(enum.EnumConstants, name.Utf8Text(source))
-					enum.EnumConstantDocs = append(enum.EnumConstantDocs, extractLeadingJavaDoc(constant, source))
+				member := child.Child(j)
+				switch member.Kind() {
+				case "enum_constant":
+					if name := member.ChildByFieldName("name"); name != nil {
+						enum.EnumConstants = append(enum.EnumConstants, name.Utf8Text(source))
+						enum.EnumConstantDocs = append(enum.EnumConstantDocs, extractLeadingJavaDoc(member, source))
+					}
+				case "enum_body_declarations":
+					enum.EnumJsonValue = membersDeclareJsonValue(member, source)
 				}
 			}
 		}
 	}
 	return enum
+}
+
+// membersDeclareJsonValue reports whether a field or a method among the
+// declarations of an enum body carries @JsonValue.
+func membersDeclareJsonValue(declarations *tree_sitter.Node, source []byte) bool {
+	for i := uint(0); i < declarations.ChildCount(); i++ {
+		member := declarations.Child(i)
+		switch member.Kind() {
+		case "field_declaration", "method_declaration":
+			if HasJsonValue(extractAnnotations(member, source)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// declaresJsonValue reports whether a field or a method of an enum carries
+// @JsonValue.
+func declaresJsonValue(methods []Method, fields []Field) bool {
+	for _, m := range methods {
+		if HasJsonValue(m.Annotations) {
+			return true
+		}
+	}
+	for _, f := range fields {
+		if HasJsonValue(f.Annotations) {
+			return true
+		}
+	}
+	return false
+}
+
+// HasJsonValue reports whether annotations include an @JsonValue that is
+// switched on: @JsonValue(false) turns the member off again.
+func HasJsonValue(annotations []Annotation) bool {
+	for _, ann := range annotations {
+		name := ann.Name
+		if i := strings.LastIndex(name, "."); i >= 0 {
+			name = name[i+1:]
+		}
+		if name == "JsonValue" && strings.TrimSpace(ann.Params["value"]) != "false" {
+			return true
+		}
+	}
+	return false
 }
 
 // extractRecord extracts a record declaration. Its components become fields;

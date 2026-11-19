@@ -154,7 +154,7 @@ func (r *TypeResolver) constantClass(source parser.Class, name string) (parser.C
 		return parser.Class{}, false
 	}
 	if c := r.dependencyResolver.ResolveClass(key); c != nil {
-		r.register(*c, key)
+		r.registerDependency(*c, key)
 		return *c, true
 	}
 	return parser.Class{}, false

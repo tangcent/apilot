@@ -22,7 +22,8 @@ import (
 // carries its constants as fields.
 // Version 6: a class that extends java.lang.Enum is an enum and carries its
 // constants, as CFR prints a Kotlin enum.
-const cacheSchemaVersion = "6"
+// Version 7: an enum records whether it declares @JsonValue.
+const cacheSchemaVersion = "7"
 
 // Cache provides file-level caching based on content hash.
 type Cache struct {
