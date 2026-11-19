@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	collector "github.com/tangcent/apilot/api-collector"
 	javadoc "github.com/tangcent/apilot/api-collector-java/doc"
@@ -144,16 +145,20 @@ type DependencyResolver interface {
 
 // TypeResolver expands Java type spellings into object models.
 //
-// Classes are indexed under their package-qualified name, so two declarations
-// sharing a simple name in different packages coexist instead of overwriting
-// each other. Which one a simple name denotes is decided per compilation unit
-// by resolveSimpleName, following JLS 6.5.5.1 and 6.4.1.
+// Classes are indexed under their qualified name, the package followed by the
+// classes a nested class is declared in, so two declarations sharing a simple
+// name in different packages or in different classes coexist instead of
+// overwriting each other. Which one a simple name denotes is decided per
+// compilation unit by resolveSimpleName, following JLS 6.5.5.1 and 6.4.1.
 type TypeResolver struct {
 	classRegistry      map[string]parser.Class // qualified name -> declaration
 	bySimpleName       map[string][]string     // simple name -> qualified names, sorted
 	byFile             map[string][]string     // compilation unit -> qualified names declared there
 	depBySimpleName    map[string][]string     // bySimpleName for the classes read from dependencies (see registerDependency)
+	nestedByName       map[string][]string     // simple name -> qualified names of the nested classes carrying it, scanned or read, sorted
+	scannedKeys        map[string]bool         // qualified names of the classes of the scanned sources
 	scannedPackages    map[string]bool         // packages that a class of the scanned sources declares
+	supertypeOf        map[string]bool         // classes whose supertype names are being resolved (see memberTypeInScope)
 	allTypeParams      map[string]bool
 	resolving          map[string]bool
 	dependencyResolver DependencyResolver
@@ -183,7 +188,10 @@ func NewTypeResolver(classes []parser.Class) *TypeResolver {
 		resolving:     make(map[string]bool),
 
 		depBySimpleName: make(map[string][]string),
+		nestedByName:    make(map[string][]string),
+		scannedKeys:     make(map[string]bool),
 		scannedPackages: make(map[string]bool),
+		supertypeOf:     make(map[string]bool),
 	}
 	for _, c := range classes {
 		r.register(c, qualifiedName(c))
@@ -191,18 +199,20 @@ func NewTypeResolver(classes []parser.Class) *TypeResolver {
 	return r
 }
 
-// qualifiedName returns the registry key of a declaration.
+// qualifiedName returns the registry key of a declaration: its package, the
+// classes it is nested in and its name.
 func qualifiedName(c parser.Class) string {
-	if c.Package == "" {
-		return c.Name
-	}
-	return c.Package + "." + c.Name
+	return c.QualifiedName()
 }
 
 // register indexes a declaration of the scanned sources under key.
 func (r *TypeResolver) register(c parser.Class, key string) {
 	r.classRegistry[key] = c
 	r.bySimpleName[c.Name] = appendKey(r.bySimpleName[c.Name], key)
+	if c.Outer != "" {
+		r.nestedByName[c.Name] = appendKey(r.nestedByName[c.Name], key)
+	}
+	r.scannedKeys[key] = true
 	r.scannedPackages[c.Package] = true
 	if c.FilePath != "" {
 		r.byFile[c.FilePath] = appendKey(r.byFile[c.FilePath], key)
@@ -220,9 +230,47 @@ func (r *TypeResolver) register(c parser.Class, key string) {
 // dependencies are indexed apart from those, and answer only after them: a
 // class a library declares must not stand in for a class of the project that
 // has the same simple name.
+//
+// The source a class was read from declares the classes nested in it as well,
+// and a name that denotes one of them is not asked of the dependencies again:
+// the indexer holds top-level classes only. A resolver that kept them says so
+// through siblingReader, and they are registered under their own qualified
+// names with the class. Another top-level class of the same source is not: it
+// is asked for on its own, as it always was.
 func (r *TypeResolver) registerDependency(c parser.Class, key string) {
+	r.indexDependency(c, key)
+	reader, ok := r.dependencyResolver.(siblingReader)
+	if !ok {
+		return
+	}
+	for _, sibling := range reader.Siblings(key) {
+		// The declarations already held win: a sibling that the scanned sources
+		// or an earlier answer declare under the same name is not replaced.
+		if siblingKey := qualifiedName(sibling); siblingKey != "" {
+			if _, held := r.classRegistry[siblingKey]; !held {
+				r.indexDependency(sibling, siblingKey)
+			}
+		}
+	}
+}
+
+// siblingReader is implemented by a dependency resolver that keeps the classes
+// nested in a class when it reads the class from a source.
+type siblingReader interface {
+	// Siblings returns the classes nested in the class className was read from,
+	// or, for a nested class, those of the class that declares it and that class
+	// too. Each carries its package and Outer, so it can be registered under its
+	// qualified name.
+	Siblings(className string) []parser.Class
+}
+
+// indexDependency holds a class read from the dependencies under key.
+func (r *TypeResolver) indexDependency(c parser.Class, key string) {
 	r.classRegistry[key] = c
 	r.depBySimpleName[c.Name] = appendKey(r.depBySimpleName[c.Name], key)
+	if c.Outer != "" {
+		r.nestedByName[c.Name] = appendKey(r.nestedByName[c.Name], key)
+	}
 	for _, tp := range c.TypeParameters {
 		r.allTypeParams[tp] = true
 	}
@@ -352,7 +400,7 @@ func (r *TypeResolver) seeEnum(source parser.Class, ref string) (parser.Class, b
 	// The name enumClass looked up, in the view that sees enums.
 	defer r.enterBindingView()()
 	key := r.resolveSimpleName(source, strings.TrimSpace(ref))
-	if _, known := r.classRegistry[key]; known || !strings.Contains(key, ".") || isPlatformName(key) {
+	if _, known := r.classRegistry[key]; known || !strings.Contains(key, ".") || isPlatformName(key) || r.memberOfScanned(key) {
 		return parser.Class{}, false
 	}
 	class := r.dependencyClass(key)
@@ -386,15 +434,20 @@ func (r *TypeResolver) ResolveForBinding(source parser.Class, rawType string, ty
 }
 
 // resolveSimpleName maps a type name as written in source to the registry key
-// it denotes, following JLS 6.5.5.1 and 6.4.1: a declaration in the same
-// compilation unit shadows a single-type import, which shadows a declaration
-// in the same package, which shadows an import-on-demand.
+// it denotes, following JLS 6.5.5.1 and 6.4.1: a member type of the class that
+// declares source, or of a class around it, shadows a declaration in the same
+// compilation unit, which shadows a single-type import, which shadows a
+// declaration in the same package, which shadows an import-on-demand.
 //
 // The result doubles as the name to keep resolving with, so an import of a
 // type whose body is not among the scanned sources still selects the imported
 // type instead of a same-named class that happens to sit elsewhere in the
 // project.
 func (r *TypeResolver) resolveSimpleName(source parser.Class, name string) string {
+	name = canonicalName(name)
+	if strings.Contains(name, ".") {
+		return r.resolveQualified(source, name, r.resolveSimpleName)
+	}
 	if key, found := r.inScope(source, name); found {
 		return key
 	}
@@ -407,8 +460,193 @@ func (r *TypeResolver) resolveSimpleName(source parser.Class, name string) strin
 	return name
 }
 
+// canonicalName spells the name of a nested class the way source does. A
+// decompiler may print the class Inner of Outer as `Outer$Inner`, the binary
+// name, and the Kotlin compiler names it so; a name written with `.` is the
+// one the registry holds. A `$` that the name does not use between two names, as
+// in `$Gson$Types` or `Outer$1`, is not a separator and the name is left alone.
+func canonicalName(name string) string {
+	if !strings.Contains(name, "$") {
+		return name
+	}
+	parts := strings.Split(name, "$")
+	for _, part := range parts {
+		if part == "" || strings.HasSuffix(part, ".") {
+			return name
+		}
+		if first, _ := utf8.DecodeRuneInString(part); !unicode.IsLetter(first) && first != '_' {
+			return name
+		}
+	}
+	return strings.Join(parts, ".")
+}
+
+// canonicalType applies canonicalName to every name a type spelling holds:
+// `List<Outer$Inner>` is `List<Outer.Inner>`.
+func canonicalType(rawType string) string {
+	if !strings.Contains(rawType, "$") {
+		return rawType
+	}
+	var out strings.Builder
+	start := -1
+	flush := func(end int) {
+		if start >= 0 {
+			out.WriteString(canonicalName(rawType[start:end]))
+			start = -1
+		}
+	}
+	for i, ch := range rawType {
+		if unicode.IsLetter(ch) || unicode.IsDigit(ch) || ch == '_' || ch == '$' || ch == '.' {
+			if start < 0 {
+				start = i
+			}
+			continue
+		}
+		flush(i)
+		out.WriteRune(ch)
+	}
+	flush(len(rawType))
+	return out.String()
+}
+
+// resolveQualified resolves a dotted name. A name that starts with a package, as
+// com.example.Order does, denotes itself. A name that starts with a class,
+// Outer.Inner, denotes the member type Inner of the class Outer stands for in
+// source, however Outer is reached: resolveHead says which class that is, and
+// the registry key of the member is the key of the class followed by its name.
+// A package starts with a lower-case letter and a class does not, which is as
+// far as the spelling goes: a name whose first part resolves to nothing denotes
+// itself.
+func (r *TypeResolver) resolveQualified(source parser.Class, name string, resolveHead func(parser.Class, string) string) string {
+	head, rest, _ := strings.Cut(name, ".")
+	if first, _ := utf8.DecodeRuneInString(head); head == "" || unicode.IsLower(first) {
+		return name
+	}
+	key := resolveHead(source, head)
+	if key == head {
+		return name
+	}
+	for _, segment := range strings.Split(rest, ".") {
+		key = r.memberKey(key, segment)
+	}
+	return key
+}
+
+// memberKey returns the registry key of the member type that segment names in
+// the class registered under key, declared there or inherited from a
+// supertype. A member that nothing holds is spelled as a nested declaration
+// would be, so that the dependencies can be asked for it.
+func (r *TypeResolver) memberKey(key, segment string) string {
+	if class, found := r.classRegistry[key]; found {
+		if member, found := r.memberOf(class, key, segment, map[string]bool{}); found {
+			return member
+		}
+	}
+	return key + "." + segment
+}
+
+// memberTypeInScope returns the registry key of the member type that name
+// denotes inside source: one declared or inherited by the class that declares
+// source, or by a class around it, the innermost first (JLS 6.4.1 and 8.5). A
+// member type shadows everything the compilation unit declares or imports under
+// the same name, so it is looked for first.
+//
+// A declaration shadows by being there, whether or not the current view reads
+// it: an enum nested in a class is what its name denotes inside that class, and
+// the top-level class of the same name is not.
+func (r *TypeResolver) memberTypeInScope(source parser.Class, name string) (string, bool) {
+	// A member type is a nested declaration that something holds: without one
+	// of that name there is nothing to find, and most names have none.
+	if len(r.nestedByName[name]) == 0 || source.Name == "" {
+		return "", false
+	}
+	for c := source; ; c = r.enclosing(c) {
+		key := qualifiedName(c)
+		// The name of a supertype in the header of a class is outside the body
+		// of the class, where its own member types are not in scope.
+		if !r.supertypeOf[key] {
+			if member, found := r.memberOf(c, key, name, map[string]bool{}); found {
+				return member, true
+			}
+		}
+		if c.Outer == "" {
+			return "", false
+		}
+	}
+}
+
+// enclosing returns the class that a nested class is declared in: its
+// declaration when the resolver holds it, otherwise a declaration that carries
+// the name and the scope of the nested class, which is all that finding the
+// member types of the enclosing class around it needs.
+func (r *TypeResolver) enclosing(c parser.Class) parser.Class {
+	if held, found := r.classRegistry[qualify(c.Package, c.Outer)]; found {
+		return held
+	}
+	outer := parser.Class{Name: c.Outer, Package: c.Package, FilePath: c.FilePath, Imports: c.Imports}
+	if dot := strings.LastIndex(c.Outer, "."); dot >= 0 {
+		outer.Name, outer.Outer = c.Outer[dot+1:], c.Outer[:dot]
+	}
+	return outer
+}
+
+// memberOf returns the member type named name that the class c, registered
+// under key, declares or inherits: the key of a nested declaration, or the key
+// of a member of a superclass or an interface. seen guards a class that names
+// itself among its supertypes.
+func (r *TypeResolver) memberOf(c parser.Class, key, name string, seen map[string]bool) (string, bool) {
+	if seen[key] {
+		return "", false
+	}
+	seen[key] = true
+	if member := key + "." + name; r.isDeclared(member) {
+		return member, true
+	}
+	if r.supertypeOf[key] {
+		return "", false
+	}
+	for _, super := range append([]string{c.SuperClass}, c.Interfaces...) {
+		super = strings.TrimSpace(super)
+		if super == "" {
+			continue
+		}
+		superKey := r.supertypeKey(c, key, super)
+		if superClass, found := r.classRegistry[superKey]; found {
+			if member, found := r.memberOf(superClass, superKey, name, seen); found {
+				return member, true
+			}
+		}
+	}
+	return "", false
+}
+
+// supertypeKey resolves the name of a supertype of c, registered under key, as
+// c's header spells it: in the scope around c, not in c.
+func (r *TypeResolver) supertypeKey(c parser.Class, key, name string) string {
+	r.supertypeOf[key] = true
+	defer delete(r.supertypeOf, key)
+	return r.resolveSimpleName(c, name)
+}
+
+// isDeclared reports whether the resolver holds a declaration under key,
+// whatever the current view reads of it.
+func (r *TypeResolver) isDeclared(key string) bool {
+	_, found := r.classRegistry[key]
+	return found
+}
+
+// memberOfScanned reports whether key names a member of a class of the scanned
+// sources, as com.example.Order.Item does. Such a class holds the types nested
+// in it: one that is not registered is not there, and the dependencies are not
+// asked for it. They would read the class of the project again, from some
+// installed release of it, and answer with that one's.
+func (r *TypeResolver) memberOfScanned(key string) bool {
+	dot := strings.LastIndex(key, ".")
+	return dot >= 0 && r.scannedKeys[key[:dot]]
+}
+
 // inScope returns the registry key an unqualified name denotes through the
-// scope of source: the four steps of JLS 6.4.1 that need no more than the
+// scope of source: the steps of JLS 6.4.1 that need no more than the
 // declarations already held. A qualified name denotes itself; a name that
 // nothing in scope declares is not found.
 func (r *TypeResolver) inScope(source parser.Class, name string) (string, bool) {
@@ -416,9 +654,16 @@ func (r *TypeResolver) inScope(source parser.Class, name string) (string, bool) 
 		return name, true
 	}
 
-	// 1. Same compilation unit: a class declared in the same file.
+	// 0. Member type: a class nested in the class that declares source, in a class
+	// around it, or in a supertype of either.
+	if key, found := r.memberTypeInScope(source, name); found {
+		return key, true
+	}
+
+	// 1. Same compilation unit: a top-level class declared in the same file. A
+	// class nested in one of them is named through it or from inside it.
 	for _, key := range r.byFile[source.FilePath] {
-		if c, found := r.lookup(key); found && c.Name == name {
+		if c, found := r.lookup(key); found && c.Name == name && c.Outer == "" {
 			return key, true
 		}
 	}
@@ -459,9 +704,9 @@ func (r *TypeResolver) inScope(source parser.Class, name string) (string, bool) 
 // parsed without import information (a single file) can only offer the
 // declarations themselves, so accept the only one — or the first of several, in
 // a stable order, which is what an ambiguous reference would have to fall back
-// to anyway.
+// to anyway. A class nested in another is a different matter, see pickByName.
 func (r *TypeResolver) declaredElsewhere(name string) (string, bool) {
-	return r.firstRegistered(r.bySimpleName[name])
+	return r.pickByName(r.bySimpleName[name])
 }
 
 // readElsewhere is declaredElsewhere over the classes already read from the
@@ -476,16 +721,31 @@ func (r *TypeResolver) readElsewhere(name string) (string, bool) {
 	if len(r.bySimpleName[name]) > 0 {
 		return "", false
 	}
-	return r.firstRegistered(r.depBySimpleName[name])
+	return r.pickByName(r.depBySimpleName[name])
 }
 
-func (r *TypeResolver) firstRegistered(keys []string) (string, bool) {
+// pickByName chooses the declaration that a simple name falls back to among the
+// registered ones that carry it, keys in a stable order.
+//
+// A top-level class is what the name denotes unless some scope says otherwise,
+// and the first of several is the answer, as it always was. A class nested in
+// another is named from inside its outer class or through it, so a bare name
+// that no scope declared falls back to one only when it is the only candidate:
+// with two, nothing says which the name means, and the first would be a guess
+// that exports the fields of the wrong class.
+func (r *TypeResolver) pickByName(keys []string) (string, bool) {
+	nested, candidates := "", 0
 	for _, key := range keys {
-		if r.isRegistered(key) {
+		c, found := r.lookup(key)
+		if !found {
+			continue
+		}
+		if c.Outer == "" {
 			return key, true
 		}
+		nested, candidates = key, candidates+1
 	}
-	return "", false
+	return nested, candidates == 1
 }
 
 func (r *TypeResolver) isRegistered(key string) bool {
@@ -514,6 +774,10 @@ func (r *TypeResolver) isRegistered(key string) bool {
 // registerDependency), so each candidate is asked of the dependencies once and
 // later answered from the registry.
 func (r *TypeResolver) resolveName(source parser.Class, name string) string {
+	name = canonicalName(name)
+	if strings.Contains(name, ".") {
+		return r.resolveQualified(source, name, r.resolveName)
+	}
 	if key, found := r.inScope(source, name); found {
 		return key
 	}
@@ -533,7 +797,14 @@ func (r *TypeResolver) resolveName(source parser.Class, name string) string {
 				// another.
 				break
 			}
-			if r.isScannedSource(source) && r.scannedPackages[candidate[:strings.LastIndex(candidate, ".")]] {
+			owner := candidate[:strings.LastIndex(candidate, ".")]
+			if r.isScannedSource(source) && r.scannedPackages[owner] {
+				continue
+			}
+			// A class the resolver holds has its member types registered with it
+			// (see registerDependency): one that is not there is not a member, and
+			// asking would only read the owner again.
+			if r.isDeclared(owner) {
 				continue
 			}
 			if class := r.dependencyClass(candidate); class != nil {
@@ -576,10 +847,10 @@ func (r *TypeResolver) mayBeDependencyClass(name string) bool {
 // dependencyCandidates lists the qualified names an unqualified name may denote
 // through the package of source and the packages it imports on demand, in the
 // order JLS 6.4.1 gives them. The JDK and the Kotlin standard library are left
-// out, as they are when type arguments are qualified (see isPlatformName), and
-// so is an on-demand import of a class (`import com.example.Outer.*`): it
-// imports the types nested in that class, which the index, holding top-level
-// classes only, does not know.
+// out, as they are when type arguments are qualified (see isPlatformName). An
+// on-demand import of a class (`import com.example.Outer.*`) imports the types
+// nested in that class, so its candidates are the nested names of the class;
+// the dependency resolver reads them from the source of the class itself.
 func dependencyCandidates(source parser.Class, name string) []string {
 	var candidates []string
 	add := func(pkg string) {
@@ -600,9 +871,6 @@ func dependencyCandidates(source parser.Class, name string) []string {
 	add(source.Package)
 	for _, imp := range source.Imports {
 		if imp.Static || !imp.OnDemand {
-			continue
-		}
-		if last := lastSegment(imp.Path); last != "" && unicode.IsUpper(rune(last[0])) {
 			continue
 		}
 		add(imp.Path)
@@ -697,6 +965,7 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	if rawType == "" {
 		return model.NullModel()
 	}
+	rawType = canonicalType(rawType)
 
 	if typeBindings != nil {
 		if bound, ok := typeBindings[rawType]; ok {
@@ -758,6 +1027,14 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 					if resolvedModel.Kind == model.KindSingle && resolvedModel.TypeName != arg {
 						resolvedArgs[i] = arg
 					}
+					// The model of a nested class is named by its simple name, which
+					// another nested class may carry in the class that reads the
+					// argument later: spell it by the qualified name, which only it has.
+					if resolvedModel.Kind != model.KindSingle && !resolvedModel.IsArray() && !resolvedModel.IsMap() {
+						if key, nested := r.nestedClassKey(source, arg, typeBindings); nested {
+							resolvedArgs[i] = key
+						}
+					}
 					// A composite model (array/map/object) keeps its structure in
 					// the model, not in TypeName: `array` and `map` are synthetic
 					// placeholders. Binding a type parameter to one of them feeds
@@ -803,6 +1080,8 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 
 	if r.dependencyResolver != nil {
 		typeArgs = r.qualifyTypeArgs(source, typeArgs)
+	} else {
+		typeArgs = r.qualifyNestedTypeArgs(source, typeArgs)
 	}
 
 	if class, found := r.lookup(name); found {
@@ -815,7 +1094,7 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	// resolveName tried; it is asked as written for a resolver that knows
 	// classes by their simple names, unless it is one that cannot be a class of
 	// a library (see mayBeDependencyClass).
-	if r.dependencyResolver != nil && (strings.Contains(name, ".") || r.mayBeDependencyClass(name)) && !r.isRegisteredEnum(name) {
+	if r.dependencyResolver != nil && (strings.Contains(name, ".") || r.mayBeDependencyClass(name)) && !r.isRegisteredEnum(name) && !r.memberOfScanned(name) {
 		if depClass := r.dependencyClass(name); depClass != nil {
 			r.registerDependency(*depClass, name)
 			if r.sees(*depClass) {
@@ -1210,6 +1489,9 @@ func (r *TypeResolver) resolveInheritedFields(class parser.Class, localBindings 
 			resolvedArg := class.SuperClassTypeArgs[i]
 			if bound, ok := localBindings[resolvedArg]; ok {
 				resolvedArg = bound
+			} else {
+				// Written in the subclass, read in the superclass.
+				resolvedArg = r.qualifyNested(class, resolvedArg)
 			}
 			superBindings[tp] = resolvedArg
 		}
@@ -1254,29 +1536,62 @@ func (r *TypeResolver) resolveInheritedFields(class parser.Class, localBindings 
 // up among Wrapper's imports, and a dependency class could only be asked for by
 // its simple name. A declaration of the scanned sources, a single-type import,
 // and a dependency class that the package of source or an import-on-demand
-// declares (see resolveName) qualify a name; JDK and Kotlin types stay as
-// written, since the resolver knows collections and scalars by their simple
-// names.
+// declares (see resolveName) qualify a name, and so does the path of a nested
+// class (`Order.Item`); JDK and Kotlin types stay as written, since the
+// resolver knows collections and scalars by their simple names.
 func (r *TypeResolver) qualifyTypeArgs(source parser.Class, args []string) []string {
+	return r.qualifyArgs(source, args, false)
+}
+
+// qualifyNestedTypeArgs is qualifyTypeArgs for a resolver without dependencies,
+// which qualifies only a nested class: only that can be named differently by the
+// class that reads the argument, because the classes nested in another class
+// are found from inside it or through it, and a bare name falls back to one
+// only when no other nested class carries it. Any other argument stays as
+// written.
+func (r *TypeResolver) qualifyNestedTypeArgs(source parser.Class, args []string) []string {
+	return r.qualifyArgs(source, args, true)
+}
+
+func (r *TypeResolver) qualifyArgs(source parser.Class, args []string, nestedOnly bool) []string {
 	if len(args) == 0 {
 		return args
 	}
 	out := make([]string, len(args))
 	for i, arg := range args {
-		out[i] = r.qualifyTypeName(source, strings.TrimSpace(arg))
+		qualified, changed := r.qualifyTypeName(source, strings.TrimSpace(arg), nestedOnly)
+		out[i] = qualified
+		if nestedOnly && !changed {
+			out[i] = arg
+		}
 	}
 	return out
 }
 
-func (r *TypeResolver) qualifyTypeName(source parser.Class, typeName string) string {
+// qualifyNested spells a type written in source with the qualified name of each
+// nested class it names, and as written otherwise: a type that source writes
+// for a class that reads it elsewhere (a type argument of a supertype, read by
+// the supertype) must not depend on the nested classes in scope in source.
+func (r *TypeResolver) qualifyNested(source parser.Class, typeName string) string {
+	if qualified, changed := r.qualifyTypeName(source, strings.TrimSpace(typeName), true); changed {
+		return qualified
+	}
+	return typeName
+}
+
+// qualifyTypeName spells a type by the qualified names it denotes in source,
+// and reports whether it changed any. With nestedOnly set, only the names of
+// nested classes are replaced.
+func (r *TypeResolver) qualifyTypeName(source parser.Class, typeName string, nestedOnly bool) (string, bool) {
 	if typeName == "" {
-		return typeName
+		return typeName, false
 	}
 	if isWildcard(typeName) {
 		if bound, ok := wildcardUpperBound(typeName); ok {
-			return "? extends " + r.qualifyTypeName(source, bound)
+			qualified, changed := r.qualifyTypeName(source, bound, nestedOnly)
+			return "? extends " + qualified, changed
 		}
-		return typeName
+		return typeName, false
 	}
 	suffix := ""
 	for strings.HasSuffix(typeName, "[]") {
@@ -1284,15 +1599,58 @@ func (r *TypeResolver) qualifyTypeName(source parser.Class, typeName string) str
 		suffix += "[]"
 	}
 	base, args := parseGenericType(typeName)
-	if !strings.Contains(base, ".") {
-		if key := r.resolveName(source, base); key != base && !isPlatformName(key) {
-			base = key
-		}
+	changed := false
+	// Naming a nested class of the project needs no more than the classes held.
+	// The dependencies are asked only for the names that are to be qualified.
+	var key string
+	if nestedOnly {
+		key = r.resolveSimpleName(source, base)
+	} else {
+		key = r.resolveName(source, base)
+	}
+	if key != base && !isPlatformName(key) && (!nestedOnly || r.isNestedKey(key)) {
+		base, changed = key, true
 	}
 	if len(args) > 0 {
-		base += "<" + strings.Join(r.qualifyTypeArgs(source, args), ", ") + ">"
+		qualified := make([]string, len(args))
+		for i, arg := range args {
+			var argChanged bool
+			qualified[i], argChanged = r.qualifyTypeName(source, strings.TrimSpace(arg), nestedOnly)
+			changed = changed || argChanged
+		}
+		base += "<" + strings.Join(qualified, ", ") + ">"
 	}
-	return base + suffix
+	return base + suffix, changed
+}
+
+// isNestedKey reports whether key is the registry key of a nested class.
+func (r *TypeResolver) isNestedKey(key string) bool {
+	c, found := r.classRegistry[key]
+	return found && c.Outer != ""
+}
+
+// maxBindingHops bounds a chain of type parameters bound to one another, so a
+// binding that names itself cannot loop.
+const maxBindingHops = 8
+
+// nestedClassKey returns the registry key of the nested class that the type
+// argument arg, written in source, denotes, looking through the type parameters
+// that arg may be bound to. It reports false for anything else, a generic or
+// array spelling included.
+func (r *TypeResolver) nestedClassKey(source parser.Class, arg string, bindings map[string]string) (string, bool) {
+	for hops := 0; hops < maxBindingHops; hops++ {
+		bound, ok := bindings[arg]
+		if !ok {
+			break
+		}
+		arg = bound
+	}
+	arg = strings.TrimSpace(arg)
+	if arg == "" || strings.ContainsAny(arg, "<[") || isWildcard(arg) {
+		return "", false
+	}
+	key := r.resolveName(source, arg)
+	return key, r.isNestedKey(key)
 }
 
 // isPlatformName reports whether a qualified name belongs to the JDK or the
@@ -1414,7 +1772,10 @@ func (r *TypeResolver) findImplementation(iface parser.Class, key string) (parse
 			continue
 		}
 		for _, ifaceName := range class.Interfaces {
-			if r.resolveSimpleName(class, ifaceName) == key || ifaceName == iface.Name {
+			// The simple name stands for an interface of the scanned sources only
+			// when it is a top-level one: a nested interface has its own key, and
+			// another interface of the same name nested elsewhere is not it.
+			if r.resolveSimpleName(class, ifaceName) == key || (iface.Outer == "" && ifaceName == iface.Name) {
 				return class, candidate, true
 			}
 		}

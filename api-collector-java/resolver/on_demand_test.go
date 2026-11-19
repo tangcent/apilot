@@ -163,7 +163,7 @@ func TestResolve_ImportsOnDemandAreTriedInTheOrderTheyAreWritten(t *testing.T) {
 	}
 }
 
-func TestResolve_NoLookupForAPlatformPackageAClassImportOrAKnownName(t *testing.T) {
+func TestResolve_NoLookupForAPlatformPackageAStaticImportOrAKnownName(t *testing.T) {
 	library := &libraryClasses{classes: map[string]parser.Class{}}
 	// Read from a library, so its own package may be asked.
 	source := parser.Class{
@@ -180,11 +180,12 @@ func TestResolve_NoLookupForAPlatformPackageAClassImportOrAKnownName(t *testing.
 	for _, name := range []string{"T", "String", "Integer", "Object", "Date", "LocalDateTime", "UUID", "List", "Map"} {
 		r.ResolveFrom(source, name, nil)
 	}
-	// Only the package of the source is left to ask, and then only for a name
-	// that may be a class: the platform packages, the class import and the
-	// static import give no candidate.
+	// Only the package of the source and the class import are left to ask, and
+	// then only for a name that may be a class: the platform packages and the
+	// static import give no candidate. The class import names the types nested in
+	// Outer, so the candidate is a nested one.
 	r.ResolveFrom(source, "Unknown", nil)
-	if want := []string{"com.example.app.Unknown", "Unknown"}; !reflect.DeepEqual(library.asked, want) {
+	if want := []string{"com.example.app.Unknown", "com.example.lib.Outer.Unknown", "Unknown"}; !reflect.DeepEqual(library.asked, want) {
 		t.Errorf("asked = %v, want %v", library.asked, want)
 	}
 }
