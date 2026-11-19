@@ -225,8 +225,10 @@ A library class is found by the name the source gives it: a single-type import,
 the package of the source, or an import-on-demand (`import com.example.model.*`).
 Each qualified name that the package of the source or an import-on-demand could
 give an unimported name is asked of the indexer once, the package of the source
-first and then the imports in the order they are written. A class of the project
-with the same simple name is not displaced by a library class.
+first and then the imports in the order they are written. A package that the
+project's own sources declare is not asked, so a library class that sits in a
+package of the project is not found. A class of the project with the same simple
+name is not displaced by a library class.
 
 With maven-indexer-cli 1.2.0 or later, APilot asks the indexer to pin each
 class to the version the project's dependency tree names (`--project-path`),
