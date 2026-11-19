@@ -88,6 +88,27 @@ func TestLoadRulesFailsOnUnreadableInclude(t *testing.T) {
 	}
 }
 
+// A rule names a boxed type by its simple name as often as by its qualified
+// one: `Long` and `Integer` are read, and so are `Short` and `Byte`, which the
+// model holds as an int as well.
+func TestLoadRulesReadsShortAndByteByTheirSimpleNames(t *testing.T) {
+	for _, from := range []string{"Short", "java.lang.Short", "short", "Byte", "java.lang.Byte", "byte"} {
+		project := t.TempDir()
+		writeFile(t, filepath.Join(project, RulesFileName),
+			"json.rule.convert["+from+"]=java.lang.String\n")
+		rules, err := LoadRules(project, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rules.Warnings) != 0 {
+			t.Errorf("convert[%s]: warnings = %v, want none", from, rules.Warnings)
+		}
+		if got := rules.convertType("int"); got != "string" {
+			t.Errorf("convert[%s]: an int converts to %q, want string", from, got)
+		}
+	}
+}
+
 func TestSchemaAppliesRules(t *testing.T) {
 	project := t.TempDir()
 	writeFile(t, filepath.Join(project, RulesFileName),
