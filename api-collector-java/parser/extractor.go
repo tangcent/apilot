@@ -528,8 +528,9 @@ func extractMethod(node *tree_sitter.Node, source []byte) Method {
 		switch child.Kind() {
 		case "identifier":
 			method.Name = child.Utf8Text(source)
-		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type", "void_type":
-			method.ReturnType = child.Utf8Text(source)
+		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type", "void_type",
+			"array_type", "scoped_type_identifier":
+			method.ReturnType = typeNodeText(child, source)
 		case "formal_parameters":
 			method.Parameters = extractParameters(child, source)
 		case "modifiers":
@@ -568,6 +569,7 @@ func extractParameters(node *tree_sitter.Node, source []byte) []Parameter {
 // extractParameter extracts a single parameter.
 func extractParameter(node *tree_sitter.Node, source []byte) Parameter {
 	param := Parameter{}
+	dimensions := ""
 
 	param.JavaDoc = extractLeadingJavaDoc(node, source)
 	param.Annotations = extractAnnotations(node, source)
@@ -578,13 +580,45 @@ func extractParameter(node *tree_sitter.Node, source []byte) Parameter {
 		switch child.Kind() {
 		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type",
 			"array_type", "scoped_type_identifier":
-			param.Type = child.Utf8Text(source)
+			param.Type = typeNodeText(child, source)
 		case "identifier":
 			param.Name = child.Utf8Text(source)
+		case "dimensions":
+			// `String tags[]`: the brackets follow the name.
+			dimensions = dimensionSuffix(child)
 		}
 	}
+	param.Type += dimensions
 
 	return param
+}
+
+// typeNodeText spells a type node as written, except that an array type is
+// always its element type followed by one `[]` per dimension: `String []`
+// and `String[]` are the same type, and the resolver reads the brackets off
+// the end of the spelling.
+func typeNodeText(node *tree_sitter.Node, source []byte) string {
+	if node.Kind() == "array_type" {
+		element := node.ChildByFieldName("element")
+		dimensions := node.ChildByFieldName("dimensions")
+		if element != nil && dimensions != nil {
+			return typeNodeText(element, source) + dimensionSuffix(dimensions)
+		}
+	}
+	return node.Utf8Text(source)
+}
+
+// dimensionSuffix spells the dimensions node of an array type, or of the
+// brackets written after a variable's name, as one `[]` per dimension. An
+// annotation among the brackets (`String @A []`) is not part of the spelling.
+func dimensionSuffix(dimensions *tree_sitter.Node) string {
+	count := 0
+	for i := uint(0); i < dimensions.ChildCount(); i++ {
+		if dimensions.Child(i).Kind() == "[" {
+			count++
+		}
+	}
+	return strings.Repeat("[]", count)
 }
 
 // extractFields extracts all field declarations from a class body.
@@ -635,6 +669,7 @@ func extractFieldDeclaration(node *tree_sitter.Node, source []byte, inInterface 
 
 	var fieldType string
 	var fieldName string
+	var dimensions string
 	var value *tree_sitter.Node
 
 	for i := uint(0); i < node.ChildCount(); i++ {
@@ -651,8 +686,9 @@ func extractFieldDeclaration(node *tree_sitter.Node, source []byte, inInterface 
 					field.IsFinal = true
 				}
 			}
-		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type":
-			fieldType = child.Utf8Text(source)
+		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type",
+			"array_type", "scoped_type_identifier":
+			fieldType = typeNodeText(child, source)
 		case "variable_declarator":
 			for j := uint(0); j < child.ChildCount(); j++ {
 				vdChild := child.Child(j)
@@ -660,6 +696,11 @@ func extractFieldDeclaration(node *tree_sitter.Node, source []byte, inInterface 
 					fieldName = vdChild.Utf8Text(source)
 					break
 				}
+			}
+			// `String tags[]`: the brackets follow the name.
+			dimensions = ""
+			if brackets := child.ChildByFieldName("dimensions"); brackets != nil {
+				dimensions = dimensionSuffix(brackets)
 			}
 			// The grammar carries the `= value` part as the declarator's
 			// `value` field (an expression or array_initializer), so initializer
@@ -673,9 +714,9 @@ func extractFieldDeclaration(node *tree_sitter.Node, source []byte, inInterface 
 		return nil
 	}
 
-	field.Type = fieldType
+	field.Type = fieldType + dimensions
 	field.Name = fieldName
-	if field.IsStatic && field.IsFinal && fieldType == "String" {
+	if field.IsStatic && field.IsFinal && field.Type == "String" {
 		field.Constant = constantInitializer(value, source)
 	}
 
