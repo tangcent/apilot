@@ -578,7 +578,11 @@ func NormalizeModelType(raw string) string {
 		base = "List"
 	case "Array":
 		base = "List"
-	case "IntArray", "ByteArray", "ShortArray", "UByteArray", "UShortArray", "UIntArray":
+	case "ByteArray":
+		// A ByteArray is a JVM byte[], which Jackson writes as one Base64
+		// string; the other primitive arrays are arrays of numbers.
+		base = "byte[]"
+	case "IntArray", "ShortArray", "UByteArray", "UShortArray", "UIntArray":
 		base = "List"
 		if args == nil {
 			args = []string{"Integer"}
