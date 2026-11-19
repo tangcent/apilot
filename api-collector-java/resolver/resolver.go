@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
@@ -156,13 +157,20 @@ type TypeResolver struct {
 	dependencyResolver DependencyResolver
 	unresolved         *collector.UnresolvedSet
 	// bindingView is set while ResolveForBinding expands a model attribute.
-	// Enums take part in that view only (see sees).
+	// Every enum takes part in that view; the JSON view reads only some (see
+	// sees).
 	bindingView bool
 	// requiredFields is a collector.RequiredFields mode; empty means default.
 	requiredFields string
 	// dependencyAnswers holds what dependencyResolver answered for each name,
 	// a miss as nil, so that no name is asked for twice.
 	dependencyAnswers map[string]*parser.Class
+	// sharedKeys holds the keys that two different declarations, one of them an
+	// enum, were registered under: the parsers register a declaration nested in
+	// a class by its package and simple name, so the `Type` nested in Order and
+	// the one nested in Product are one key, and the registry keeps the last.
+	// The JSON view reads no enum under such a key (see lookup).
+	sharedKeys map[string]bool
 }
 
 // SetRequiredFields selects how resolved fields are marked required: one of
@@ -197,6 +205,12 @@ func qualifiedName(c parser.Class) string {
 // dependencies are registered under the name that was looked up, so a
 // subsequent lookup of the same name is answered from the registry.
 func (r *TypeResolver) register(c parser.Class, key string) {
+	if existing, taken := r.classRegistry[key]; taken && (existing.IsEnum || c.IsEnum) && !sameDeclaration(existing, c) {
+		if r.sharedKeys == nil {
+			r.sharedKeys = make(map[string]bool)
+		}
+		r.sharedKeys[key] = true
+	}
 	r.classRegistry[key] = c
 	r.bySimpleName[c.Name] = appendKey(r.bySimpleName[c.Name], key)
 	if c.FilePath != "" {
@@ -205,6 +219,26 @@ func (r *TypeResolver) register(c parser.Class, key string) {
 	for _, tp := range c.TypeParameters {
 		r.allTypeParams[tp] = true
 	}
+}
+
+// sameDeclaration reports whether two registrations are one declaration read
+// twice, such as a file that is parsed once on its own and once with the rest.
+func sameDeclaration(a, b parser.Class) bool {
+	return a.FilePath == b.FilePath && a.IsEnum == b.IsEnum && slices.Equal(a.EnumConstants, b.EnumConstants)
+}
+
+// registerDependency indexes a class read from the dependencies under the name
+// that was looked up. An enum is held under that name only, and is not indexed
+// by its simple name: a reference that no scope declares falls back to the
+// declarations that carry its simple name (see resolveSimpleName), and must not
+// turn into an enum for the sake of some other file that imported one, in place
+// of a type the project declares.
+func (r *TypeResolver) registerDependency(c parser.Class, key string) {
+	if c.IsEnum {
+		r.classRegistry[key] = c
+		return
+	}
+	r.register(c, key)
 }
 
 func appendKey(keys []string, key string) []string {
@@ -225,12 +259,36 @@ func (r *TypeResolver) Class(source parser.Class, name string) (parser.Class, bo
 }
 
 // sees reports whether the current view takes a declaration into account.
-// Enums are read for the binding view, where Spring converts a request
-// parameter to an enum by the name of a constant, so the constants are the
-// values the parameter accepts. The JSON view does not see them: it exports an
-// enum type as it does any type whose declaration was not read.
+//
+// The binding view reads every enum: Spring converts a request parameter to an
+// enum by the name of a constant, so the constants are the values the parameter
+// accepts. The JSON view reads an enum that Jackson writes as the name of its
+// constant, so that the field is a string of those constants. It leaves out an
+// enum Jackson writes in another form (see writesConstantName): the value such
+// a field takes cannot be told from the source, so the JSON view exports that
+// enum as it does any type whose declaration was not read.
 func (r *TypeResolver) sees(c parser.Class) bool {
-	return r.bindingView || !c.IsEnum
+	return r.bindingView || !c.IsEnum || writesConstantName(c)
+}
+
+// writesConstantName reports whether Jackson writes an enum as the name of its
+// constant. It does not when the enum declares @JsonValue, which writes the
+// value of a member instead, nor when @JsonFormat gives it the shape of an
+// object or a number.
+func writesConstantName(enum parser.Class) bool {
+	if enum.EnumJsonValue {
+		return false
+	}
+	for _, ann := range enum.Annotations {
+		if lastSegment(ann.Name) != "JsonFormat" {
+			continue
+		}
+		switch lastSegment(strings.TrimSpace(ann.Params["shape"])) {
+		case "OBJECT", "NUMBER", "NUMBER_INT", "NUMBER_FLOAT":
+			return false
+		}
+	}
+	return true
 }
 
 // lookup returns the declaration registered under key, if the current view
@@ -238,6 +296,12 @@ func (r *TypeResolver) sees(c parser.Class) bool {
 func (r *TypeResolver) lookup(key string) (parser.Class, bool) {
 	c, found := r.classRegistry[key]
 	if !found || !r.sees(c) {
+		return parser.Class{}, false
+	}
+	// Which enum the key stands for is not known, and the constants of the
+	// wrong one are worse than the type name. The binding view keeps reading
+	// it, as it always has.
+	if c.IsEnum && !r.bindingView && r.sharedKeys[key] {
 		return parser.Class{}, false
 	}
 	return c, true
@@ -260,7 +324,7 @@ func (r *TypeResolver) enterBindingView() func() {
 
 // EnumConstants returns the constants of the enum a type name denotes as seen
 // from source, and whether it denotes an enum of the scanned sources at all.
-// Enums take part in the binding view only, so the name is looked up there.
+// Every enum takes part in the binding view, so the name is looked up there.
 func (r *TypeResolver) EnumConstants(source parser.Class, name string) ([]string, bool) {
 	c, found := r.enumClass(source, name)
 	if !found {
@@ -355,6 +419,46 @@ func (r *TypeResolver) dependencyClass(name string) *parser.Class {
 	return class
 }
 
+// fieldEnum returns the enum whose constants a field takes, which is the enum
+// its type names. The JSON view looks through a collection to the enum it
+// holds, and through a type parameter to the enum it is bound to, because the
+// model of the field does: its items are strings of the constants. The values
+// of a map are strings of them as well, but the map lists none, as EasyYapi
+// does: a constraint on the map is not one on its values. A model attribute of
+// the binding view takes its options from its own type only.
+//
+// The field type has been resolved by then, so an enum of the dependencies is
+// registered.
+func (r *TypeResolver) fieldEnum(source parser.Class, typeName string, bindings map[string]string) (parser.Class, bool) {
+	if r.bindingView {
+		return r.enumClass(source, typeName)
+	}
+	return r.valueEnum(source, typeName, bindings)
+}
+
+// valueEnum follows a type the way ResolveFrom does to the enum it ends in.
+func (r *TypeResolver) valueEnum(source parser.Class, typeName string, bindings map[string]string) (parser.Class, bool) {
+	typeName = strings.TrimSpace(typeName)
+	if bound, ok := bindings[typeName]; ok {
+		return r.valueEnum(source, bound, nil)
+	}
+	if isWildcard(typeName) {
+		if bound, ok := wildcardUpperBound(typeName); ok {
+			return r.valueEnum(source, bound, bindings)
+		}
+		return parser.Class{}, false
+	}
+	base, args := parseGenericType(typeName)
+	switch {
+	case base == typeName:
+		c, found := r.lookup(r.resolveSimpleName(source, typeName))
+		return c, found && c.IsEnum
+	case collectionTypes[base] && len(args) > 0:
+		return r.valueEnum(source, args[0], bindings)
+	}
+	return parser.Class{}, false
+}
+
 // ResolveForBinding expands a type the way Spring's data binder sees it when
 // it binds a model attribute from request parameters, rather than the way
 // Jackson writes it: getter-only properties cannot be bound, so they are left
@@ -374,8 +478,11 @@ func (r *TypeResolver) ResolveForBinding(source parser.Class, rawType string, ty
 // type instead of a same-named class that happens to sit elsewhere in the
 // project.
 func (r *TypeResolver) resolveSimpleName(source parser.Class, name string) string {
-	if name == "" || strings.Contains(name, ".") {
+	if name == "" {
 		return name
+	}
+	if strings.Contains(name, ".") {
+		return r.nestedEnumKey(name)
 	}
 
 	// 1. Same compilation unit: a class declared in the same file.
@@ -392,7 +499,7 @@ func (r *TypeResolver) resolveSimpleName(source parser.Class, name string) strin
 			continue
 		}
 		if lastSegment(imp.Path) == name {
-			return imp.Path
+			return r.nestedEnumKey(imp.Path)
 		}
 	}
 
@@ -417,13 +524,62 @@ func (r *TypeResolver) resolveSimpleName(source parser.Class, name string) strin
 	// information (a single file, a dependency source) can only offer the
 	// declarations themselves, so accept the only one — or the first of
 	// several, in a stable order, which is what an ambiguous reference would
-	// have to fall back to anyway.
+	// have to fall back to anyway. A class goes before an enum: the JSON view
+	// did not read enums for a long time, so an enum is taken only where no
+	// class carries the name.
+	enum := ""
 	for _, key := range r.bySimpleName[name] {
-		if r.isRegistered(key) {
+		c, found := r.lookup(key)
+		if !found {
+			continue
+		}
+		if !c.IsEnum {
+			return key
+		}
+		if enum == "" {
+			enum = key
+		}
+	}
+	if enum != "" {
+		return enum
+	}
+
+	return name
+}
+
+// nestedEnumKey returns the registry key of the enum a dotted name reaches
+// through the classes that enclose it, as Order.Status or the import
+// com.example.Order.Status do. The parsers register a nested declaration by its
+// package and simple name like any other (see constantClass), so the dotted name
+// finds nothing by itself. The enum is the one that carries the last segment,
+// with each class before it declared in the same file: that is what a nested
+// declaration is. Any other name is returned as it is.
+func (r *TypeResolver) nestedEnumKey(name string) string {
+	dot := strings.LastIndex(name, ".")
+	if _, found := r.classRegistry[name]; found || dot < 0 {
+		return name
+	}
+	for _, key := range r.bySimpleName[name[dot+1:]] {
+		enum := r.classRegistry[key]
+		if !enum.IsEnum || enum.FilePath == "" {
+			continue
+		}
+		outer := name[:dot]
+		if enum.Package != "" {
+			outer = strings.TrimPrefix(outer, enum.Package+".")
+		}
+		enclosed := true
+		for _, segment := range strings.Split(outer, ".") {
+			c, found := r.classRegistry[qualify(enum.Package, segment)]
+			if !found || c.FilePath != enum.FilePath {
+				enclosed = false
+				break
+			}
+		}
+		if enclosed {
 			return key
 		}
 	}
-
 	return name
 }
 
@@ -632,10 +788,11 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	}
 
 	// An enum of the scanned sources is already known; the JSON view just
-	// does not see it, and a dependency's copy of it would not be seen either.
+	// does not read it when Jackson writes it in a form the constants do not
+	// tell, and a dependency's copy of it would not be read either.
 	if r.dependencyResolver != nil && !r.isRegisteredEnum(name) {
 		if depClass := r.dependencyClass(name); depClass != nil {
-			r.register(*depClass, name)
+			r.registerDependency(*depClass, name)
 			if r.sees(*depClass) {
 				return r.resolveClass(*depClass, name, typeArgs, typeBindings)
 			}
@@ -738,8 +895,8 @@ func fillWildcardArgs(declared, inferred string) (string, bool) {
 
 // resolveClass expands one declaration into an object model.
 func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []string, typeBindings map[string]string) *model.ObjectModel {
-	// Only the binding view reaches an enum: a request parameter names one
-	// of its constants.
+	// An enum is the name of one of its constants, in the binding view and in
+	// the JSON view of an enum Jackson writes that way (see sees).
 	if class.IsEnum {
 		return model.SingleModel(model.JsonTypeString)
 	}
@@ -867,11 +1024,9 @@ func (r *TypeResolver) resolveField(source parser.Class, f parser.Field, localBi
 		Model:    fieldModel,
 		Required: r.fieldRequired(source, f.Annotations),
 	}
-	// In the binding view, an enum field is one of the enum's constants.
-	if r.bindingView {
-		if enum, ok := r.enumClass(source, f.Type); ok {
-			fm.Options = EnumOptions(enum)
-		}
+	// An enum field is one of the enum's constants.
+	if enum, ok := r.fieldEnum(source, f.Type, localBindings); ok {
+		fm.Options = EnumOptions(enum)
 	}
 	javadoc.FieldDocumentationFor(f.Annotations, f.JavaDoc).Normalize().ApplyTo(fm)
 	// Values the field declares in its own way win over the ones its doc
@@ -1226,7 +1381,10 @@ func (r *TypeResolver) findImplementation(iface parser.Class, key string) (parse
 
 	for _, candidate := range keys {
 		class := r.classRegistry[candidate]
-		if class.IsInterface || !r.sees(class) {
+		// The JSON view never took an enum for the implementation of an
+		// interface, and an enum it now reads does not become one: it is one
+		// value of the interface, not the shape every value has.
+		if class.IsInterface || !r.sees(class) || (class.IsEnum && !r.bindingView) {
 			continue
 		}
 		for _, ifaceName := range class.Interfaces {

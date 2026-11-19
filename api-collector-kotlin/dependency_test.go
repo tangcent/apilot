@@ -68,6 +68,17 @@ enum class OrderState(val code: String) {
     }
 }
 `,
+	// Currency declares @JsonValue, so a property typed with it takes what the
+	// getter returns, not the name of an entry (see enum_test.go).
+	"com.example.lib.Currency": `package com.example.lib
+
+import com.fasterxml.jackson.annotation.JsonValue
+
+enum class Currency(@get:JsonValue val symbol: String) {
+    USD("usd"),
+    EUR("eur"),
+}
+`,
 }
 
 // decompiledLibrarySources are classes of the same library that the indexer
@@ -140,6 +151,41 @@ public enum PayChannel {
 
     public String getCode() {
         return this.code;
+    }
+}
+`,
+	// Tier is a Kotlin enum with @JsonValue on its getter, decompiled like
+	// Region.
+	"com.example.lib.Tier": `/*
+ * Decompiled with CFR 0.152.
+ */
+package com.example.lib;
+
+import com.fasterxml.jackson.annotation.JsonValue;
+import kotlin.Metadata;
+import org.jetbrains.annotations.NotNull;
+
+@Metadata(mv={1, 9, 0}, k=1, xi=48)
+public final class Tier
+extends Enum<Tier> {
+    public static final /* enum */ Tier GOLD = new Tier("gold");
+    public static final /* enum */ Tier SILVER = new Tier("silver");
+    private static final /* synthetic */ Tier[] $VALUES;
+    @NotNull
+    private final String code;
+
+    private Tier(String code) {
+        this.code = code;
+    }
+
+    @JsonValue
+    @NotNull
+    public final String getCode() {
+        return this.code;
+    }
+
+    static {
+        $VALUES = tierArray = new Tier[]{Tier.GOLD, Tier.SILVER};
     }
 }
 `,

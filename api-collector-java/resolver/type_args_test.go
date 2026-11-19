@@ -88,25 +88,36 @@ func TestQualifyTypeArgs(t *testing.T) {
 	}
 }
 
-// The JSON view does not see enums, so an enum field of a scanned class misses
-// the class table. It is still a declaration of the project: asking the
-// dependency index for it would read some installed release of the project
-// itself and report it as a dependency type.
+// An enum of the project is a declaration of the project, whether or not the
+// JSON view reads it: asking the dependency index for it would read some
+// installed release of the project itself and report it as a dependency type.
 func TestResolve_AProjectEnumIsNotAskedOfTheDependencies(t *testing.T) {
-	library := &libraryClasses{classes: map[string]parser.Class{
-		"com.example.app.Status": {Name: "Status", Package: "com.example.app", IsEnum: true, EnumConstants: []string{"OPEN"}},
-	}}
-	r := NewTypeResolver([]parser.Class{
-		{Name: "Status", Package: "com.example.app", IsEnum: true, EnumConstants: []string{"OPEN"}},
-		{Name: "Order", Package: "com.example.app", Fields: []parser.Field{{Name: "status", Type: "com.example.app.Status"}}},
-	})
-	r.SetDependencyResolver(library)
-
-	order := r.Resolve("com.example.app.Order", nil)
-	if status := order.Fields["status"].Model; status.TypeName != "com.example.app.Status" {
-		t.Errorf("status = %+v, want the enum's name, as the JSON view exports it", status)
+	tests := []struct {
+		name      string
+		jsonValue bool
+		want      string
+	}{
+		{name: "an enum written as the name of a constant", want: model.JsonTypeString},
+		{name: "an enum the JSON view does not read", jsonValue: true, want: "com.example.app.Status"},
 	}
-	if len(library.asked) != 0 {
-		t.Errorf("the dependencies were asked for %v", library.asked)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			library := &libraryClasses{classes: map[string]parser.Class{
+				"com.example.app.Status": {Name: "Status", Package: "com.example.app", IsEnum: true, EnumConstants: []string{"OPEN"}},
+			}}
+			r := NewTypeResolver([]parser.Class{
+				{Name: "Status", Package: "com.example.app", IsEnum: true, EnumConstants: []string{"OPEN"}, EnumJsonValue: tt.jsonValue},
+				{Name: "Order", Package: "com.example.app", Fields: []parser.Field{{Name: "status", Type: "com.example.app.Status"}}},
+			})
+			r.SetDependencyResolver(library)
+
+			order := r.Resolve("com.example.app.Order", nil)
+			if status := order.Fields["status"].Model; status.TypeName != tt.want {
+				t.Errorf("status = %+v, want %s", status, tt.want)
+			}
+			if len(library.asked) != 0 {
+				t.Errorf("the dependencies were asked for %v", library.asked)
+			}
+		})
 	}
 }

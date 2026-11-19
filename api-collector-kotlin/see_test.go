@@ -163,15 +163,16 @@ func TestSeeTagReadsAnEnumOfADependency(t *testing.T) {
 	}
 
 	body := checkSeeTables(t, endpoints, seeDependencyExpectation, seeDependencyQueryExpectation)
-	// The JSON view exports a property typed with an enum the project does
-	// not declare by the enum's name.
-	if typed := body["typed"]; typed == nil || typed.Model.TypeName != "OrderState" || len(typed.Options) != 0 {
-		t.Errorf("body field typed = %+v, want the enum's name without options", typed)
+	// The JSON view exports a property typed with an enum as a string of its
+	// entries, whether the project or a library declares it (see
+	// enum_test.go).
+	if typed := body["typed"]; typed == nil || typed.Model.TypeName != model.JsonTypeString || !reflect.DeepEqual(describeOptions(typed.Options), seeExpectation["state"]) {
+		t.Errorf("body field typed = %+v, want a string of the enum's entries", typed)
 	}
 	// A Kotlin enum decompiled to a class is an enum all the same: not an
 	// object of its properties.
-	if typed := body["kotlinEnum"]; typed == nil || typed.Model.TypeName != "Region" || typed.Model.Kind != model.KindSingle || len(typed.Options) != 0 {
-		t.Errorf("body field kotlinEnum = %+v, want the enum's name without options", typed)
+	if typed := body["kotlinEnum"]; typed == nil || typed.Model.TypeName != model.JsonTypeString || typed.Model.Kind != model.KindSingle || !reflect.DeepEqual(describeOptions(typed.Options), []string{"NORTH: ", "SOUTH: "}) {
+		t.Errorf("body field kotlinEnum = %+v, want a string of the enum's entries", typed)
 	}
 
 	// The library is asked for each name once by each view, however many
@@ -190,12 +191,10 @@ func TestSeeTagReadsAnEnumOfADependency(t *testing.T) {
 	if len(asked) != len(wantAsked) {
 		t.Errorf("asked = %v, want only %v", library.queried, wantAsked)
 	}
-	// The `@see` lookups report nothing; the enum-typed property is reported
-	// by the JSON view as before.
-	for name := range typeResolver.Unresolved() {
-		if name != "OrderState" && name != "Region" {
-			t.Errorf("unresolved %s; unresolved = %v", name, typeResolver.Unresolved())
-		}
+	// The `@see` lookups report nothing, and the enum-typed properties are
+	// strings.
+	if unresolved := typeResolver.Unresolved(); len(unresolved) != 0 {
+		t.Errorf("unresolved = %v, want none", unresolved)
 	}
 	if warnings := sm.Warnings(); len(warnings) != 0 {
 		t.Errorf("warnings = %q", warnings)

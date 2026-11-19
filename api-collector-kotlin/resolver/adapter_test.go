@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"reflect"
 	"testing"
 
 	ktparser "github.com/tangcent/apilot/api-collector-kotlin/parser"
@@ -287,6 +288,150 @@ func TestResolveFromKotlinTypes(t *testing.T) {
 			t.Fatalf("EnumValues = %v", values)
 		}
 	})
+}
+
+func TestToJavaEnumJsonValue(t *testing.T) {
+	jsonValue := func(target string, params map[string]string) ktparser.Annotation {
+		return ktparser.Annotation{Name: "JsonValue", Params: params, UseSiteTarget: target}
+	}
+	tests := []struct {
+		name  string
+		class ktparser.Class
+		want  bool
+	}{
+		{name: "no annotation", class: ktparser.Class{
+			Fields: []ktparser.Property{testProperty("code", "String")},
+		}},
+		{name: "on a constructor property", class: ktparser.Class{
+			Fields: []ktparser.Property{testProperty("code", "String", jsonValue("", nil))},
+		}, want: true},
+		{name: "on the getter", class: ktparser.Class{
+			Fields: []ktparser.Property{testProperty("code", "String", jsonValue("get", nil))},
+		}, want: true},
+		{name: "on the field", class: ktparser.Class{
+			Fields: []ktparser.Property{testProperty("code", "String", jsonValue("field", nil))},
+		}, want: true},
+		{name: "on the constructor parameter, where Jackson does not read it as the value", class: ktparser.Class{
+			Fields: []ktparser.Property{testProperty("code", "String", jsonValue("param", nil))},
+		}},
+		{name: "on the setter", class: ktparser.Class{
+			Fields: []ktparser.Property{testProperty("code", "String", jsonValue("set", nil))},
+		}},
+		{name: "switched off", class: ktparser.Class{
+			Fields: []ktparser.Property{testProperty("code", "String", jsonValue("", map[string]string{"value": "false"}))},
+		}},
+		{name: "on a function", class: ktparser.Class{
+			Methods: []ktparser.Function{{Name: "toValue", Annotations: []ktparser.Annotation{jsonValue("", nil)}}},
+		}, want: true},
+		{name: "another annotation", class: ktparser.Class{
+			Fields: []ktparser.Property{testProperty("code", "String", testAnnotation("JsonProperty", nil))},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.class.IsEnum = true
+			if got := toJavaEnum(tt.class).EnumJsonValue; got != tt.want {
+				t.Errorf("EnumJsonValue = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	shaped := toJavaEnum(ktparser.Class{
+		IsEnum:      true,
+		Annotations: []ktparser.Annotation{testAnnotation("JsonFormat", map[string]string{"shape": "JsonFormat.Shape.OBJECT"})},
+	})
+	if len(shaped.Annotations) != 1 || shaped.Annotations[0].Params["shape"] != "JsonFormat.Shape.OBJECT" {
+		t.Errorf("the annotations of the enum are not carried over: %+v", shaped.Annotations)
+	}
+}
+
+// A property typed with an enum is a string of its entries, as in a Java
+// declaration of the same shape; an enum whose JSON form is not the name of an
+// entry keeps its type name and is reported unresolved.
+func TestResolveFromEnumsByTheirJSONForm(t *testing.T) {
+	classes := []ktparser.Class{
+		{Name: "Level", Package: "com.example", FilePath: "Level.kt", IsEnum: true, EnumValues: []string{"LOW", "HIGH"}},
+		{
+			Name: "Code", Package: "com.example", FilePath: "Code.kt", IsEnum: true, EnumValues: []string{"X", "Y"},
+			Fields: []ktparser.Property{testProperty("code", "String", testAnnotation("JsonValue", nil))},
+		},
+		{
+			Name: "Shape", Package: "com.example", FilePath: "Shape.kt", IsEnum: true, EnumValues: []string{"CIRCLE"},
+			Annotations: []ktparser.Annotation{testAnnotation("JsonFormat", map[string]string{"shape": "JsonFormat.Shape.OBJECT"})},
+		},
+		{
+			Name: "Form", Package: "com.example", FilePath: "Form.kt",
+			Fields: []ktparser.Property{
+				testProperty("level", "Level"),
+				testProperty("levels", "List<Level>"),
+				testProperty("byName", "Map<String, Level>"),
+				testProperty("code", "Code"),
+				testProperty("shape", "Shape"),
+			},
+		},
+	}
+	r := New(classes)
+	source := classes[len(classes)-1]
+	form := r.ResolveFrom(&source, "Form", nil)
+
+	wantLevels := []string{"LOW", "HIGH"}
+	for _, name := range []string{"level", "levels"} {
+		field := objectField(t, form, name)
+		var got []string
+		for _, option := range field.Options {
+			got = append(got, option.Value.(string))
+		}
+		if !reflect.DeepEqual(got, wantLevels) {
+			t.Errorf("%s options = %v, want %v", name, got, wantLevels)
+		}
+	}
+	if levels := objectField(t, form, "levels").Model; levels.Kind != model.KindArray || levels.Items.TypeName != model.JsonTypeString {
+		t.Errorf("levels = %+v, want an array of strings", levels)
+	}
+	// The values of a map are strings of the entries, and the map lists none.
+	if byName := objectField(t, form, "byName"); !byName.Model.IsMap() || byName.Model.ValueModel.TypeName != model.JsonTypeString || len(byName.Options) != 0 {
+		t.Errorf("byName = %+v, options %v, want a map of strings without options", byName.Model, byName.Options)
+	}
+	for _, name := range []string{"code", "shape"} {
+		field := objectField(t, form, name)
+		if want := map[string]string{"code": "Code", "shape": "Shape"}[name]; field.Model.TypeName != want || len(field.Options) != 0 {
+			t.Errorf("%s = %+v, options %v, want the type name %s", name, field.Model, field.Options, want)
+		}
+	}
+	if got := r.Unresolved(); !reflect.DeepEqual(got, map[string]int{"Code": 1, "Shape": 1}) {
+		t.Errorf("unresolved = %v, want the two enums with another JSON form", got)
+	}
+}
+
+// An enum nested in a class is named through the class, Order.Status, or by an
+// import of that path: it is a string of its entries all the same.
+func TestResolveFromNestedEnum(t *testing.T) {
+	classes := []ktparser.Class{
+		{Name: "Order", Package: "com.example", FilePath: "Order.kt"},
+		{Name: "Status", Package: "com.example", FilePath: "Order.kt", IsEnum: true, EnumValues: []string{"OPEN", "CLOSED"}},
+		{
+			Name: "Holder", Package: "com.other", FilePath: "Holder.kt",
+			Imports: []ktparser.Import{{Path: "com.example.Order.Status"}},
+			Fields: []ktparser.Property{
+				testProperty("imported", "Status"),
+				testProperty("qualified", "com.example.Order.Status"),
+				testProperty("list", "List<com.example.Order.Status>"),
+			},
+		},
+	}
+	r := New(classes)
+	source := classes[len(classes)-1]
+	holder := r.ResolveFrom(&source, "Holder", nil)
+
+	for _, name := range []string{"imported", "qualified", "list"} {
+		field := objectField(t, holder, name)
+		if len(field.Options) != 2 || field.Options[0].Value != "OPEN" || field.Options[1].Value != "CLOSED" {
+			t.Errorf("%s = %+v, options %v, want the entries of the enum", name, field.Model, field.Options)
+		}
+	}
+	if got := r.Unresolved(); len(got) != 0 {
+		t.Errorf("unresolved = %v, want none", got)
+	}
 }
 
 func TestToJavaClassFieldMapping(t *testing.T) {
