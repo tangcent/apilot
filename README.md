@@ -221,6 +221,25 @@ For Java and Kotlin, a class from a library written in Kotlin is read from its
 Kotlin sources; a class without a sources JAR, such as a locally built
 SNAPSHOT, is decompiled.
 
+A library class is found by the name the source gives it: a single-type import,
+the package of the source, or an import-on-demand (`import com.example.model.*`).
+Each qualified name that the package of the source or an import-on-demand could
+give an unimported name is asked of the indexer once, the package of the source
+first and then the imports in the order they are written. A package that the
+project's own sources declare is not asked, so a library class that sits in a
+package of the project is not found. A class of the project with the same simple
+name is not displaced by a library class.
+
+A class nested in another is a class of its own, known by the classes it is
+nested in: `Order.Item` and `Cart.Item` are two classes. Inside `Order`, and in
+a class nested in it or one that extends it, a bare `Item` is the `Item` nested
+in `Order`; elsewhere it is named `Order.Item`, by an import of
+`com.example.Order.Item`, or by `import com.example.Order.*`. A bare name that no
+scope declares is not guessed between two nested classes of that name, and it
+is reported as unresolved. The indexer holds top-level classes only, so a class
+nested in a library class is read from the source of the class that declares
+it, in one call for the class and all that is nested in it.
+
 With maven-indexer-cli 1.2.0 or later, APilot asks the indexer to pin each
 class to the version the project's dependency tree names (`--project-path`),
 but on released CLIs up to 1.2.1 most types are still read from the version

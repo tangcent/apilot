@@ -55,6 +55,48 @@ func extractImports(root *tree_sitter.Node, source []byte) []Import {
 	return imports
 }
 
+// enclosingTypes returns the dotted path of the types a declaration is nested
+// in, outermost first: "Outer.Mid" for a class declared in Mid, which is
+// declared in Outer. It is empty for a top-level declaration.
+//
+// A class declared in a method body is read as one of the types around the
+// method: no other class can name it, and the type that holds the method is as
+// close to where it belongs as the model goes.
+func enclosingTypes(node *tree_sitter.Node, source []byte) string {
+	var names []string
+	for parent := node.Parent(); parent != nil; parent = parent.Parent() {
+		switch parent.Kind() {
+		case "class_declaration", "interface_declaration", "enum_declaration", "record_declaration", "annotation_type_declaration":
+			if name := declaredName(parent, source); name != "" {
+				names = append(names, name)
+			}
+		}
+	}
+	for i, j := 0, len(names)-1; i < j; i, j = i+1, j-1 {
+		names[i], names[j] = names[j], names[i]
+	}
+	return strings.Join(names, ".")
+}
+
+// declaredName returns the name a type declaration gives itself.
+func declaredName(node *tree_sitter.Node, source []byte) string {
+	if name := node.ChildByFieldName("name"); name != nil {
+		return name.Utf8Text(source)
+	}
+	for i := uint(0); i < node.ChildCount(); i++ {
+		if child := node.Child(i); child.Kind() == "identifier" {
+			return child.Utf8Text(source)
+		}
+	}
+	return ""
+}
+
+// qualifiedTypeText returns a qualified type name as written, without the
+// white space the source may put between its parts: `Outer.Inner`.
+func qualifiedTypeText(node *tree_sitter.Node, source []byte) string {
+	return strings.Join(strings.Fields(node.Utf8Text(source)), "")
+}
+
 // extractClass extracts class information including annotations and methods.
 func extractClass(node *tree_sitter.Node, source []byte) Class {
 	class := Class{}
@@ -530,6 +572,8 @@ func extractMethod(node *tree_sitter.Node, source []byte) Method {
 			method.Name = child.Utf8Text(source)
 		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type", "void_type":
 			method.ReturnType = child.Utf8Text(source)
+		case "scoped_type_identifier":
+			method.ReturnType = qualifiedTypeText(child, source)
 		case "formal_parameters":
 			method.Parameters = extractParameters(child, source)
 		case "modifiers":
@@ -653,6 +697,8 @@ func extractFieldDeclaration(node *tree_sitter.Node, source []byte, inInterface 
 			}
 		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type":
 			fieldType = child.Utf8Text(source)
+		case "scoped_type_identifier":
+			fieldType = qualifiedTypeText(child, source)
 		case "variable_declarator":
 			for j := uint(0); j < child.ChildCount(); j++ {
 				vdChild := child.Child(j)
@@ -710,6 +756,8 @@ func extractSuperClass(node *tree_sitter.Node, source []byte) (string, []string)
 				switch scChild.Kind() {
 				case "type_identifier":
 					return scChild.Utf8Text(source), nil
+				case "scoped_type_identifier":
+					return qualifiedTypeText(scChild, source), nil
 				case "generic_type":
 					return extractGenericBaseAndArgs(scChild, source)
 				}
@@ -730,6 +778,8 @@ func extractInterfaces(node *tree_sitter.Node, source []byte) []string {
 				switch ifaceChild.Kind() {
 				case "type_identifier":
 					ifaces = append(ifaces, ifaceChild.Utf8Text(source))
+				case "scoped_type_identifier":
+					ifaces = append(ifaces, qualifiedTypeText(ifaceChild, source))
 				case "generic_type":
 					baseName, _ := extractGenericBaseAndArgs(ifaceChild, source)
 					ifaces = append(ifaces, baseName)
@@ -739,6 +789,8 @@ func extractInterfaces(node *tree_sitter.Node, source []byte) []string {
 						switch listChild.Kind() {
 						case "type_identifier":
 							ifaces = append(ifaces, listChild.Utf8Text(source))
+						case "scoped_type_identifier":
+							ifaces = append(ifaces, qualifiedTypeText(listChild, source))
 						case "generic_type":
 							baseName, _ := extractGenericBaseAndArgs(listChild, source)
 							ifaces = append(ifaces, baseName)
@@ -762,6 +814,8 @@ func extractGenericBaseAndArgs(node *tree_sitter.Node, source []byte) (string, [
 		switch child.Kind() {
 		case "type_identifier":
 			baseName = child.Utf8Text(source)
+		case "scoped_type_identifier":
+			baseName = qualifiedTypeText(child, source)
 		case "type_arguments":
 			typeArgs = extractTypeArguments(child, source)
 		}
@@ -779,6 +833,8 @@ func extractTypeArguments(node *tree_sitter.Node, source []byte) []string {
 		switch child.Kind() {
 		case "type_identifier":
 			args = append(args, child.Utf8Text(source))
+		case "scoped_type_identifier":
+			args = append(args, qualifiedTypeText(child, source))
 		case "generic_type":
 			args = append(args, child.Utf8Text(source))
 		}

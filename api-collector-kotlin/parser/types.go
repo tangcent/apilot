@@ -84,6 +84,13 @@ type Class struct {
 	// EnumValueKDocs holds the KDoc of each enum entry as written, in the
 	// order of EnumValues: "" for an entry without one.
 	EnumValueKDocs []string
+	// Outer is the dotted path of the classes this declaration is nested in,
+	// outermost first: "Outer" for Outer.Inner, "Outer.Mid" for Deep in
+	// Outer.Mid.Deep. Empty for a top-level declaration. A nested class, inner
+	// or not, is a declaration of its own, and this is all that says where it
+	// belongs. A companion object is not one: its constants are read onto the
+	// class it belongs to.
+	Outer string
 	// IsFileFacade marks the class the JVM holds a file's top-level
 	// declarations in, named after the file (Headers.kt declares HeadersKt).
 	// Only top-level const vals are read into it, as its fields: Kotlin code

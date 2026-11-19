@@ -42,7 +42,7 @@ func extractFile(root *tree_sitter.Node, source []byte, filePath string, result 
 					skip(child)
 					continue
 				}
-				if err := extractClass(child, source, packageName, filePath, imports, result); err != nil {
+				if err := extractClass(child, source, packageName, filePath, imports, "", result); err != nil {
 					result.Error = err
 					return
 				}
@@ -142,6 +142,8 @@ func extractImports(root *tree_sitter.Node, source []byte) []Import {
 		}
 		text := strings.TrimSpace(child.Utf8Text(source))
 		text = strings.TrimSpace(strings.TrimPrefix(text, "import"))
+		// A semicolon may end the import, as it ends a Java one.
+		text = strings.TrimSpace(strings.TrimSuffix(text, ";"))
 		if idx := strings.Index(text, " as "); idx >= 0 {
 			text = strings.TrimSpace(text[:idx])
 		}
@@ -157,7 +159,10 @@ func extractImports(root *tree_sitter.Node, source []byte) []Import {
 	return imports
 }
 
-func extractClass(node *tree_sitter.Node, source []byte, packageName, filePath string, imports []Import, result *ParseResult) error {
+// extractClass reads a class declaration, and the classes nested in it, into
+// result. outer is the dotted path of the classes it is nested in, empty for a
+// top-level class.
+func extractClass(node *tree_sitter.Node, source []byte, packageName, filePath string, imports []Import, outer string, result *ParseResult) error {
 	modifiers := firstChildOfKind(node, "modifiers")
 	anns, flags, err := parseModifiers(modifiers, source, filePath)
 	if err != nil {
@@ -181,6 +186,7 @@ func extractClass(node *tree_sitter.Node, source []byte, packageName, filePath s
 	class := Class{
 		Name:           nameNode.Utf8Text(source),
 		Package:        packageName,
+		Outer:          outer,
 		FilePath:       filePath,
 		KDoc:           kdoc,
 		Annotations:    anns,
@@ -252,7 +258,11 @@ func extractClassBody(body *tree_sitter.Node, source []byte, filePath string, cl
 				class.Methods = append(class.Methods, *fn)
 			}
 		case "class_declaration", "object_declaration":
-			if err := extractClass(child, source, class.Package, class.FilePath, class.Imports, result); err != nil {
+			nestedIn := class.Name
+			if class.Outer != "" {
+				nestedIn = class.Outer + "." + class.Name
+			}
+			if err := extractClass(child, source, class.Package, class.FilePath, class.Imports, nestedIn, result); err != nil {
 				return err
 			}
 		case "companion_object":

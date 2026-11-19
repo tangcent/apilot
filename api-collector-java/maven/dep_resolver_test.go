@@ -149,11 +149,16 @@ func TestResolveClass_ExploresTheClassPinnedToTheProject(t *testing.T) {
 
 func TestResolveClass_PicksTheNamedDeclarationOfTheSource(t *testing.T) {
 	var calls [][]string
-	r := newTestResolver(t, exploreAnswer("com.example.lib.Page$Sort", "com.example:lib:2.0.0", "java", pageSource, "project-pinned", "project-pinned"), &calls)
+	r := newTestResolver(t, exploreAnswer("com.example.lib.Page", "com.example:lib:2.0.0", "java", pageSource, "project-pinned", "project-pinned"), &calls)
 
+	// The index holds Page, not Page.Sort: the source of Page is asked for, and
+	// Sort is the declaration of it that the name denotes.
 	class := r.ResolveClass("com.example.lib.Page.Sort")
-	if class == nil || class.Name != "Sort" {
+	if class == nil || class.Name != "Sort" || class.Outer != "Page" {
 		t.Fatalf("class = %+v, want the nested Sort", class)
+	}
+	if len(calls) != 1 || calls[0][2] != "com.example.lib.Page" {
+		t.Errorf("calls = %q, want one call for com.example.lib.Page", calls)
 	}
 	// A source without the simple name still answers with its first
 	// declaration, as the get-class path always did.
