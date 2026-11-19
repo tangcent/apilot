@@ -153,6 +153,7 @@ type TypeResolver struct {
 	bySimpleName       map[string][]string     // simple name -> qualified names, sorted
 	byFile             map[string][]string     // compilation unit -> qualified names declared there
 	depBySimpleName    map[string][]string     // bySimpleName for the classes read from dependencies (see registerDependency)
+	scannedPackages    map[string]bool         // packages that a class of the scanned sources declares
 	allTypeParams      map[string]bool
 	resolving          map[string]bool
 	dependencyResolver DependencyResolver
@@ -182,6 +183,7 @@ func NewTypeResolver(classes []parser.Class) *TypeResolver {
 		resolving:     make(map[string]bool),
 
 		depBySimpleName: make(map[string][]string),
+		scannedPackages: make(map[string]bool),
 	}
 	for _, c := range classes {
 		r.register(c, qualifiedName(c))
@@ -201,6 +203,7 @@ func qualifiedName(c parser.Class) string {
 func (r *TypeResolver) register(c parser.Class, key string) {
 	r.classRegistry[key] = c
 	r.bySimpleName[c.Name] = appendKey(r.bySimpleName[c.Name], key)
+	r.scannedPackages[c.Package] = true
 	if c.FilePath != "" {
 		r.byFile[c.FilePath] = appendKey(r.byFile[c.FilePath], key)
 	}
@@ -498,6 +501,15 @@ func (r *TypeResolver) isRegistered(key string) bool {
 // denote, the package of source first and then each import-on-demand in the
 // order they are written (JLS 6.4.1), until one answers.
 //
+// A source of the project does not ask for a package that the scanned sources
+// declare: the project owns it, and a name its classes do not carry is not in
+// it. Without that, every name that a library declares costs a call for the
+// package of each controller and for each import of the project's own model
+// packages, and every call is a process of the indexer. The price is a split
+// package, a library class in a package of the project, which a project source
+// does not find. A class read from a library asks for every package, its own
+// included: its neighbours need no import, whoever else declares the package.
+//
 // A class found is registered under its qualified name (see
 // registerDependency), so each candidate is asked of the dependencies once and
 // later answered from the registry.
@@ -521,6 +533,9 @@ func (r *TypeResolver) resolveName(source parser.Class, name string) string {
 				// another.
 				break
 			}
+			if r.isScannedSource(source) && r.scannedPackages[candidate[:strings.LastIndex(candidate, ".")]] {
+				continue
+			}
 			if class := r.dependencyClass(candidate); class != nil {
 				r.registerDependency(*class, candidate)
 				return candidate
@@ -531,6 +546,13 @@ func (r *TypeResolver) resolveName(source parser.Class, name string) string {
 		return key
 	}
 	return name
+}
+
+// isScannedSource reports whether source is a compilation unit of the scanned
+// sources, as against a class read from a library, whose file is not one of
+// them.
+func (r *TypeResolver) isScannedSource(source parser.Class) bool {
+	return len(r.byFile[source.FilePath]) > 0
 }
 
 // mayBeDependencyClass reports whether an unqualified name could denote a class

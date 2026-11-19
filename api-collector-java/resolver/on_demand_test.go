@@ -54,10 +54,11 @@ func TestResolve_AnImportOnDemandNamesAClassOfTheDependencies(t *testing.T) {
 		t.Errorf("items = %+v, want an array of LineItem", items)
 	}
 
-	// The package of the source is tried before the packages it imports, and a
-	// platform package is not tried at all.
+	// The package of the controller is a package of the scanned sources, and a
+	// platform package is a platform's: neither is asked. The package of the
+	// library class is, for the classes next to it.
 	want := []string{
-		"com.example.app.OrderDraft", "com.example.lib.model.OrderDraft",
+		"com.example.lib.model.OrderDraft",
 		"com.example.lib.model.Address", "com.example.lib.model.LineItem",
 	}
 	if !reflect.DeepEqual(library.asked, want) {
@@ -75,20 +76,62 @@ func TestResolve_AnImportOnDemandNamesAClassOfTheDependencies(t *testing.T) {
 	}
 }
 
+// The package of a source that no declaration of the scanned sources shares is
+// the package of a class read from a library: its neighbours need no import.
 func TestResolve_APackageOfTheSourceComesBeforeAnImportOnDemand(t *testing.T) {
 	library := &libraryClasses{classes: map[string]parser.Class{
-		// A library that declares classes in the package of the project.
-		"com.example.app.Shared": {Name: "Shared", Package: "com.example.app", Fields: []parser.Field{{Name: "samePackage", Type: "String"}}},
-		"com.example.lib.Shared": {Name: "Shared", Package: "com.example.lib", Fields: []parser.Field{{Name: "imported", Type: "String"}}},
+		"com.example.lib.Shared":     {Name: "Shared", Package: "com.example.lib", Fields: []parser.Field{{Name: "imported", Type: "String"}}},
+		"com.example.sibling.Shared": {Name: "Shared", Package: "com.example.sibling", Fields: []parser.Field{{Name: "samePackage", Type: "String"}}},
 	}}
-	source := parser.Class{Name: "Holder", Package: "com.example.app", FilePath: "Holder.java", Imports: onDemand("com.example.lib")}
-	r := NewTypeResolver([]parser.Class{source})
+	// Read from a library: not a source of the project.
+	source := parser.Class{Name: "Holder", Package: "com.example.sibling", Imports: onDemand("com.example.lib")}
+	r := NewTypeResolver(nil)
 	r.SetDependencyResolver(library)
 
 	assertFieldNames(t, fieldNamesOf(t, r, source, "Shared"), []string{"samePackage"})
-	if want := []string{"com.example.app.Shared"}; !reflect.DeepEqual(library.asked, want) {
+	if want := []string{"com.example.sibling.Shared"}; !reflect.DeepEqual(library.asked, want) {
 		t.Errorf("asked = %v, want %v: nothing is asked once the package answers", library.asked, want)
 	}
+}
+
+// A package that the scanned sources declare is the project's own: a source of
+// the project does not ask the dependencies for a name its classes do not carry,
+// whether the package is the source's own or is imported on demand. The price is
+// a split package, a library class in a package of the project, which a project
+// source does not find. A class read from a library asks for every package, its
+// own included: the project's declaring the package too does not hide its
+// neighbours.
+func TestResolve_APackageOfTheScannedSourcesIsNotAsked(t *testing.T) {
+	library := &libraryClasses{classes: map[string]parser.Class{
+		"com.example.app.Shared":  {Name: "Shared", Package: "com.example.app", Fields: []parser.Field{{Name: "split", Type: "String"}}},
+		"com.example.model.Thing": {Name: "Thing", Package: "com.example.model", Fields: []parser.Field{{Name: "split", Type: "String"}}},
+		"com.example.lib.Thing":   {Name: "Thing", Package: "com.example.lib", Fields: []parser.Field{{Name: "imported", Type: "String"}}},
+	}}
+	source := parser.Class{Name: "Holder", Package: "com.example.app", FilePath: "Holder.java", Imports: onDemand("com.example.model", "com.example.lib")}
+	r := NewTypeResolver([]parser.Class{
+		source,
+		{Name: "Order", Package: "com.example.model", FilePath: "Order.java"},
+	})
+	r.SetDependencyResolver(library)
+
+	// Only the package nobody scanned is asked, and answers.
+	assertFieldNames(t, fieldNamesOf(t, r, source, "Thing"), []string{"imported"})
+	if want := []string{"com.example.lib.Thing"}; !reflect.DeepEqual(library.asked, want) {
+		t.Errorf("asked = %v, want %v", library.asked, want)
+	}
+	// The library's class in a package of the project is not found.
+	if shared := r.ResolveFrom(source, "Shared", nil); shared.Kind != model.KindSingle {
+		t.Errorf("Shared = %+v, want an opaque value", shared)
+	}
+	for _, name := range library.asked {
+		if name == "com.example.app.Shared" || name == "com.example.model.Thing" {
+			t.Errorf("%s, a package of the scanned sources, was asked for: %v", name, library.asked)
+		}
+	}
+
+	// A class read from a library, in the same package, finds it.
+	neighbour := parser.Class{Name: "Neighbour", Package: "com.example.app", Imports: onDemand("com.example.lib")}
+	assertFieldNames(t, fieldNamesOf(t, r, neighbour, "Shared"), []string{"split"})
 }
 
 func TestResolve_ImportsOnDemandAreTriedInTheOrderTheyAreWritten(t *testing.T) {
@@ -106,8 +149,9 @@ func TestResolve_ImportsOnDemandAreTriedInTheOrderTheyAreWritten(t *testing.T) {
 		{[]string{"com.example.b", "com.example.a"}, "fromB", []string{"com.example.app.Thing", "com.example.b.Thing"}},
 	} {
 		library := &libraryClasses{classes: classes}
-		source := parser.Class{Name: "Holder", Package: "com.example.app", FilePath: "Holder.java", Imports: onDemand(tc.imports...)}
-		r := NewTypeResolver([]parser.Class{source})
+		// Read from a library, so its own package is asked as well.
+		source := parser.Class{Name: "Holder", Package: "com.example.app", Imports: onDemand(tc.imports...)}
+		r := NewTypeResolver(nil)
 		r.SetDependencyResolver(library)
 
 		assertFieldNames(t, fieldNamesOf(t, r, source, "Thing"), []string{tc.want})
@@ -121,15 +165,16 @@ func TestResolve_ImportsOnDemandAreTriedInTheOrderTheyAreWritten(t *testing.T) {
 
 func TestResolve_NoLookupForAPlatformPackageAClassImportOrAKnownName(t *testing.T) {
 	library := &libraryClasses{classes: map[string]parser.Class{}}
+	// Read from a library, so its own package may be asked.
 	source := parser.Class{
-		Name: "Holder", Package: "com.example.app", FilePath: "Holder.java",
+		Name: "Holder", Package: "com.example.app",
 		Imports: append(onDemand("java.util", "javax.validation.constraints", "kotlin.collections", "com.example.lib.Outer"),
 			parser.Import{Path: "com.example.lib.Statics", OnDemand: true, Static: true}),
 	}
 	// T is a type variable of some class; every other name is one the resolver
 	// answers for itself.
-	generic := parser.Class{Name: "Box", Package: "com.example.app", FilePath: "Box.java", TypeParameters: []string{"T"}}
-	r := NewTypeResolver([]parser.Class{source, generic})
+	generic := parser.Class{Name: "Box", Package: "com.example.box", FilePath: "Box.java", TypeParameters: []string{"T"}}
+	r := NewTypeResolver([]parser.Class{generic})
 	r.SetDependencyResolver(library)
 
 	for _, name := range []string{"T", "String", "Integer", "Object", "Date", "LocalDateTime", "UUID", "List", "Map"} {
@@ -156,10 +201,8 @@ func TestResolve_ACandidateIsAskedOnceHoweverOftenTheNameIsMet(t *testing.T) {
 		r.ResolveFrom(second, "Missing", nil)
 		r.ResolveFrom(second, "List<Missing>", nil)
 	}
-	want := []string{
-		"com.example.app.Missing", "com.example.lib.Missing", "Missing",
-		"com.example.web.Missing", "com.example.other.Missing",
-	}
+	// The packages of the two sources are packages of the scanned sources.
+	want := []string{"com.example.lib.Missing", "Missing", "com.example.other.Missing"}
 	if !reflect.DeepEqual(library.asked, want) {
 		t.Errorf("asked = %v, want %v", library.asked, want)
 	}
