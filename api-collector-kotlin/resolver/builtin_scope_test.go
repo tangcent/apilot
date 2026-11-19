@@ -228,11 +228,26 @@ var scopeViews = map[string]func(r *Resolver, source *ktparser.Class, typeName s
 	},
 }
 
+// scopeShapeIn returns the shape a name exports as in a view. A ByteArray is a
+// byte[]: the JSON view writes it as one string, the binding view reads it as an
+// array of numbers.
+func scopeShapeIn(view, name, shape string) string {
+	if view == "json" && name == "ByteArray" && shape == "[int]" {
+		return "string"
+	}
+	return shape
+}
+
 func forEachScopeCase(t *testing.T, run func(t *testing.T, r *Resolver, view string, caller scopeCaller)) {
 	t.Helper()
 	for view := range scopeViews {
 		for _, caller := range scopeCallers() {
 			t.Run(view+"/"+caller.name, func(t *testing.T) {
+				shapes := map[string]string{}
+				for name, shape := range caller.shapes {
+					shapes[name] = scopeShapeIn(view, name, shape)
+				}
+				caller.shapes = shapes
 				run(t, New(scopeWorldClasses()), view, caller)
 			})
 		}
@@ -327,7 +342,7 @@ func TestResolve_APropertyIsReadInTheScopeOfItsOwnFile(t *testing.T) {
 			r := New(classes)
 			got := scopeViews[view](r, &holder, "Holder")
 			for path, want := range map[string]string{
-				"count": "int", "boxed": "Integer(own)", "counts": "[int]", "number": "Number(digits)", "bytes": "[int]",
+				"count": "int", "boxed": "Integer(own)", "counts": "[int]", "number": "Number(digits)", "bytes": scopeShapeIn(view, "ByteArray", "[int]"),
 			} {
 				if shape := scopeModelShape(scopeAt(got, path)); shape != want {
 					t.Errorf("Holder.%s = %s, want %s", path, shape, want)
