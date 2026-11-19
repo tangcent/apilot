@@ -1,9 +1,11 @@
 package springmvc
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/tangcent/apilot/api-collector-java/parser"
+	model "github.com/tangcent/apilot/api-model"
 )
 
 func TestClassifyImplicit(t *testing.T) {
@@ -27,6 +29,15 @@ func TestClassifyImplicit(t *testing.T) {
 		{"MultipartFile", nil, ImplicitFile, ""},
 		{"List<MultipartFile>", nil, ImplicitFile, ""},
 		{"MultipartFile[]", nil, ImplicitFile, ""},
+		// An Optional parameter is bound as the type it holds.
+		{"Optional<String>", nil, ImplicitParam, ""},
+		{"java.util.Optional<Long>", nil, ImplicitParam, ""},
+		{"Optional<Status>", nil, ImplicitParam, ""},
+		{"Optional<List<Long>>", nil, ImplicitParam, ""},
+		{"Optional<OrderQuery>", nil, ImplicitModel, ""},
+		{"Optional<MultipartFile>", nil, ImplicitFile, ""},
+		{"Optional<List<MultipartFile>>", nil, ImplicitFile, ""},
+		{"Optional<HttpServletRequest>", nil, ImplicitNone, ""},
 		// Annotations that format or default a value do not change the binding.
 		{"LocalDate", []string{"DateTimeFormat"}, ImplicitParam, ""},
 		{"BigDecimal", []string{"NumberFormat"}, ImplicitParam, ""},
@@ -201,5 +212,50 @@ func TestOptionalArgument(t *testing.T) {
 		if got := OptionalArgument(tc.paramType, tc.typeName, tc.annotations, tc.optional); got != tc.want {
 			t.Errorf("%s: OptionalArgument = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// An Optional is looked through: the element of a parameter that holds a list
+// of files is the file, which is how the collector tells it from a value.
+func TestElementType_LooksThroughOptional(t *testing.T) {
+	for typeName, want := range map[string]string{
+		"Optional<List<MultipartFile>>": "MultipartFile",
+		"Optional<MultipartFile[]>":     "MultipartFile",
+		"Optional<MultipartFile>":       "MultipartFile",
+		"java.util.Optional<Status>":    "Status",
+		"List<Long>":                    "Long",
+		"Optional":                      "Optional",
+	} {
+		if got := ElementType(typeName); got != want {
+			t.Errorf("ElementType(%q) = %q, want %q", typeName, got, want)
+		}
+	}
+}
+
+// A property that holds files is one of the request's parts. The resolver
+// answers a MultipartFile with a single value named after it, and the type
+// that reaches the parameter must still say it is a file, for one file and for
+// a collection or an array of them.
+func TestModelAttributeFields_FilesKeepTheirType(t *testing.T) {
+	file := model.SingleModel("MultipartFile")
+	upload := model.NewObjectModelBuilder().
+		StringField("title").
+		Field("cover", file).
+		ArrayField("attachments", file).
+		ArrayField("tags", model.SingleModel(model.JsonTypeString)).
+		Build()
+
+	got := map[string]string{}
+	for _, field := range ModelAttributeFields(upload) {
+		got[field.Name] = field.TypeName
+	}
+	want := map[string]string{
+		"title":       "string",
+		"cover":       "MultipartFile",
+		"attachments": "MultipartFile[]",
+		"tags":        "array",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("types of the bound properties = %v, want %v", got, want)
 	}
 }
