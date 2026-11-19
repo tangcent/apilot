@@ -13,6 +13,7 @@ import (
 
 var primitiveTypes = map[string]string{
 	"int":     model.JsonTypeInt,
+	"short":   model.JsonTypeInt,
 	"long":    model.JsonTypeLong,
 	"float":   model.JsonTypeFloat,
 	"double":  model.JsonTypeDouble,
@@ -21,6 +22,7 @@ var primitiveTypes = map[string]string{
 	"Void":    model.JsonTypeNull,
 	"String":  model.JsonTypeString,
 	"Integer": model.JsonTypeInt,
+	"Short":   model.JsonTypeInt,
 	"Long":    model.JsonTypeLong,
 	"Float":   model.JsonTypeFloat,
 	"Double":  model.JsonTypeDouble,
@@ -60,6 +62,7 @@ var jdkScalarTypes = map[string]string{
 	"byte":       model.JsonTypeInt,
 	"biginteger": model.JsonTypeLong,
 	"bigdecimal": model.JsonTypeDouble,
+	"number":     model.JsonTypeDouble,
 	// java.time
 	"instant":       model.JsonTypeString,
 	"localdate":     model.JsonTypeString,
@@ -540,7 +543,16 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 		return model.EmptyObject()
 	}
 
-	if jsonType, ok := primitiveTypes[rawType]; ok {
+	// An array serialises as a JSON array of its element type, the same as a
+	// collection does: `String[]` and `List<String>` are one shape, and
+	// `Order[][]` is an array of arrays of Order.
+	if element, ok := strings.CutSuffix(strings.TrimSpace(rawType), "[]"); ok {
+		return model.ArrayModel(r.ResolveFrom(source, element, typeBindings))
+	}
+
+	// Every compilation unit imports java.lang, so `java.lang.Short` is the
+	// type `Short` names, however the source spells it.
+	if jsonType, ok := primitiveTypes[strings.TrimPrefix(rawType, "java.lang.")]; ok {
 		return model.SingleModel(jsonType)
 	}
 
