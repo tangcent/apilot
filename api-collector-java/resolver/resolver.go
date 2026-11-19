@@ -54,8 +54,10 @@ var javaLangScalars = map[string]string{
 // it serialises to.
 //
 // Names here are matched exactly, so short spellings that could belong to a
-// project class (`Time`, `URL`) stay resolvable by the class registry. This is
-// easy-yapi's `json.rule.convert[<fqn>]` layer.
+// project class (`Time`, `URL`) stay resolvable by the class registry: a bare
+// name is read as the JDK class only when the source imports it by name or its
+// package on demand (see platformName). This is easy-yapi's
+// `json.rule.convert[<fqn>]` layer.
 var jdkQualifiedScalars = map[string]string{
 	"java.sql.Time":         model.JsonTypeString,
 	"java.sql.Timestamp":    model.JsonTypeString,
@@ -67,6 +69,64 @@ var jdkQualifiedScalars = map[string]string{
 	"java.math.BigDecimal":  model.JsonTypeDouble,
 	"java.math.BigInteger":  model.JsonTypeLong,
 	"org.bson.types.ObjectId": model.JsonTypeString,
+	// java.util.OptionalInt and its kin hold a number or nothing. Jackson's
+	// Jdk8Module, which Spring Boot registers, writes the number or null.
+	"java.util.OptionalInt":    model.JsonTypeInt,
+	"java.util.OptionalLong":   model.JsonTypeLong,
+	"java.util.OptionalDouble": model.JsonTypeDouble,
+	// Locale, currency and time zone values: Jackson writes each as a string.
+	"java.util.Locale":   model.JsonTypeString,
+	"java.util.Currency": model.JsonTypeString,
+	"java.util.TimeZone": model.JsonTypeString,
+}
+
+// javaUtilOptional is the one generic class that holds a value or nothing.
+// Jackson's Jdk8Module, which Spring Boot registers, writes the value it
+// holds, or null: `Optional<Order>` is `Order`, and a property of that type may
+// be left out.
+const javaUtilOptional = "java.util.Optional"
+
+// isOptionalType reports whether a platform type name is one of the java.util
+// classes that hold a value or nothing.
+func isOptionalType(platform string) bool {
+	switch platform {
+	case javaUtilOptional, "java.util.OptionalInt", "java.util.OptionalLong", "java.util.OptionalDouble":
+		return true
+	}
+	return false
+}
+
+// platformEnums lists the constants of the JDK enums the resolver knows without
+// reading their declarations. Like the JDK scalars they are known by their
+// qualified names only: `Month` is as likely to be a project's enum as the
+// JDK's, so a bare name denotes the JDK one only when the source imports it.
+var platformEnums = map[string][]string{
+	"java.time.DayOfWeek": {
+		"MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY",
+	},
+	"java.time.Month": {
+		"JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE",
+		"JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER",
+	},
+}
+
+// platformModels maps the qualified name of a library class to the shape it has
+// on the wire, for the classes that are not a scalar.
+//
+// A Jackson tree is free-form: `JsonNode` and `ObjectNode` hold any object,
+// `ArrayNode` an array of them. A `MultipartFile` is not JSON at all: Spring
+// binds it from a part of a multipart request, never from a body, so nothing
+// but its name says what it is. It keeps that name as its type, which is how a
+// handler parameter or a bound property of this type is told to be a file.
+var platformModels = map[string]func() *model.ObjectModel{
+	"com.fasterxml.jackson.databind.JsonNode":        model.EmptyObject,
+	"com.fasterxml.jackson.databind.node.ObjectNode": model.EmptyObject,
+	"com.fasterxml.jackson.databind.node.ArrayNode": func() *model.ObjectModel {
+		return model.ArrayModel(model.EmptyObject())
+	},
+	"org.springframework.web.multipart.MultipartFile": func() *model.ObjectModel {
+		return model.SingleModel("MultipartFile")
+	},
 }
 
 // jdkScalarTypes maps the simple name of an unambiguous JDK value type to the
@@ -103,6 +163,9 @@ var jdkScalarTypes = map[string]string{
 	"atomicboolean": model.JsonTypeBoolean,
 	"atomicinteger": model.JsonTypeInt,
 	"atomiclong":    model.JsonTypeLong,
+	"longadder":     model.JsonTypeLong,
+	// java.lang, and the Kotlin standard library's own CharSequence
+	"charsequence": model.JsonTypeString,
 }
 
 // jdkValueTypes lists, by their qualified names, the classes of the JDK that
@@ -128,6 +191,8 @@ var jdkValueTypes = map[string]bool{
 	"java.util.concurrent.atomic.AtomicBoolean": true,
 	"java.util.concurrent.atomic.AtomicInteger": true,
 	"java.util.concurrent.atomic.AtomicLong":    true,
+	"java.util.concurrent.atomic.LongAdder":     true,
+	"java.lang.CharSequence":                    true,
 }
 
 // simpleTypeName reduces a type spelling to its lower-cased simple name:
@@ -1216,7 +1281,7 @@ func (r *TypeResolver) IsVoid(source parser.Class, typeName string) bool {
 }
 
 // isPlatformType reports whether the resolver answers for a qualified name of
-// the JDK without reading a declaration of it.
+// the JDK or of a library without reading a declaration of it.
 func isPlatformType(qualified string) bool {
 	if _, ok := jdkQualifiedScalars[qualified]; ok {
 		return true
@@ -1224,8 +1289,16 @@ func isPlatformType(qualified string) bool {
 	if jdkValueTypes[qualified] {
 		return true
 	}
-	simple, ok := strings.CutPrefix(qualified, "java.lang.")
-	return ok && isJavaLangType(simple)
+	if _, ok := platformEnums[qualified]; ok {
+		return true
+	}
+	if _, ok := platformModels[qualified]; ok {
+		return true
+	}
+	if simple, ok := strings.CutPrefix(qualified, "java.lang."); ok && isJavaLangType(simple) {
+		return true
+	}
+	return qualified == javaUtilOptional
 }
 
 // isJavaLangType reports whether a simple name is one of the java.lang classes
@@ -1302,6 +1375,58 @@ func lastSegment(name string) string {
 		return name[i+1:]
 	}
 	return name
+}
+
+// platformName returns the qualified name of the JDK or library type that name
+// denotes in source, or name itself when it denotes none. name is what
+// resolveSimpleName answered.
+//
+// A name written with its package is qualified already, and resolveSimpleName
+// has followed a single-type import. What remains bare may still name a type
+// the source imports on demand (`import java.sql.*`). It does so only when no
+// declaration of the scanned sources shares its simple name, as such a class
+// wins over every JDK type.
+func (r *TypeResolver) platformName(source parser.Class, name string) string {
+	if strings.Contains(name, ".") || len(r.bySimpleName[name]) > 0 {
+		return name
+	}
+	for _, imp := range source.Imports {
+		if imp.Static || !imp.OnDemand {
+			continue
+		}
+		if qualified := imp.Path + "." + name; isPlatformType(qualified) {
+			return qualified
+		}
+	}
+	return name
+}
+
+// optionalValue reports whether a field type holds a value or nothing and, for
+// `Optional<T>`, returns T. OptionalInt and its kin have no type argument.
+func (r *TypeResolver) optionalValue(source parser.Class, typeName string) (string, bool) {
+	base, args := parseGenericType(strings.TrimSpace(typeName))
+	if !isOptionalType(r.platformName(source, r.resolveName(source, base))) {
+		return "", false
+	}
+	if len(args) == 1 {
+		return args[0], true
+	}
+	return "", true
+}
+
+// platformEnum returns the JDK enum that a type name denotes in source, as a
+// declaration that holds its constants.
+func (r *TypeResolver) platformEnum(source parser.Class, typeName string) (parser.Class, bool) {
+	name := strings.TrimSpace(typeName)
+	if name == "" || strings.ContainsAny(name, "<[") {
+		return parser.Class{}, false
+	}
+	qualified := r.platformName(source, r.resolveName(source, name))
+	constants, ok := platformEnums[qualified]
+	if !ok {
+		return parser.Class{}, false
+	}
+	return parser.Class{Name: lastSegment(qualified), IsEnum: true, EnumConstants: constants}, true
 }
 
 func (r *TypeResolver) SetDependencyResolver(dr DependencyResolver) {
@@ -1450,6 +1575,13 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 			return r.ResolveFrom(source, typeArgs[0], typeBindings)
 		}
 
+		// An Optional is plumbing too: what Jackson writes is the value it
+		// holds. Only java.util.Optional is, which the scope of the name
+		// decides: a project's own `Optional` or another library's is a class.
+		if len(typeArgs) == 1 && r.platformName(source, r.resolveName(source, baseName)) == javaUtilOptional {
+			return r.ResolveFrom(source, typeArgs[0], typeBindings)
+		}
+
 		// A collection or a map holds its arguments' models, which resolve where
 		// they are written.
 		if isCollectionType(baseName) {
@@ -1485,6 +1617,18 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 		return r.resolveClass(class, name, typeArgs)
 	}
 
+	// A JDK enum and a library class the resolver has an answer for are read
+	// before the dependencies are asked: the answer does not depend on the
+	// version of a library the project uses, and what a dependency's copy of a
+	// Jackson tree or a multipart file expands to is its internals, not the wire.
+	platform := r.platformName(source, name)
+	if _, ok := platformEnums[platform]; ok {
+		return model.SingleModel(model.JsonTypeString)
+	}
+	if build, ok := platformModels[platform]; ok {
+		return build()
+	}
+
 	// An enum of the scanned sources is already known; the JSON view just
 	// does not see it, and a dependency's copy of it would not be seen either.
 	// A name that is still unqualified here found no class in the packages
@@ -1505,7 +1649,7 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	// on the wire, so answer for them instead of reporting a failure.
 	// easy-yapi reaches the same answer with `json.rule.convert` rules over the
 	// qualified name plus an IrType lookup over the simple name.
-	if jsonType, ok := jdkQualifiedScalars[name]; ok {
+	if jsonType, ok := jdkQualifiedScalars[platform]; ok {
 		return model.SingleModel(jsonType)
 	}
 	// A declaration of the project is the class its name says, not a JDK type
@@ -1798,6 +1942,18 @@ func (r *TypeResolver) resolveField(source parser.Class, f parser.Field, localBi
 		if enum, ok := r.enumClass(source, f.Type); ok {
 			fm.Options = EnumOptions(enum)
 		}
+	}
+	// A property that holds a value or nothing may be left out, whatever the
+	// view and the constraints say about the value. A JDK enum is a string
+	// holding one of its constants in either view: its declaration is known
+	// without being read, so there is nothing for the JSON view not to see.
+	valueType := f.Type
+	if inner, optional := r.optionalValue(source, f.Type); optional {
+		fm.Required = false
+		valueType = inner
+	}
+	if enum, ok := r.platformEnum(source, valueType); ok {
+		fm.Options = EnumOptions(enum)
 	}
 	javadoc.FieldDocumentationFor(f.Annotations, f.JavaDoc).Normalize().ApplyTo(fm)
 	// Values the field declares in its own way win over the ones its doc
