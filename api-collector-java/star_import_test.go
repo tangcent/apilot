@@ -176,10 +176,16 @@ func TestImportOnDemandNamesClassesOfADependency(t *testing.T) {
 			t.Errorf("%s was asked for %d times, want once; asked %v", name, asked[name], library.asked)
 		}
 	}
-	// The package of the controller comes first, then each import in turn.
-	want := []string{"com.example.ondemand.StarOrder", "com.example.lib.model.StarOrder"}
-	if got := library.asked[:2]; !reflect.DeepEqual(got, want) {
-		t.Errorf("first lookups = %v, want %v", got, want)
+	// The package of the controller belongs to the scanned sources and is not
+	// asked: the first lookup is the first library package the controller
+	// imports.
+	if want := "com.example.lib.model.StarOrder"; library.asked[0] != want {
+		t.Errorf("first lookup = %v, want %v", library.asked[0], want)
+	}
+	for _, name := range library.asked {
+		if strings.HasPrefix(name, "com.example.ondemand.") {
+			t.Errorf("%s, a package of the scanned sources, was asked for: %v", name, library.asked)
+		}
 	}
 }
 
