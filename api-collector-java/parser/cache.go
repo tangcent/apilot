@@ -24,7 +24,9 @@ import (
 // constants, as CFR prints a Kotlin enum.
 // Version 7: a field or return type that is an array or a qualified name is
 // read instead of skipped, and `String tags[]` is the type `String[]`.
-const cacheSchemaVersion = "7"
+// Version 8: every declarator of a field declaration is a field, and a varargs
+// parameter is read as an array.
+const cacheSchemaVersion = "8"
 
 // Cache provides file-level caching based on content hash.
 type Cache struct {
