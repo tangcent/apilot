@@ -1,5 +1,7 @@
 package com.example.bytearray;
 
+import java.util.List;
+import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -19,6 +21,11 @@ public class ByteArrayController {
     @PostMapping("/blob")
     public byte[] blob(@RequestBody byte[] blob) {
         return blob;
+    }
+
+    @PostMapping("/spaced")
+    public Map<String, byte [ ]> spaced(@RequestBody List<byte []> blobs) {
+        return null;
     }
 
     @GetMapping("/query")

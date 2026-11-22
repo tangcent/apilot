@@ -16,18 +16,25 @@ import (
 //
 // The Kotlin collector asserts the same table for the same declarations
 // written in Kotlin (api-collector-kotlin/byte_array_test.go), except for
-// `legacy` (brackets after the name) and `signature` (a getter without a
-// field), which only Java can spell: keep the two in sync.
+// `legacy` (brackets after the name), `signature` (a getter without a field)
+// and the `spaced` and `annotated` fields (spaces and annotations among the
+// brackets, in a type argument or not), which only Java can spell: keep the two
+// in sync.
 var byteArrayExpectation = map[string]string{
-	"data":      "string",
-	"legacy":    "string",
-	"signature": "string",
-	"chunks":    "array<string>",
-	"blobs":     "array<string>",
-	"boxed":     "array<int>",
-	"numbers":   "array<int>",
-	"single":    "int",
-	"ints":      "array<int>",
+	"data":           "string",
+	"legacy":         "string",
+	"signature":      "string",
+	"chunks":         "array<string>",
+	"blobs":          "array<string>",
+	"spacedData":     "string",
+	"spacedChunks":   "array<string>",
+	"spacedBlobs":    "array<string>",
+	"spacedByName":   "map<string,string>",
+	"annotatedBlobs": "array<string>",
+	"boxed":          "array<int>",
+	"numbers":        "array<int>",
+	"single":         "int",
+	"ints":           "array<int>",
 }
 
 // How Spring binds a request value is not how Jackson writes one: the data
@@ -82,6 +89,22 @@ func TestByteArraysAreExportedAsStrings(t *testing.T) {
 	}
 	if got := arrayFieldKind(blob.Response.Body); got != "string" {
 		t.Errorf("blob response = %s, want string", got)
+	}
+
+	// The spaces among the brackets of a type argument are no part of the type:
+	// `List<byte []>` is `List<byte[]>` and `Map<String, byte [ ]>` is
+	// `Map<String, byte[]>`, so the elements are strings here too. Before, the
+	// spelling reached the resolver as written, `byte ` was no byte, and the
+	// elements were left as arrays of numbers.
+	spaced := byPath["/byte-arrays/spaced"]
+	if spaced == nil || spaced.RequestBody == nil || spaced.Response == nil {
+		t.Fatalf("spaced endpoint = %+v, want a request body and a response", spaced)
+	}
+	if got := arrayFieldKind(spaced.RequestBody.Body); got != "array<string>" {
+		t.Errorf("spaced request body = %s, want array<string>", got)
+	}
+	if got := arrayFieldKind(spaced.Response.Body); got != "map<string,string>" {
+		t.Errorf("spaced response = %s, want map<string,string>", got)
 	}
 
 	if unresolved := c.Unresolved(); len(unresolved) != 0 {
