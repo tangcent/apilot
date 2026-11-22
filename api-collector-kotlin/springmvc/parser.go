@@ -382,6 +382,7 @@ func (p *Parser) extractParameter(param *ktparser.Parameter, methodDocParams map
 	ep := &EndpointParameter{
 		Name:        param.Name,
 		Type:        param.Type,
+		ValueType:   p.valueType(source, param.Type),
 		ParamType:   paramType,
 		Required:    true,
 		Description: doc.Description,
@@ -446,7 +447,9 @@ func (p *Parser) implicitParameters(param *ktparser.Parameter, in, methodName st
 	for _, ann := range param.Annotations {
 		names = append(names, ann.Name)
 	}
-	typeName := resolver.NormalizeModelType(param.Type)
+	// Spring binds a java.util.Optional parameter as the type it holds, and
+	// leaves it empty when the request has no value for it.
+	typeName := p.valueType(source, param.Type)
 	kind, blocker := javaspringmvc.ClassifyImplicit(typeName, names, p.typeResolver.IsEnum)
 	if blocker != "" {
 		p.warnings = append(p.warnings, javaspringmvc.ImplicitNoneWarning(source.Name, methodName, param.Name, blocker))
@@ -463,6 +466,7 @@ func (p *Parser) implicitParameters(param *ktparser.Parameter, in, methodName st
 		return []EndpointParameter{{
 			Name:         param.Name,
 			Type:         param.Type,
+			ValueType:    typeName,
 			ParamType:    in,
 			Required:     javaspringmvc.ImplicitRequired(names),
 			DefaultValue: doc.Default,
@@ -474,6 +478,7 @@ func (p *Parser) implicitParameters(param *ktparser.Parameter, in, methodName st
 		return []EndpointParameter{{
 			Name:        param.Name,
 			Type:        param.Type,
+			ValueType:   typeName,
 			ParamType:   "form",
 			Required:    javaspringmvc.ImplicitRequired(names),
 			Description: doc.Description,
@@ -487,6 +492,16 @@ func (p *Parser) implicitParameters(param *ktparser.Parameter, in, methodName st
 		return boundParameters(javaspringmvc.ResolvedModelFields(param.Name, resolved), in)
 	}
 	return nil
+}
+
+// valueType returns the type a parameter holds in the spelling the shared
+// resolver reads: the type inside a java.util.Optional, and the type itself
+// otherwise.
+func (p *Parser) valueType(source *ktparser.Class, rawType string) string {
+	if p.typeResolver == nil {
+		return resolver.NormalizeModelType(rawType)
+	}
+	return p.typeResolver.UnwrapOptional(source, rawType)
 }
 
 func boundParameters(fields []javaspringmvc.BoundField, in string) []EndpointParameter {

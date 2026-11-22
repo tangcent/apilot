@@ -523,7 +523,7 @@ func springmvcEndpointToAPI(ep springmvc.Endpoint, folder string) collector.ApiE
 	for _, p := range ep.Parameters {
 		if p.ParamType == "body" {
 			out.RequestBody = &collector.ApiBody{Name: p.Name, MediaType: "application/json"}
-		} else if isMultipartFile(p.Type) {
+		} else if isMultipartFile(p.HeldType()) {
 			out.Parameters = append(out.Parameters, collector.ApiParameter{
 				Name:        p.Name,
 				Type:        "file",

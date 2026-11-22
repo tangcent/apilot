@@ -407,6 +407,7 @@ func (p *Parser) extractParameter(param parser.Parameter, method parser.Method, 
 	ep := &EndpointParameter{
 		Name:        param.Name,
 		Type:        param.Type,
+		ValueType:   typeResolver.UnwrapOptional(source, param.Type),
 		ParamType:   paramType,
 		Required:    true,
 		Description: doc.Description,
@@ -472,7 +473,10 @@ func (p *Parser) implicitParameters(param parser.Parameter, in string, method pa
 		_, ok := typeResolver.EnumConstants(source, typeName)
 		return ok
 	}
-	kind, blocker := ClassifyImplicit(param.Type, names, isEnum)
+	// Spring binds a java.util.Optional parameter as the type it holds, and
+	// leaves it empty when the request has no value for it.
+	valueType := typeResolver.UnwrapOptional(source, param.Type)
+	kind, blocker := ClassifyImplicit(valueType, names, isEnum)
 	if blocker != "" {
 		p.warnings = append(p.warnings, ImplicitNoneWarning(source.Name, method.Name, param.Name, blocker))
 		return nil
@@ -488,11 +492,12 @@ func (p *Parser) implicitParameters(param parser.Parameter, in string, method pa
 	case ImplicitParam:
 		enum := doc.Enum
 		if len(enum) == 0 {
-			enum, _ = typeResolver.EnumConstants(source, ElementType(param.Type))
+			enum, _ = typeResolver.EnumConstants(source, ElementType(valueType))
 		}
 		return []EndpointParameter{{
 			Name:         param.Name,
 			Type:         param.Type,
+			ValueType:    valueType,
 			ParamType:    in,
 			Required:     ImplicitRequired(names),
 			DefaultValue: doc.Default,
@@ -504,6 +509,7 @@ func (p *Parser) implicitParameters(param parser.Parameter, in string, method pa
 		return []EndpointParameter{{
 			Name:        param.Name,
 			Type:        param.Type,
+			ValueType:   valueType,
 			ParamType:   "form",
 			Required:    ImplicitRequired(names),
 			Description: doc.Description,

@@ -46,6 +46,11 @@ const (
 // The rules follow Spring's default argument resolution: framework types are
 // resolved from the request context, simple values become request parameters,
 // and any other object is a model attribute.
+//
+// typeName is read as written. Spring binds a java.util.Optional parameter as
+// the type it holds, but only the scope of the name says whether an `Optional`
+// is that class or the project's own, so the caller looks through it first
+// (see resolver.TypeResolver.UnwrapOptional).
 func ClassifyImplicit(typeName string, annotations []string, isEnum func(string) bool) (ImplicitKind, string) {
 	// Every annotation is looked at before deciding, so the outcome does not
 	// depend on the order they are written in: an explicit @ModelAttribute wins
@@ -66,9 +71,7 @@ func ClassifyImplicit(typeName string, annotations []string, isEnum func(string)
 	simpleOrEnum := func(t string) bool {
 		return simpleValueTypes[simpleName(t)] || (isEnum != nil && isEnum(t))
 	}
-	// Spring binds an Optional parameter as the type it holds, and leaves it
-	// empty when the request has no value for it.
-	base, args := splitType(unwrapOptional(typeName))
+	base, args := splitType(typeName)
 	simple := simpleName(base)
 	element := ""
 	switch {
@@ -103,11 +106,9 @@ func ClassifyImplicit(typeName string, annotations []string, isEnum func(string)
 }
 
 // ElementType returns the element type of a collection or array type, or the
-// type itself when it is neither. An Optional is looked through: a parameter of
-// type `Optional<List<MultipartFile>>` holds files, as one of type
-// `List<MultipartFile>` does.
+// type itself when it is neither.
 func ElementType(typeName string) string {
-	base, args := splitType(unwrapOptional(typeName))
+	base, args := splitType(typeName)
 	switch {
 	case strings.HasSuffix(base, "[]"):
 		return strings.TrimSpace(strings.TrimSuffix(base, "[]"))
@@ -229,16 +230,6 @@ func isOptionalType(typeName string) bool {
 		base = base[:i]
 	}
 	return base == "Optional" || base == "java.util.Optional"
-}
-
-// unwrapOptional returns T of a type spelled `Optional<T>`, and any other type
-// as written.
-func unwrapOptional(typeName string) string {
-	base, args := splitType(typeName)
-	if isOptionalType(base) && len(args) == 1 {
-		return args[0]
-	}
-	return strings.TrimSpace(typeName)
 }
 
 // BoundField is one request parameter a model attribute is bound from.

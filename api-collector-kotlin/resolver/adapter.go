@@ -159,6 +159,18 @@ func (r *Resolver) ResolveForBinding(source *ktparser.Class, rawType string, bin
 	return resolved
 }
 
+// UnwrapOptional returns T of a type written `Optional<T>` in source when the
+// name denotes java.util.Optional, and the type as written otherwise, both in
+// the spelling the shared resolver reads (see NormalizeModelType). A class of
+// the project called Optional is not looked through.
+func (r *Resolver) UnwrapOptional(source *ktparser.Class, rawType string) string {
+	javaSource := javaparser.Class{}
+	if source != nil {
+		javaSource = toJavaClass(*source)
+	}
+	return r.tr.UnwrapOptional(javaSource, NormalizeModelType(rawType))
+}
+
 // SetRequiredFields selects how resolved fields are marked required: one of
 // collector.RequiredFieldsDefault or collector.RequiredFieldsConstraints.
 // The binding view, built later, uses the same mode.
