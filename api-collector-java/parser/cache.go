@@ -24,7 +24,9 @@ import (
 // constants, as CFR prints a Kotlin enum.
 // Version 7: a type is spelled without the annotations inside it, so a cached
 // `List<@NotBlank String>` is no longer the type the parser reads.
-const cacheSchemaVersion = "7"
+// Version 8: a field or return type that is an array or a qualified name is
+// read instead of skipped, and `String tags[]` is the type `String[]`.
+const cacheSchemaVersion = "8"
 
 // Cache provides file-level caching based on content hash.
 type Cache struct {

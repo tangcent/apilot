@@ -540,6 +540,13 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 		return model.EmptyObject()
 	}
 
+	// An array serialises as a JSON array of its element type, the same as a
+	// collection does: `String[]` and `List<String>` are one shape, and
+	// `Order[][]` is an array of arrays of Order.
+	if element, ok := strings.CutSuffix(strings.TrimSpace(rawType), "[]"); ok {
+		return model.ArrayModel(r.ResolveFrom(source, element, typeBindings))
+	}
+
 	if jsonType, ok := primitiveTypes[rawType]; ok {
 		return model.SingleModel(jsonType)
 	}
@@ -590,9 +597,11 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 					// structure ClassType(List, [Foo]) and never re-parsed as a
 					// name. This resolver carries type arguments as strings, so the
 					// equivalent rule is to keep the source spelling for composites
-					// and only substitute names.
+					// and only substitute names: `T[]` under T=Order is `Order[]`,
+					// since the argument is resolved later inside the generic class,
+					// where T is no longer bound.
 					if resolvedModel.IsArray() || resolvedModel.IsMap() {
-						resolvedArgs[i] = arg
+						resolvedArgs[i] = bindTypeParams(arg, typeBindings)
 					}
 				} else {
 					resolvedArgs[i] = arg
@@ -1025,11 +1034,10 @@ func (r *TypeResolver) resolveInheritedFields(class parser.Class, localBindings 
 	superBindings := make(map[string]string)
 	for i, tp := range superClass.TypeParameters {
 		if i < len(class.SuperClassTypeArgs) {
-			resolvedArg := class.SuperClassTypeArgs[i]
-			if bound, ok := localBindings[resolvedArg]; ok {
-				resolvedArg = bound
-			}
-			superBindings[tp] = resolvedArg
+			// The argument is resolved later inside the superclass, where the
+			// subclass's parameters are not bound: `Base<T[]>` under T=Order
+			// binds the superclass's parameter to `Order[]`.
+			superBindings[tp] = bindTypeParams(class.SuperClassTypeArgs[i], localBindings)
 		}
 	}
 	for k, v := range localBindings {
