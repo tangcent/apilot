@@ -204,7 +204,52 @@ func extractTypeNode(node *tree_sitter.Node, source []byte) string {
 	case "star_projection":
 		return "*"
 	}
-	return cleanTypeText(node.Utf8Text(source))
+	return cleanTypeText(typeSource(node, source))
+}
+
+// typeSource returns the source text of a type node without the annotations
+// written inside it: `List<@NotBlank(message = X) String>` reads as
+// `List<String>`.
+//
+// An annotation in a type argument is a type annotation. It says something of
+// the elements, not of the declaration that holds the type, so it is no part of
+// the type's name; kept in the spelling, it made `@NotBlank(message = X) String`
+// a type of its own that no declaration could be found for. The annotations of
+// the declaration itself are read from its modifiers, and are left alone.
+func typeSource(node *tree_sitter.Node, source []byte) string {
+	var cuts [][2]uint
+	collectTypeModifiers(node, &cuts)
+	if len(cuts) == 0 {
+		return node.Utf8Text(source)
+	}
+
+	start, end := node.StartByte(), node.EndByte()
+	var out []byte
+	pos := start
+	for _, cut := range cuts {
+		out = append(out, source[pos:cut[0]]...)
+		// A space stays where the modifiers were, so that the tokens on either
+		// side do not run together.
+		out = append(out, ' ')
+		pos = cut[1]
+	}
+	out = append(out, source[pos:end]...)
+	return string(out)
+}
+
+// collectTypeModifiers gathers the byte ranges of the type modifiers under a
+// type node, in source order. A type_modifiers node holds the annotations of
+// one type; its own arguments sit inside the range that is cut, so the search
+// does not go into it.
+func collectTypeModifiers(node *tree_sitter.Node, cuts *[][2]uint) {
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "type_modifiers" {
+			*cuts = append(*cuts, [2]uint{child.StartByte(), child.EndByte()})
+			continue
+		}
+		collectTypeModifiers(child, cuts)
+	}
 }
 
 // typeAfterColon finds the declared type after the ":" token in a declaration.

@@ -529,7 +529,7 @@ func extractMethod(node *tree_sitter.Node, source []byte) Method {
 		case "identifier":
 			method.Name = child.Utf8Text(source)
 		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type", "void_type":
-			method.ReturnType = child.Utf8Text(source)
+			method.ReturnType = typeText(child, source)
 		case "formal_parameters":
 			method.Parameters = extractParameters(child, source)
 		case "modifiers":
@@ -578,7 +578,7 @@ func extractParameter(node *tree_sitter.Node, source []byte) Parameter {
 		switch child.Kind() {
 		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type",
 			"array_type", "scoped_type_identifier":
-			param.Type = child.Utf8Text(source)
+			param.Type = typeText(child, source)
 		case "identifier":
 			param.Name = child.Utf8Text(source)
 		}
@@ -652,7 +652,7 @@ func extractFieldDeclaration(node *tree_sitter.Node, source []byte, inInterface 
 				}
 			}
 		case "type_identifier", "generic_type", "integral_type", "floating_point_type", "boolean_type":
-			fieldType = child.Utf8Text(source)
+			fieldType = typeText(child, source)
 		case "variable_declarator":
 			for j := uint(0); j < child.ChildCount(); j++ {
 				vdChild := child.Child(j)
@@ -777,14 +777,65 @@ func extractTypeArguments(node *tree_sitter.Node, source []byte) []string {
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Kind() {
-		case "type_identifier":
-			args = append(args, child.Utf8Text(source))
-		case "generic_type":
-			args = append(args, child.Utf8Text(source))
+		case "type_identifier", "generic_type", "annotated_type":
+			args = append(args, typeText(child, source))
 		}
 	}
 
 	return args
+}
+
+// typeText returns a type as written, without the annotations written inside
+// it: `List<@NotBlank(message = "x") String>` is `List<String>`.
+//
+// An annotation in a type argument is a type annotation. It says something of
+// the elements, not of the declaration that holds the type, so it is no part of
+// the type's name; kept in the spelling, it made `@NotBlank(message = X) String`
+// a type of its own that no declaration could be found for. The annotation is
+// left to the declaration's own annotations, which are read from its modifiers.
+func typeText(node *tree_sitter.Node, source []byte) string {
+	var cuts [][2]uint
+	collectTypeAnnotations(node, &cuts)
+	if len(cuts) == 0 {
+		return node.Utf8Text(source)
+	}
+
+	start, end := node.StartByte(), node.EndByte()
+	var out []byte
+	pos := start
+	for _, cut := range cuts {
+		out = append(out, source[pos:cut[0]]...)
+		pos = cut[1]
+		// The space that set the annotation apart from the type goes with it.
+		for pos < end && isSpaceByte(source[pos]) {
+			pos++
+		}
+		if pos < end && source[pos] == '[' {
+			// `String @A []`: nothing is left to keep the dimension apart.
+			out = []byte(strings.TrimRight(string(out), " \t\r\n"))
+		}
+	}
+	out = append(out, source[pos:end]...)
+	return string(out)
+}
+
+// collectTypeAnnotations gathers the byte ranges of the annotations under a type
+// node, outermost first and in source order. An annotation's own arguments are
+// not searched: they sit inside the range that is cut.
+func collectTypeAnnotations(node *tree_sitter.Node, cuts *[][2]uint) {
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		switch child.Kind() {
+		case "annotation", "marker_annotation":
+			*cuts = append(*cuts, [2]uint{child.StartByte(), child.EndByte()})
+		default:
+			collectTypeAnnotations(child, cuts)
+		}
+	}
+}
+
+func isSpaceByte(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\r' || b == '\n'
 }
 
 // extractTypeParameters extracts type parameter names from a class declaration.

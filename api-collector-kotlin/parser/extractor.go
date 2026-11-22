@@ -343,7 +343,7 @@ func extractSuperTypes(node *tree_sitter.Node, source []byte, class *Class) {
 
 // userTypeNameAndArgs splits "Base<A, B>" into "Base" and its arguments.
 func userTypeNameAndArgs(node *tree_sitter.Node, source []byte) (string, []string) {
-	raw := cleanTypeText(node.Utf8Text(source))
+	raw := cleanTypeText(typeSource(node, source))
 	if raw == "" {
 		return "", nil
 	}
