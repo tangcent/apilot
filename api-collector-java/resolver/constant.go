@@ -112,7 +112,11 @@ func (r *TypeResolver) memberConstant(class parser.Class, name string, hops int,
 		if base == "" {
 			continue
 		}
-		if superClass, found := r.constantClass(class, base); found {
+		// The clause that names the supertype is outside the body of class.
+		var superClass parser.Class
+		var found bool
+		r.inHeader(key, func() { superClass, found = r.constantClass(class, base) })
+		if found {
 			if value, found := r.memberConstant(superClass, name, hops, visited); found {
 				return value, true
 			}

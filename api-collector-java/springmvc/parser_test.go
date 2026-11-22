@@ -634,3 +634,41 @@ func TestParser_RequestPartIsFormParam(t *testing.T) {
 		t.Errorf("avatar paramType = %q, want form", params[0].ParamType)
 	}
 }
+
+// The extends clause of a controller is outside its body, so a class nested in
+// the controller does not stand for the superclass that the file imports: the
+// endpoints a controller inherits are the imported class's.
+func TestParser_TheSuperclassIsNotAClassNestedInTheController(t *testing.T) {
+	mapped := func(name, path string) parser.Method {
+		return parser.Method{
+			Name:        name,
+			Annotations: []parser.Annotation{{Name: "GetMapping", Params: map[string]string{"value": path}}},
+			ReturnType:  "String",
+		}
+	}
+	results := []parser.ParseResult{
+		{
+			FilePath: "Ctl.java",
+			Classes: []parser.Class{
+				{
+					Name: "Ctl", Package: "p", FilePath: "Ctl.java", SuperClass: "Base",
+					Imports:     []parser.Import{{Path: "q.Base"}},
+					Annotations: []parser.Annotation{{Name: "RestController"}},
+				},
+				{Name: "Base", Package: "p", Outer: "Ctl", FilePath: "Ctl.java", Methods: []parser.Method{mapped("wrong", "/wrong")}},
+			},
+		},
+		{
+			FilePath: "Base.java",
+			Classes:  []parser.Class{{Name: "Base", Package: "q", FilePath: "Base.java", Methods: []parser.Method{mapped("inherited", "/inherited")}}},
+		},
+	}
+
+	controllers := NewParser().ExtractControllers(results)
+	if len(controllers) != 1 || len(controllers[0].Endpoints) != 1 {
+		t.Fatalf("Expected 1 controller with 1 endpoint, got %+v", controllers)
+	}
+	if got := controllers[0].Endpoints[0].Path; got != "/inherited" {
+		t.Errorf("inherited endpoint path = %q, want /inherited", got)
+	}
+}

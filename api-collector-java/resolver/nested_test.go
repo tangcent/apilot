@@ -324,6 +324,76 @@ func TestResolveSimpleName_AMemberTypeIsInheritedThroughAnImportedSuperclass(t *
 	}
 }
 
+// The extends and implements clauses of a class are outside its body, and the
+// member types of a class are in scope inside the body only. `Base` in
+// `class Child extends Base` is the class the file imports, not the `Child.Base`
+// that Child declares.
+func TestResolve_TheHeaderOfAClassDoesNotSeeItsOwnMemberTypes(t *testing.T) {
+	child := parser.Class{
+		Name: "Child", Package: "p", FilePath: "Child.java", SuperClass: "Base", Interfaces: []string{"Consts"},
+		Imports: []parser.Import{{Path: "q.Base"}, {Path: "q.Consts"}},
+		Fields:  []parser.Field{{Name: "own", Type: "String"}},
+	}
+	// The member types of Child that the imported ones must not be mistaken for.
+	nestedBase := parser.Class{Name: "Base", Package: "p", Outer: "Child", FilePath: "Child.java", Fields: []parser.Field{{Name: "wrong", Type: "String"}}}
+	nestedConsts := parser.Class{Name: "Consts", Package: "p", Outer: "Child", FilePath: "Child.java", IsInterface: true, Fields: []parser.Field{constant("KEY", `"nested-key"`)}}
+	base := parser.Class{Name: "Base", Package: "q", FilePath: "Base.java", Fields: []parser.Field{{Name: "inherited", Type: "String"}}}
+	consts := parser.Class{Name: "Consts", Package: "q", FilePath: "Consts.java", IsInterface: true, Fields: []parser.Field{constant("KEY", `"imported-key"`)}}
+	caller := parser.Class{Name: "Caller", Package: "app", FilePath: "Caller.java"}
+	scanned := []parser.Class{caller, child, nestedBase, nestedConsts, base, consts}
+
+	t.Run("a class of the scanned sources", func(t *testing.T) {
+		r := NewTypeResolver(scanned)
+
+		assertShape(t, "Child", r.ResolveFrom(caller, "p.Child", nil), "{inherited:string,own:string}")
+		if got, ok := r.Supertype(child, "Base"); !ok || got.Package != "q" {
+			t.Errorf("Supertype(Child, Base) = %+v, %v, want q.Base", got, ok)
+		}
+		if got, ok := r.ConstantValue(child, "KEY"); !ok || got != "imported-key" {
+			t.Errorf("ConstantValue(Child, KEY) = %q, %v, want the imported interface's", got, ok)
+		}
+	})
+
+	t.Run("a class read from the dependencies", func(t *testing.T) {
+		library := &nestedLibrary{
+			classes:  map[string]parser.Class{"p.Child": child, "p.Child.Base": nestedBase, "p.Child.Consts": nestedConsts, "q.Base": base, "q.Consts": consts},
+			siblings: map[string][]parser.Class{"p.Child": {nestedBase, nestedConsts}},
+		}
+		r := NewTypeResolver([]parser.Class{caller})
+		r.SetDependencyResolver(library)
+		// The superclass and the interface were read earlier.
+		r.ResolveFrom(caller, "q.Base", nil)
+		r.ResolveFrom(caller, "q.Consts", nil)
+
+		assertShape(t, "Child", r.ResolveFrom(caller, "p.Child", nil), "{inherited:string,own:string}")
+		if got, ok := r.ConstantValue(child, "KEY"); !ok || got != "imported-key" {
+			t.Errorf("ConstantValue(Child, KEY) = %q, %v, want the imported interface's", got, ok)
+		}
+	})
+
+	t.Run("a type argument of the superclass", func(t *testing.T) {
+		holder := parser.Class{
+			Name: "Holder", Package: "p", FilePath: "Holder.java", SuperClass: "Wrapper", SuperClassTypeArgs: []string{"Item"},
+			Imports: []parser.Import{{Path: "q.Wrapper"}},
+		}
+		nestedItem := parser.Class{Name: "Item", Package: "p", Outer: "Holder", FilePath: "Holder.java", Fields: []parser.Field{{Name: "wrong", Type: "String"}}}
+		wrapper := parser.Class{Name: "Wrapper", Package: "q", FilePath: "Wrapper.java", TypeParameters: []string{"T"}, Fields: []parser.Field{{Name: "data", Type: "T"}}}
+		item := parser.Class{Name: "Item", Package: "q", FilePath: "Item.java", Fields: []parser.Field{{Name: "right", Type: "String"}}}
+		holder.Imports = append(holder.Imports, parser.Import{Path: "q.Item"})
+		r := NewTypeResolver([]parser.Class{caller, holder, nestedItem, wrapper, item})
+
+		assertShape(t, "Holder", r.ResolveFrom(caller, "p.Holder", nil), "{data:{right:string}}")
+	})
+
+	t.Run("the body of the class still sees them", func(t *testing.T) {
+		withField := child
+		withField.Fields = []parser.Field{{Name: "base", Type: "Base"}}
+		r := NewTypeResolver([]parser.Class{caller, withField, nestedBase, nestedConsts, base, consts})
+
+		assertShape(t, "Child", r.ResolveFrom(caller, "p.Child", nil), "{base:{wrong:string},inherited:string}")
+	})
+}
+
 // nestedLibrary answers dependency lookups as the dependency resolver does: by
 // qualified name, a nested class by its path, and the other classes of a source
 // with the class that was read.

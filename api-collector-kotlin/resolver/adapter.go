@@ -310,13 +310,26 @@ func qualify(pkg, name string) string {
 // resolver uses for simple names. A class nested in another is found from
 // inside the class that declares it, or through it as Outer.Inner.
 func (r *Resolver) FindClass(source *ktparser.Class, name string) (*ktparser.Class, bool) {
+	return r.find(source, name, false)
+}
+
+// FindSupertype resolves a name that source writes in its supertype list. The
+// list is outside the body of the class, where the classes nested in it are not
+// in scope (the Base of `class Child : Base()` is the class the file imports,
+// not a Child.Base), so the lookup starts at the class around source.
+func (r *Resolver) FindSupertype(source *ktparser.Class, name string) (*ktparser.Class, bool) {
+	return r.find(source, name, true)
+}
+
+// find is FindClass, or FindSupertype when header is set.
+func (r *Resolver) find(source *ktparser.Class, name string, header bool) (*ktparser.Class, bool) {
 	if name == "" {
 		return nil, false
 	}
 	if strings.Contains(name, ".") {
-		return r.findQualified(source, name)
+		return r.findQualified(source, name, header)
 	}
-	if c, ok := r.findMember(source, name); ok {
+	if c, ok := r.findMember(source, name, header); ok {
 		return c, true
 	}
 	for _, key := range r.byFile[source.FilePath] {
@@ -365,11 +378,14 @@ func (r *Resolver) FindClass(source *ktparser.Class, name string) (*ktparser.Cla
 }
 
 // findMember returns the class named name that is nested in source or in a
-// class around it, the innermost first.
-func (r *Resolver) findMember(source *ktparser.Class, name string) (*ktparser.Class, bool) {
+// class around it, the innermost first. Those of source itself are left out when
+// header is set.
+func (r *Resolver) findMember(source *ktparser.Class, name string, header bool) (*ktparser.Class, bool) {
 	for c := source; c != nil; {
-		if member, ok := r.byKey[qualifiedName(*c)+"."+name]; ok {
-			return member, true
+		if !header || c != source {
+			if member, ok := r.byKey[qualifiedName(*c)+"."+name]; ok {
+				return member, true
+			}
 		}
 		if c.Outer == "" {
 			return nil, false
@@ -383,10 +399,10 @@ func (r *Resolver) findMember(source *ktparser.Class, name string) (*ktparser.Cl
 // nested in (Outer.Inner), or by its qualified name. The first part names a
 // class of its own or it does not; in the second case the whole name is the key
 // of a class.
-func (r *Resolver) findQualified(source *ktparser.Class, name string) (*ktparser.Class, bool) {
+func (r *Resolver) findQualified(source *ktparser.Class, name string, header bool) (*ktparser.Class, bool) {
 	head, rest, _ := strings.Cut(name, ".")
 	if first, _ := utf8.DecodeRuneInString(head); head != "" && !unicode.IsLower(first) {
-		if class, ok := r.FindClass(source, head); ok {
+		if class, ok := r.find(source, head, header); ok {
 			key := qualifiedName(*class)
 			for _, segment := range strings.Split(rest, ".") {
 				key += "." + segment

@@ -104,7 +104,7 @@ func (p *Parser) buildTypeBindings(class *ktparser.Class, bindings map[string]st
 	if class.SuperClass == "" {
 		return nil
 	}
-	superClass, found := p.typeResolver.FindClass(class, class.SuperClass)
+	superClass, found := p.typeResolver.FindSupertype(class, class.SuperClass)
 	if !found {
 		return nil
 	}
@@ -129,7 +129,7 @@ func (p *Parser) extractInheritedEndpoints(class *ktparser.Class, basePath strin
 	}
 	visited[key] = true
 
-	superClass, found := p.typeResolver.FindClass(class, class.SuperClass)
+	superClass, found := p.typeResolver.FindSupertype(class, class.SuperClass)
 	if !found {
 		return nil
 	}

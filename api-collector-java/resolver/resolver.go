@@ -173,7 +173,7 @@ type TypeResolver struct {
 	nestedByName       map[string][]string     // simple name -> qualified names of the nested classes carrying it, scanned or read, sorted
 	scannedKeys        map[string]bool         // qualified names of the classes of the scanned sources
 	scannedPackages    map[string]bool         // packages that a class of the scanned sources declares
-	supertypeOf        map[string]bool         // classes whose supertype names are being resolved (see memberTypeInScope)
+	supertypeOf        map[string]bool         // classes whose header is being read: their member types are out of scope (see inHeader)
 	allTypeParams      map[string]bool
 	resolving          map[string][]string // class -> the types it is being expanded as, innermost last (see isBeingExpanded)
 	dependencyResolver DependencyResolver
@@ -347,6 +347,16 @@ func (r *TypeResolver) readDependency(name string) *parser.Class {
 		r.registerDependency(*class, name)
 	}
 	return class
+}
+
+// Supertype returns the declaration that name denotes when class writes it in
+// its extends or implements clause. Class is the lookup for a name written in
+// the body of a class; the clause is outside the body, where the class's own
+// member types are not in scope (JLS 6.3), so `Base` in
+// `class Child extends Base` is the class that Child's file imports, not a
+// `Child.Base` that Child declares.
+func (r *TypeResolver) Supertype(class parser.Class, name string) (parser.Class, bool) {
+	return r.classNamed(r.supertypeKey(class, qualifiedName(class), name))
 }
 
 // sees reports whether the current view takes a declaration into account.
@@ -704,9 +714,21 @@ func (r *TypeResolver) memberOf(c parser.Class, key, name string, seen map[strin
 // supertypeKey resolves the name of a supertype of c, registered under key, as
 // c's header spells it: in the scope around c, not in c.
 func (r *TypeResolver) supertypeKey(c parser.Class, key, name string) string {
-	r.supertypeOf[key] = true
-	defer delete(r.supertypeOf, key)
-	return r.resolveName(c, name)
+	var resolved string
+	r.inHeader(key, func() { resolved = r.resolveName(c, name) })
+	return resolved
+}
+
+// inHeader runs f while the header of the class registered under key is being
+// read: its extends and implements clauses, and what they carry, a type
+// argument included. The member types of the class, declared or inherited, are
+// out of scope there; those of the classes around it are not.
+func (r *TypeResolver) inHeader(key string, f func()) {
+	if !r.supertypeOf[key] {
+		r.supertypeOf[key] = true
+		defer delete(r.supertypeOf, key)
+	}
+	f()
 }
 
 // isDeclared reports whether the resolver holds a declaration under key,
@@ -1544,7 +1566,7 @@ func (r *TypeResolver) resolveInheritedFields(class parser.Class, localBindings 
 		return
 	}
 
-	superClass, found := r.Class(class, class.SuperClass)
+	superClass, found := r.Supertype(class, class.SuperClass)
 	if !found {
 		return
 	}
@@ -1584,13 +1606,19 @@ func (r *TypeResolver) resolveInheritedFields(class parser.Class, localBindings 
 // names where Sub is written, not to whichever class Item names beside Base.
 // bindings binds the type parameters of sub itself, for an argument that
 // mentions them: `Sub<S> extends Base<S[]>` under S=Order binds `Order[]`.
+//
+// The extends clause is outside the body of sub, so the arguments are spelled in
+// its header: the member types of sub are not in scope there, those of the
+// classes around it are (see inHeader).
 func (r *TypeResolver) SuperClassBindings(sub, super parser.Class, bindings map[string]string) map[string]string {
 	out := make(map[string]string, len(super.TypeParameters))
-	for i, tp := range super.TypeParameters {
-		if i < len(sub.SuperClassTypeArgs) {
-			out[tp] = r.qualifyTypeName(sub, bindings, sub.SuperClassTypeArgs[i])
+	r.inHeader(qualifiedName(sub), func() {
+		for i, tp := range super.TypeParameters {
+			if i < len(sub.SuperClassTypeArgs) {
+				out[tp] = r.qualifyTypeName(sub, bindings, sub.SuperClassTypeArgs[i])
+			}
 		}
-	}
+	})
 	return out
 }
 
@@ -1797,7 +1825,7 @@ func (r *TypeResolver) findImplementation(iface parser.Class, key string) (parse
 			// The simple name stands for an interface of the scanned sources only
 			// when it is a top-level one: a nested interface has its own key, and
 			// another interface of the same name nested elsewhere is not it.
-			if r.resolveName(class, ifaceName) == key || (iface.Outer == "" && ifaceName == iface.Name) {
+			if r.supertypeKey(class, candidate, ifaceName) == key || (iface.Outer == "" && ifaceName == iface.Name) {
 				return class, candidate, true
 			}
 		}

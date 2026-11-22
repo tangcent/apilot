@@ -119,7 +119,7 @@ func buildTypeBindings(class parser.Class, bindings map[string]string, typeResol
 		return nil
 	}
 
-	superClass, found := typeResolver.Class(class, class.SuperClass)
+	superClass, found := typeResolver.Supertype(class, class.SuperClass)
 	if !found {
 		return nil
 	}
@@ -176,7 +176,7 @@ func (p *Parser) extractInheritedEndpoints(class parser.Class, basePath string, 
 		return nil
 	}
 
-	superClass, found := typeResolver.Class(class, class.SuperClass)
+	superClass, found := typeResolver.Supertype(class, class.SuperClass)
 	if !found {
 		return nil
 	}
