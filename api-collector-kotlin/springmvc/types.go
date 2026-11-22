@@ -54,10 +54,23 @@ type EndpointParameter struct {
 	// a collection or array of them. The parser decides it where the type is
 	// written, so the scope of the name is known.
 	File         bool
+	// ValueType is the type the parameter holds: the type inside a
+	// java.util.Optional, which is how Spring binds one, and Type itself for
+	// any other. It is empty for a parameter built from a property of a bound
+	// object.
+	ValueType    string
 	ParamType    string
 	Description  string
 	Required     bool
 	DefaultValue string
 	Example      string
 	Enum         []string
+}
+
+// HeldType returns the type the parameter holds (see ValueType).
+func (p EndpointParameter) HeldType() string {
+	if p.ValueType != "" {
+		return p.ValueType
+	}
+	return p.Type
 }

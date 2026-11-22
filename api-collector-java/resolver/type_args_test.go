@@ -79,8 +79,8 @@ func TestQualifyTypeArgs(t *testing.T) {
 	got := r.qualifyTypeArgs(source, nil, []string{"PageData<Unknown>", "List<PageData>", "Map<String, PageData[]>", "?", "T", "? extends PageData"})
 	want := []string{
 		"com.example.lib.PageData<Unknown>",
-		"List<com.example.lib.PageData>",
-		"Map<java.lang.String, com.example.lib.PageData[]>",
+		"java.util.List<com.example.lib.PageData>",
+		"java.util.Map<java.lang.String, com.example.lib.PageData[]>",
 		"?",
 		"T",
 		"? extends com.example.lib.PageData",
@@ -146,11 +146,11 @@ func TestQualifyTypeName_Shapes(t *testing.T) {
 		"Item":                      "com.example.app.dto.Item",
 		"Item[]":                    "com.example.app.dto.Item[]",
 		"Item[][]":                  "com.example.app.dto.Item[][]",
-		"List<Item>":                "List<com.example.app.dto.Item>",
-		"List<Item>[]":              "List<com.example.app.dto.Item>[]",
-		"Map<String,Item>":          "Map<java.lang.String,com.example.app.dto.Item>", // as written: no space
-		"Map<String, Item>":         "Map<java.lang.String, com.example.app.dto.Item>",
-		"Map<String, List<Item[]>>": "Map<java.lang.String, List<com.example.app.dto.Item[]>>",
+		"List<Item>":                "java.util.List<com.example.app.dto.Item>",
+		"List<Item>[]":              "java.util.List<com.example.app.dto.Item>[]",
+		"Map<String,Item>":          "java.util.Map<java.lang.String,com.example.app.dto.Item>", // as written: no space
+		"Map<String, Item>":         "java.util.Map<java.lang.String, com.example.app.dto.Item>",
+		"Map<String, List<Item[]>>": "java.util.Map<java.lang.String, java.util.List<com.example.app.dto.Item[]>>",
 		"? extends Item":            "? extends com.example.app.dto.Item",
 		"? super Item":              "? super com.example.app.dto.Item",
 		"?":                         "?",
@@ -159,7 +159,7 @@ func TestQualifyTypeName_Shapes(t *testing.T) {
 		"String":                    "java.lang.String",
 		"Void":                      "java.lang.Void",
 		"String[]":                  "java.lang.String[]",
-		"List<String>":              "List<java.lang.String>",
+		"List<String>":              "java.util.List<java.lang.String>",
 		"Object[]":                  "java.lang.Object[]",
 		"Date":                      "Date", // nothing in scope names it
 		"int[]":                     "int[]",
@@ -219,7 +219,7 @@ func TestQualifyTypeName_ATypeOfTheJdkIsWrittenInFull(t *testing.T) {
 		"without a dependency resolver": {false, map[string]string{
 			"Period":       "java.time.Period", // a class of the project is called Period too
 			"Date":         "java.util.Date",   // nothing else is called Date
-			"List<Period>": "List<java.time.Period>",
+			"List<Period>": "java.util.List<java.time.Period>",
 			"Period[]":     "java.time.Period[]",
 		}},
 		"with a dependency resolver": {true, map[string]string{
@@ -248,7 +248,7 @@ func TestQualifyTypeName_TypeVariablesOfTheCaller(t *testing.T) {
 	r := NewTypeResolver([]parser.Class{typeArgItem(typeArgDtoPackage, "name")})
 	caller := parser.Class{Name: "Result", Package: typeArgAppPackage, TypeParameters: []string{"T", "Item"}}
 	got := r.qualifyTypeArgs(caller, map[string]string{"T": "com.example.app.dto.Item[]"}, []string{"T", "List<T>", "Item", "Map<String, T[]>"})
-	want := []string{"com.example.app.dto.Item[]", "List<com.example.app.dto.Item[]>", "Item", "Map<java.lang.String, com.example.app.dto.Item[][]>"}
+	want := []string{"com.example.app.dto.Item[]", "java.util.List<com.example.app.dto.Item[]>", "Item", "java.util.Map<java.lang.String, com.example.app.dto.Item[][]>"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("qualifyTypeArgs:\n got  %q\n want %q", got, want)
 	}
@@ -268,11 +268,11 @@ func TestSuperClassBindings(t *testing.T) {
 		{"Sub", nil, map[string]string{"B": "com.example.app.dto.Item"}},
 		{"SubQualified", nil, map[string]string{"B": "com.example.app.dto.Item"}},
 		{"SubArray", nil, map[string]string{"B": "com.example.app.dto.Item[]"}},
-		{"SubList", nil, map[string]string{"B": "List<com.example.app.dto.Item>"}},
+		{"SubList", nil, map[string]string{"B": "java.util.List<com.example.app.dto.Item>"}},
 		{"SubInt", nil, map[string]string{"B": "java.lang.Integer"}},
-		{"SubGeneric", map[string]string{"S": "com.example.lib.Item"}, map[string]string{"B": "List<com.example.lib.Item>"}},
+		{"SubGeneric", map[string]string{"S": "com.example.lib.Item"}, map[string]string{"B": "java.util.List<com.example.lib.Item>"}},
 		// A parameter nobody bound stays a name.
-		{"SubGeneric", nil, map[string]string{"B": "List<S>"}},
+		{"SubGeneric", nil, map[string]string{"B": "java.util.List<S>"}},
 	} {
 		got := r.SuperClassBindings(typeArgClass(tc.class), base, tc.bindings)
 		if !reflect.DeepEqual(got, tc.want) {

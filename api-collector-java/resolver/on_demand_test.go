@@ -253,7 +253,7 @@ func TestResolve_ATypeArgumentNamedByAnImportOnDemandIsQualified(t *testing.T) {
 	r.SetDependencyResolver(library)
 
 	got := r.qualifyTypeArgs(controller, nil, []string{"Dto", "List<Dto>", "Map<String, Dto[]>"})
-	want := []string{"com.example.lib.model.Dto", "List<com.example.lib.model.Dto>", "Map<java.lang.String, com.example.lib.model.Dto[]>"}
+	want := []string{"com.example.lib.model.Dto", "java.util.List<com.example.lib.model.Dto>", "java.util.Map<java.lang.String, com.example.lib.model.Dto[]>"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("qualifyTypeArgs:\n got  %q\n want %q", got, want)
 	}

@@ -29,15 +29,17 @@ func TestClassifyImplicit(t *testing.T) {
 		{"MultipartFile", nil, ImplicitFile, ""},
 		{"List<MultipartFile>", nil, ImplicitFile, ""},
 		{"MultipartFile[]", nil, ImplicitFile, ""},
-		// An Optional parameter is bound as the type it holds.
-		{"Optional<String>", nil, ImplicitParam, ""},
-		{"java.util.Optional<Long>", nil, ImplicitParam, ""},
-		{"Optional<Status>", nil, ImplicitParam, ""},
-		{"Optional<List<Long>>", nil, ImplicitParam, ""},
-		{"Optional<OrderQuery>", nil, ImplicitModel, ""},
-		{"Optional<MultipartFile>", nil, ImplicitFile, ""},
-		{"Optional<List<MultipartFile>>", nil, ImplicitFile, ""},
-		{"Optional<HttpServletRequest>", nil, ImplicitNone, ""},
+		// The type is read as written. An Optional is a bean until the scope of
+		// its name says it is java.util.Optional, which the caller looks
+		// through before it asks (see TestParser_JavaUtilOptionalIsBoundAsItsValue).
+		{"Optional<String>", nil, ImplicitModel, ""},
+		{"java.util.Optional<Long>", nil, ImplicitModel, ""},
+		// What an Optional holds is classified like the type on its own.
+		{"String", nil, ImplicitParam, ""},
+		{"List<Long>", nil, ImplicitParam, ""},
+		{"OrderQuery", nil, ImplicitModel, ""},
+		{"List<MultipartFile>", nil, ImplicitFile, ""},
+		{"HttpServletRequest", nil, ImplicitNone, ""},
 		// Annotations that format or default a value do not change the binding.
 		{"LocalDate", []string{"DateTimeFormat"}, ImplicitParam, ""},
 		{"BigDecimal", []string{"NumberFormat"}, ImplicitParam, ""},
@@ -215,16 +217,17 @@ func TestOptionalArgument(t *testing.T) {
 	}
 }
 
-// An Optional is looked through: the element of a parameter that holds a list
-// of files is the file, which is how the collector tells it from a value.
-func TestElementType_LooksThroughOptional(t *testing.T) {
+// The element of a parameter that holds a list of files is the file, which is
+// how the collector tells it from a value. The type is read as written: an
+// Optional is looked through by the caller, once the scope of its name says it
+// is java.util.Optional.
+func TestElementType_ReadsTheTypeAsWritten(t *testing.T) {
 	for typeName, want := range map[string]string{
-		"Optional<List<MultipartFile>>": "MultipartFile",
-		"Optional<MultipartFile[]>":     "MultipartFile",
-		"Optional<MultipartFile>":       "MultipartFile",
-		"java.util.Optional<Status>":    "Status",
-		"List<Long>":                    "Long",
-		"Optional":                      "Optional",
+		"List<MultipartFile>":     "MultipartFile",
+		"MultipartFile[]":         "MultipartFile",
+		"MultipartFile":           "MultipartFile",
+		"List<Long>":              "Long",
+		"Optional<MultipartFile>": "Optional",
 	} {
 		if got := ElementType(typeName); got != want {
 			t.Errorf("ElementType(%q) = %q, want %q", typeName, got, want)

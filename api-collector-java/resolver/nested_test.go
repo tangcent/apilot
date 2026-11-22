@@ -178,8 +178,8 @@ func TestQualifyTypeArgsSpellsNestedClassesInFull(t *testing.T) {
 
 	got := r.qualifyTypeArgs(plain, nil, []string{"Plain", "Outer.Inner", "List<Outer.Inner>", "Map<String, Plain>", "Map<String, Outer.Mid.Deep>", "? extends Outer.Inner", "Unknown"})
 	want := []string{
-		"com.example.app.Plain", "com.example.app.Outer.Inner", "List<com.example.app.Outer.Inner>", "Map<java.lang.String, com.example.app.Plain>",
-		"Map<java.lang.String, com.example.app.Outer.Mid.Deep>", "? extends com.example.app.Outer.Inner", "Unknown",
+		"com.example.app.Plain", "com.example.app.Outer.Inner", "java.util.List<com.example.app.Outer.Inner>", "java.util.Map<java.lang.String, com.example.app.Plain>",
+		"java.util.Map<java.lang.String, com.example.app.Outer.Mid.Deep>", "? extends com.example.app.Outer.Inner", "Unknown",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("qualifyTypeArgs:\n got  %q\n want %q", got, want)

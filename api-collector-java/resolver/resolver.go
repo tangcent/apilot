@@ -48,6 +48,8 @@ var javaLangScalars = map[string]string{
 	"Number":    model.JsonTypeDouble,
 	"Byte":      model.JsonTypeInt,
 	"Character": model.JsonTypeString,
+	// A CharSequence is text on the wire.
+	"CharSequence": model.JsonTypeString,
 }
 
 // jdkQualifiedScalars maps a fully qualified JDK value type to the JSON scalar
@@ -56,10 +58,11 @@ var javaLangScalars = map[string]string{
 // Names here are matched exactly, so short spellings that could belong to a
 // project class (`Time`, `URL`) stay resolvable by the class registry: a bare
 // name is read as the JDK class only when the source imports it by name or its
-// package on demand (see platformName). This is easy-yapi's
+// package on demand (see declaredInScope). This is easy-yapi's
 // `json.rule.convert[<fqn>]` layer.
 var jdkQualifiedScalars = map[string]string{
 	"java.sql.Time":         model.JsonTypeString,
+	"java.sql.Date":         model.JsonTypeString,
 	"java.sql.Timestamp":    model.JsonTypeString,
 	"java.net.URL":          model.JsonTypeString,
 	"java.net.URI":          model.JsonTypeString,
@@ -78,6 +81,8 @@ var jdkQualifiedScalars = map[string]string{
 	"java.util.Locale":   model.JsonTypeString,
 	"java.util.Currency": model.JsonTypeString,
 	"java.util.TimeZone": model.JsonTypeString,
+	// The Kotlin standard library's CharSequence is text as well.
+	"kotlin.CharSequence": model.JsonTypeString,
 }
 
 // javaUtilOptional is the one generic class that holds a value or nothing.
@@ -164,8 +169,6 @@ var jdkScalarTypes = map[string]string{
 	"atomicinteger": model.JsonTypeInt,
 	"atomiclong":    model.JsonTypeLong,
 	"longadder":     model.JsonTypeLong,
-	// java.lang, and the Kotlin standard library's own CharSequence
-	"charsequence": model.JsonTypeString,
 }
 
 // jdkValueTypes lists, by their qualified names, the classes of the JDK that
@@ -192,7 +195,6 @@ var jdkValueTypes = map[string]bool{
 	"java.util.concurrent.atomic.AtomicInteger": true,
 	"java.util.concurrent.atomic.AtomicLong":    true,
 	"java.util.concurrent.atomic.LongAdder":     true,
-	"java.lang.CharSequence":                    true,
 }
 
 // simpleTypeName reduces a type spelling to its lower-cased simple name:
@@ -230,12 +232,13 @@ var mapTypes = map[string]bool{
 	"SortedMap":     true,
 }
 
-// unqualifiedJdkName strips the package from a name of java.util or java.lang
-// (`java.util.List` is `List`, `java.lang.Iterable` is `Iterable`). A name of
-// any other package, or of a nested class (`java.util.Map.Entry`), is returned
-// as written.
+// unqualifiedJdkName strips the package from a name of java.util, java.lang or
+// the Kotlin standard library's collections (`java.util.List` is `List`,
+// `java.lang.Iterable` is `Iterable`, `kotlin.collections.Map` is `Map`). A name
+// of any other package, or of a nested class (`java.util.Map.Entry`), is
+// returned as written.
 func unqualifiedJdkName(name string) string {
-	for _, prefix := range []string{"java.util.", "java.lang."} {
+	for _, prefix := range []string{"java.util.", "java.lang.", "kotlin.collections."} {
 		if rest, ok := strings.CutPrefix(name, prefix); ok && !strings.Contains(rest, ".") {
 			return rest
 		}
@@ -243,16 +246,37 @@ func unqualifiedJdkName(name string) string {
 	return name
 }
 
-// isCollectionType reports whether a type name, spelled with or without its
-// package, is a collection serialised as an array.
-func isCollectionType(name string) bool {
-	return collectionTypes[unqualifiedJdkName(name)]
+// jdkClassName returns the simple name of the java.util or java.lang class that
+// a type name denotes in source, and name as written when it denotes another
+// type.
+//
+// A name spelled with its package is that class or it is not. A simple name is
+// the class only when no declaration in scope hides it: a class of the project
+// called `List` or `Iterable` is a class, and so is a single-type import of
+// another library's.
+func (r *TypeResolver) jdkClassName(source parser.Class, name string) string {
+	if simple := unqualifiedJdkName(name); simple != name {
+		return simple
+	}
+	if strings.Contains(name, ".") {
+		return name
+	}
+	if key, declared := r.inScope(source, name, false); declared {
+		return unqualifiedJdkName(key)
+	}
+	return name
 }
 
-// isMapType reports whether a type name, spelled with or without its package,
-// is a map serialised as an object.
-func isMapType(name string) bool {
-	return mapTypes[unqualifiedJdkName(name)]
+// isCollectionType reports whether a type name, as written in source, is a
+// collection serialised as an array.
+func (r *TypeResolver) isCollectionType(source parser.Class, name string) bool {
+	return collectionTypes[r.jdkClassName(source, name)]
+}
+
+// isMapType reports whether a type name, as written in source, is a map
+// serialised as an object.
+func (r *TypeResolver) isMapType(source parser.Class, name string) bool {
+	return mapTypes[r.jdkClassName(source, name)]
 }
 
 // reactiveWrappers maps a reactor publisher's simple name to whether its
@@ -1377,41 +1401,32 @@ func lastSegment(name string) string {
 	return name
 }
 
-// platformName returns the qualified name of the JDK or library type that name
-// denotes in source, or name itself when it denotes none. name is what
-// resolveSimpleName answered.
-//
-// A name written with its package is qualified already, and resolveSimpleName
-// has followed a single-type import. What remains bare may still name a type
-// the source imports on demand (`import java.sql.*`). It does so only when no
-// declaration of the scanned sources shares its simple name, as such a class
-// wins over every JDK type.
-func (r *TypeResolver) platformName(source parser.Class, name string) string {
-	if strings.Contains(name, ".") || len(r.bySimpleName[name]) > 0 {
-		return name
-	}
-	for _, imp := range source.Imports {
-		if imp.Static || !imp.OnDemand {
-			continue
-		}
-		if qualified := imp.Path + "." + name; isPlatformType(qualified) {
-			return qualified
-		}
-	}
-	return name
-}
-
 // optionalValue reports whether a field type holds a value or nothing and, for
 // `Optional<T>`, returns T. OptionalInt and its kin have no type argument.
+// What a name denotes is decided by its scope (resolveSimpleName), so a class of
+// the project or of another library called `Optional` holds nothing.
 func (r *TypeResolver) optionalValue(source parser.Class, typeName string) (string, bool) {
 	base, args := parseGenericType(strings.TrimSpace(typeName))
-	if !isOptionalType(r.platformName(source, r.resolveName(source, base))) {
+	if !isOptionalType(r.resolveName(source, base)) {
 		return "", false
 	}
 	if len(args) == 1 {
 		return args[0], true
 	}
 	return "", true
+}
+
+// UnwrapOptional returns T of a type written `Optional<T>` in source when the
+// name denotes java.util.Optional, and any other type as written. A caller that
+// classifies a type by its spelling (how Spring binds a handler parameter) asks
+// here first, so that the rule reaches java.util.Optional alone: a project
+// class named Optional is an object like any other.
+func (r *TypeResolver) UnwrapOptional(source parser.Class, typeName string) string {
+	base, args := parseGenericType(strings.TrimSpace(typeName))
+	if len(args) == 1 && r.resolveName(source, base) == javaUtilOptional {
+		return args[0]
+	}
+	return strings.TrimSpace(typeName)
 }
 
 // platformEnum returns the JDK enum that a type name denotes in source, as a
@@ -1421,7 +1436,7 @@ func (r *TypeResolver) platformEnum(source parser.Class, typeName string) (parse
 	if name == "" || strings.ContainsAny(name, "<[") {
 		return parser.Class{}, false
 	}
-	qualified := r.platformName(source, r.resolveName(source, name))
+	qualified := r.resolveName(source, name)
 	constants, ok := platformEnums[qualified]
 	if !ok {
 		return parser.Class{}, false
@@ -1578,13 +1593,13 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 		// An Optional is plumbing too: what Jackson writes is the value it
 		// holds. Only java.util.Optional is, which the scope of the name
 		// decides: a project's own `Optional` or another library's is a class.
-		if len(typeArgs) == 1 && r.platformName(source, r.resolveName(source, baseName)) == javaUtilOptional {
+		if len(typeArgs) == 1 && r.resolveName(source, baseName) == javaUtilOptional {
 			return r.ResolveFrom(source, typeArgs[0], typeBindings)
 		}
 
 		// A collection or a map holds its arguments' models, which resolve where
 		// they are written.
-		if isCollectionType(baseName) {
+		if r.isCollectionType(source, baseName) {
 			if len(typeArgs) > 0 {
 				itemModel := r.ResolveFrom(source, typeArgs[0], typeBindings)
 				return model.ArrayModel(itemModel)
@@ -1592,7 +1607,7 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 			return model.ArrayModel(model.NullModel())
 		}
 
-		if isMapType(baseName) {
+		if r.isMapType(source, baseName) {
 			keyModel := model.SingleModel(model.JsonTypeString)
 			valueModel := model.NullModel()
 			if len(typeArgs) >= 2 {
@@ -1621,7 +1636,7 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	// before the dependencies are asked: the answer does not depend on the
 	// version of a library the project uses, and what a dependency's copy of a
 	// Jackson tree or a multipart file expands to is its internals, not the wire.
-	platform := r.platformName(source, name)
+	platform := name
 	if _, ok := platformEnums[platform]; ok {
 		return model.SingleModel(model.JsonTypeString)
 	}
@@ -1785,7 +1800,7 @@ func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []s
 		return model.RefModel(class.Name)
 	}
 
-	if isMapSubclass(class) {
+	if r.isMapSubclass(class) {
 		return r.resolveMapSubclass(class, typeArgs)
 	}
 
@@ -2212,9 +2227,11 @@ func (r *TypeResolver) qualifyTypeArgs(source parser.Class, bindings map[string]
 // is itself.
 //
 // What ResolveFrom answers for by the spelling alone, before it consults a
-// scope, keeps that meaning wherever the argument is read: collections, maps and
-// the primitive types stay as written. A name that is already qualified, and a
-// name nothing in scope declares, stay as written too.
+// scope, keeps that meaning wherever the argument is read: the primitive types
+// stay as written. A collection or a map is the java.util class its name denotes
+// in the caller's scope, and is written as such (see collectionIdentity). A name
+// that is already qualified, and a name nothing in scope declares, stay as
+// written too.
 //
 // The written form is remembered (see shortForm), because the type is still the
 // one the source wrote when it is displayed or reported, unless it is shown by
@@ -2249,6 +2266,11 @@ func (r *TypeResolver) qualifyTypeName(source parser.Class, bindings map[string]
 	}
 	if spelled, ok := scopeFreeName(base); ok {
 		base = spelled
+	} else if jdk, ok := r.collectionIdentity(source, base); ok {
+		if !r.shownInFull(jdk, base) {
+			r.showAs(jdk, base)
+		}
+		base = jdk
 	} else if key := r.resolveName(source, base); key != base {
 		if !r.shownInFull(key, base) {
 			r.showAs(key, base)
@@ -2337,14 +2359,27 @@ func isTypeNameChar(c byte) bool {
 
 // scopeFreeName reports whether ResolveFrom answers for a bare name from its
 // spelling alone, before it consults any scope: the keyword of a primitive type,
-// a collection or a map. A class of the project that shares such a name does not
-// take its place. It returns the spelling that keeps that meaning wherever it is
-// read, the name itself.
+// which no declaration can hide. It returns the spelling that keeps that meaning
+// wherever it is read, the name itself.
 func scopeFreeName(name string) (string, bool) {
-	if _, ok := primitiveTypes[name]; ok {
-		return name, true
+	_, ok := primitiveTypes[name]
+	return name, ok
+}
+
+// collectionIdentity returns the qualified name of the java.util collection or
+// map, or of java.lang.Iterable, that a simple name denotes in source, and
+// reports false for any other name: a class of the project, or a single-type
+// import of another library's, that is called List is a class (see
+// jdkClassName).
+func (r *TypeResolver) collectionIdentity(source parser.Class, name string) (string, bool) {
+	simple := r.jdkClassName(source, name)
+	if strings.Contains(simple, ".") || (!collectionTypes[simple] && !mapTypes[simple]) {
+		return "", false
 	}
-	return name, collectionTypes[name] || mapTypes[name]
+	if simple == "Iterable" {
+		return "java.lang.Iterable", true
+	}
+	return "java.util." + simple, true
 }
 
 // isPlatformName reports whether a qualified name belongs to the JDK or the
@@ -2410,14 +2445,14 @@ func splitTypeArgs(s string) []string {
 	return args
 }
 
-func isMapSubclass(class parser.Class) bool {
+func (r *TypeResolver) isMapSubclass(class parser.Class) bool {
 	if class.SuperClass == "" {
 		return false
 	}
 	baseName, _ := parseGenericType(class.SuperClass)
 	// A map written in full is a class of java.util: another package's HashMap is a
 	// class of its own.
-	return isMapType(baseName)
+	return r.isMapType(class, baseName)
 }
 
 // findImplementation returns the class in the scanned sources that implements

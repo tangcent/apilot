@@ -10,18 +10,19 @@ import (
 // javaLangNames are the java.lang classes the resolver answers for without a
 // declaration, each with the shape the JDK class exports.
 var javaLangNames = map[string]string{
-	"String":    "string",
-	"Integer":   "int",
-	"Short":     "int",
-	"Long":      "long",
-	"Float":     "float",
-	"Double":    "double",
-	"Boolean":   "boolean",
-	"Void":      "null",
-	"Number":    "double",
-	"Byte":      "int",
-	"Character": "string",
-	"Object":    "object:object",
+	"String":       "string",
+	"Integer":      "int",
+	"Short":        "int",
+	"Long":         "long",
+	"Float":        "float",
+	"Double":       "double",
+	"Boolean":      "boolean",
+	"Void":         "null",
+	"Number":       "double",
+	"Byte":         "int",
+	"Character":    "string",
+	"CharSequence": "string",
+	"Object":       "object:object",
 }
 
 // projectType declares a class of the scanned sources that carries a java.lang

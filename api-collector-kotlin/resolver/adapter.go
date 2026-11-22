@@ -224,6 +224,18 @@ func (r *Resolver) SuperClassBindings(sub, super *ktparser.Class, bindings map[s
 	return r.tr.SuperClassBindings(r.scope.toJavaClass(*sub), r.scope.toJavaClass(*super), bindingsOrNil(bindings))
 }
 
+// UnwrapOptional returns T of a type written `Optional<T>` in source when the
+// name denotes java.util.Optional, and the type as written otherwise, both in
+// the spelling the shared resolver reads (see NormalizeType). A class of the
+// project called Optional is not looked through.
+func (r *Resolver) UnwrapOptional(source *ktparser.Class, rawType string) string {
+	javaSource := javaparser.Class{}
+	if source != nil {
+		javaSource = r.scope.toJavaClass(*source)
+	}
+	return r.tr.UnwrapOptional(javaSource, r.scope.normalize(source, rawType))
+}
+
 // SetRequiredFields selects how resolved fields are marked required: one of
 // collector.RequiredFieldsDefault or collector.RequiredFieldsConstraints.
 // The binding view, built later, uses the same mode.

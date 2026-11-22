@@ -236,7 +236,7 @@ func TestResolve_JdkValueTypesAreScalars(t *testing.T) {
 	r := NewTypeResolver(nil)
 	r.SetUnresolved(collector.NewUnresolvedSet())
 
-	source := importing("com.example", "java.util.Locale", "java.util.*", "java.sql.*")
+	source := importing("com.example", "java.util.Locale", "java.util.*", "java.sql.*", "java.time.ZoneId", "java.util.concurrent.atomic.*")
 	for typeName, want := range map[string]string{
 		"CharSequence":                          "string",
 		"java.lang.CharSequence":                "string",

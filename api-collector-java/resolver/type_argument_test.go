@@ -456,9 +456,9 @@ func TestResolve_ASuperclassArgumentIsTheClassTheSubclassNames(t *testing.T) {
 	})
 }
 
-// What the resolver answers for itself before it consults any scope keeps its
-// meaning when it is passed as an argument, even where the generic class's
-// package declares a class of that name.
+// A name of the JDK keeps its meaning when it is passed as an argument, even
+// where the generic class's package declares a class of that name: the caller's
+// scope decides what the name is, and the argument is the class it names.
 func TestResolve_BuiltInNamesAsArgumentsKeepTheirMeaning(t *testing.T) {
 	f := typeArgField
 	classes := []parser.Class{
@@ -470,14 +470,21 @@ func TestResolve_BuiltInNamesAsArgumentsKeepTheirMeaning(t *testing.T) {
 		{Name: "List", Package: typeArgLibPackage, FilePath: "lib/List.java", Fields: []parser.Field{f("shadow", "int")}},
 		{Name: "Map", Package: typeArgLibPackage, FilePath: "lib/Map.java", Fields: []parser.Field{f("shadow", "int")}},
 		typeArgLibraryClass("Box", []string{"T"}, "", nil, f("data", "T")),
-		// The caller's package declares them too.
+		// The package of the application declares a List and a Map too. Its
+		// Controller imports the JDK's, which win over the package; its Own does
+		// not, so for Own the names are the package's classes.
 		{Name: "List", Package: typeArgAppPackage, FilePath: "app/List.java", Fields: []parser.Field{f("own", "int")}},
 		{Name: "Map", Package: typeArgAppPackage, FilePath: "app/Map.java", Fields: []parser.Field{f("own", "int")}},
-		{Name: "Controller", Package: typeArgAppPackage, FilePath: "app/Controller.java",
+		{Name: "Own", Package: typeArgAppPackage, FilePath: "app/Own.java",
 			Imports: []parser.Import{{Path: typeArgDtoPackage + ".Item"}, {Path: typeArgLibPackage + ".Box"}}},
+		{Name: "Controller", Package: typeArgAppPackage, FilePath: "app/Controller.java",
+			Imports: []parser.Import{
+				{Path: typeArgDtoPackage + ".Item"}, {Path: typeArgLibPackage + ".Box"},
+				{Path: "java.util.List"}, {Path: "java.util.Map"},
+			}},
 	}
 	r := NewTypeResolver(classes)
-	caller := classes[len(classes)-1]
+	controller, own := classes[len(classes)-1], classes[len(classes)-2]
 	for spelling, want := range map[string]string{
 		"String":            "string",
 		"Integer":           "int",
@@ -485,7 +492,14 @@ func TestResolve_BuiltInNamesAsArgumentsKeepTheirMeaning(t *testing.T) {
 		"Map<String, Item>": "{Item(name)}",
 		"List<String>":      "[string]",
 	} {
-		if got := typeArgShape(typeArgAt(r.ResolveFrom(caller, "Box<"+spelling+">", nil), "data")); got != want {
+		if got := typeArgShape(typeArgAt(r.ResolveFrom(controller, "Box<"+spelling+">", nil), "data")); got != want {
+			t.Errorf("Box<%s>.data = %s, want %s", spelling, got, want)
+		}
+	}
+	for spelling, want := range map[string]string{
+		"String": "string", "Integer": "int", "List<Item>": "List(own)", "Map<String, Item>": "Map(own)",
+	} {
+		if got := typeArgShape(typeArgAt(r.ResolveFrom(own, "Box<"+spelling+">", nil), "data")); got != want {
 			t.Errorf("Box<%s>.data = %s, want %s", spelling, got, want)
 		}
 	}
