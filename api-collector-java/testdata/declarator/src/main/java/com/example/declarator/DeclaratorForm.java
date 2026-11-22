@@ -14,5 +14,9 @@ public class DeclaratorForm {
 
     private List<String> aliases, nicknames;
 
+    // Spaces may stand in front of the brackets and between them, per declarator.
+    private int spacedA, spacedB [ ], spacedC [ ][ ];
+    private List<String []> spacedList, spacedLists [ ];
+
     private static final String KIND = "kind", LEVEL = "level";
 }

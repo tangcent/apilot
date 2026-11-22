@@ -241,6 +241,180 @@ public class Holder {
 	}
 }
 
+// A varargs parameter is spelled like the array parameter it stands for, however
+// the source spaces or annotates it: `String ... names`, `@NotNull String...
+// names` and `@NotNull String ... names` are all `String[]`, and the element
+// of an array keeps its own dimensions, so `int [ ] ... grid` is `int[][]`, the
+// type of `int [ ][ ] grid`. The resolver reads the brackets off the end of the
+// spelling, so a space or an annotation left in it would name a type that no
+// declaration has.
+func TestVarargsSpellTheSameAsTheArrayTheyStandFor(t *testing.T) {
+	p, err := NewParser(ParserOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	classes, err := p.ParseSource([]byte(`package com.example;
+
+import java.util.List;
+import java.util.Map;
+
+public class Holder<T> {
+    public void plain(String... names) {}
+    public void spaced(String ... names) {}
+    public void wide(String   ...   names) {}
+    public void annotated(@NotNull String... names) {}
+    public void annotatedSpaced(@NotNull String ... names) {}
+    public void finalAnnotated(final @NotNull @Size(max = 2) String ... names) {}
+    public void generic(List<String []>... lists) {}
+    public void genericSpaced(List<String []> ... lists) {}
+    public void genericAnnotated(List<@NotNull String [ ]> ... lists) {}
+    public void map(Map<String, byte [ ]> ... maps) {}
+    public void nested(int [ ] ... grid) {}
+    public void cube(int [ ] [ ] ... cube) {}
+    public void annotatedDimensions(String @A [] @B [] ... names) {}
+    public void qualified(java.lang.String [ ] ... names) {}
+    public void variable(T [ ] ... items) {}
+    public void variableOnly(T ... items) {}
+
+    public void arrays(String [ ] a, String @NotNull [] b, int [ ][ ] c, List<String []> d, java.lang.String [ ] e) {}
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, m := range classes[0].Methods {
+		if m.Name == "arrays" {
+			continue
+		}
+		if len(m.Parameters) != 1 {
+			t.Errorf("%s: parameters = %v, want one", m.Name, m.Parameters)
+			continue
+		}
+		got[m.Name] = m.Parameters[0].Name + " " + m.Parameters[0].Type
+	}
+	want := map[string]string{
+		"plain":               "names String[]",
+		"spaced":              "names String[]",
+		"wide":                "names String[]",
+		"annotated":           "names String[]",
+		"annotatedSpaced":     "names String[]",
+		"finalAnnotated":      "names String[]",
+		"generic":             "lists List<String[]>[]",
+		"genericSpaced":       "lists List<String[]>[]",
+		"genericAnnotated":    "lists List<String[]>[]",
+		"map":                 "maps Map<String, byte[]>[]",
+		"nested":              "grid int[][]",
+		"cube":                "cube int[][][]",
+		"annotatedDimensions": "names String[][][]",
+		"qualified":           "names java.lang.String[][]",
+		"variable":            "items T[][]",
+		"variableOnly":        "items T[]",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("varargs parameters:\n got  %v\n want %v", got, want)
+	}
+
+	// The array parameters written with the same spaces are what the varargs
+	// above become: a varargs of `T` is the array `T[]`, of `String[]` the array
+	// `String[][]`.
+	var arrays []string
+	for _, m := range classes[0].Methods {
+		if m.Name == "arrays" {
+			for _, pm := range m.Parameters {
+				arrays = append(arrays, pm.Name+" "+pm.Type)
+			}
+		}
+	}
+	wantArrays := []string{"a String[]", "b String[]", "c int[][]", "d List<String[]>", "e java.lang.String[]"}
+	if !reflect.DeepEqual(arrays, wantArrays) {
+		t.Errorf("array parameters:\n got  %v\n want %v", arrays, wantArrays)
+	}
+}
+
+// Every declarator of a field declaration spells its type as a field of its
+// own would, whatever the source puts in front of the brackets or between them:
+// the brackets after a name add their dimensions to the element type of the
+// declaration, one `[]` each, whether the type already is an array or not.
+func TestDeclaratorsSpellTheSameAsFieldsOfTheirOwn(t *testing.T) {
+	p, err := NewParser(ParserOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	classes, err := p.ParseSource([]byte(`package com.example;
+
+import java.util.List;
+import java.util.Map;
+
+public class Holder<T> {
+    private int a, b[];
+    private int c, d [ ], e [ ][ ], f;
+    private String [ ] g, h [ ], i;
+    private String[] j, k[], l[][];
+    private List<String []> m, n [ ];
+    private List<@NotNull String @A []> o, p @B [] @C [];
+    private String @NotNull [] q, r @Valid [];
+    private java.lang.String [ ] s, t [ ];
+    private Map<String, byte [ ]> u, v [ ];
+    private T [ ] w, x [ ];
+    private static final String KEY = "key", KEYS [ ] = {"a"}, OTHER = "other";
+
+    private int ownB[];
+    private int ownD [ ];
+    private int ownE [ ][ ];
+    private String [ ] ownH [ ];
+    private String[] ownK[];
+    private String[] ownL[][];
+    private List<String []> ownN [ ];
+    private List<@NotNull String @A []> ownP @B [] @C [];
+    private String @NotNull [] ownR @Valid [];
+    private java.lang.String [ ] ownT [ ];
+    private Map<String, byte [ ]> ownV [ ];
+    private T [ ] ownX [ ];
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, f := range classes[0].Fields {
+		got[f.Name] = f.Type
+	}
+	want := map[string]string{
+		"a": "int", "b": "int[]",
+		"c": "int", "d": "int[]", "e": "int[][]", "f": "int",
+		"g": "String[]", "h": "String[][]", "i": "String[]",
+		"j": "String[]", "k": "String[][]", "l": "String[][][]",
+		"m": "List<String[]>", "n": "List<String[]>[]",
+		"o": "List<String[]>", "p": "List<String[]>[][]",
+		"q": "String[]", "r": "String[][]",
+		"s": "java.lang.String[]", "t": "java.lang.String[][]",
+		"u": "Map<String, byte[]>", "v": "Map<String, byte[]>[]",
+		"w": "T[]", "x": "T[][]",
+		"KEY": "String", "KEYS": "String[]", "OTHER": "String",
+
+		"ownB": "int[]", "ownD": "int[]", "ownE": "int[][]",
+		"ownH": "String[][]", "ownK": "String[][]", "ownL": "String[][][]",
+		"ownN": "List<String[]>[]", "ownP": "List<String[]>[][]",
+		"ownR": "String[][]", "ownT": "java.lang.String[][]",
+		"ownV": "Map<String, byte[]>[]", "ownX": "T[][]",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("fields:\n got  %v\n want %v", got, want)
+	}
+	// A declarator is the field a declaration of its own would be.
+	for declarator, own := range map[string]string{
+		"b": "ownB", "d": "ownD", "e": "ownE", "h": "ownH", "k": "ownK", "l": "ownL", "n": "ownN",
+		"p": "ownP", "r": "ownR", "t": "ownT", "v": "ownV", "x": "ownX",
+	} {
+		if got[declarator] != got[own] {
+			t.Errorf("%s = %s, but %s = %s", declarator, got[declarator], own, got[own])
+		}
+	}
+}
+
 // A record component can be varargs too; it is an array field.
 func TestVarargsRecordComponent(t *testing.T) {
 	p, err := NewParser(ParserOptions{})

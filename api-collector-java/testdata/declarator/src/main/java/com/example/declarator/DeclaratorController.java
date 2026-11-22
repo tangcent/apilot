@@ -1,5 +1,6 @@
 package com.example.declarator;
 
+import javax.validation.constraints.NotNull;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -32,6 +33,22 @@ public class DeclaratorController {
     @GetMapping("/implicit")
     public String[] implicit(String... tags) {
         return tags;
+    }
+
+    /** The spaces around the ellipsis and the annotation are not part of the type. */
+    @GetMapping("/spaced")
+    public String[] spaced(String ... names) {
+        return names;
+    }
+
+    @GetMapping("/annotated")
+    public String[] annotated(@NotNull String... names) {
+        return names;
+    }
+
+    @GetMapping("/annotated-spaced")
+    public String[] annotatedSpaced(@NotNull String ... names) {
+        return names;
     }
 
     @PostMapping("/items")

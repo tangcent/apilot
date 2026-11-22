@@ -14,22 +14,29 @@ import (
 // of the request body and of the response, each as its kind, in the order the
 // source declares them. Several fields share one declaration; each keeps its
 // own name, brackets and initializer, and the annotation and the doc comment
-// of the declaration apply to every one of them.
+// of the declaration apply to every one of them. The brackets of a declarator
+// may be spaced (`spacedB [ ]`): the dimensions are counted, not spelled.
 var declaratorFieldExpectation = map[string]string{
-	"firstName": "string",
-	"lastName":  "string",
-	"width":     "int",
-	"height":    "int",
-	"depth":     "array<int>",
-	"note":      "string",
-	"tags":      "array<string>",
-	"remark":    "string",
-	"aliases":   "array<string>",
-	"nicknames": "array<string>",
+	"firstName":   "string",
+	"lastName":    "string",
+	"width":       "int",
+	"height":      "int",
+	"depth":       "array<int>",
+	"note":        "string",
+	"tags":        "array<string>",
+	"remark":      "string",
+	"aliases":     "array<string>",
+	"nicknames":   "array<string>",
+	"spacedA":     "int",
+	"spacedB":     "array<int>",
+	"spacedC":     "array<array<int>>",
+	"spacedList":  "array<array<string>>",
+	"spacedLists": "array<array<array<string>>>",
 }
 
 var declaratorFieldOrder = []string{
 	"firstName", "lastName", "width", "height", "depth", "note", "tags", "remark", "aliases", "nicknames",
+	"spacedA", "spacedB", "spacedC", "spacedList", "spacedLists",
 }
 
 // A varargs parameter is exported as the array it is: `String... ids` as
@@ -142,6 +149,18 @@ func TestVarargsParametersAreExportedAsArrays(t *testing.T) {
 	}
 	if p := implicit.Parameters[0]; p.Name != "tags" || p.In != "query" || p.TypeName != "String[]" {
 		t.Errorf("implicit parameter = %+v, want tags in query as String[]", p)
+	}
+
+	// Spaces around the ellipsis, and an annotation in front of the type, leave
+	// the parameter the one `String... names` is.
+	for _, path := range []string{"/declarators/spaced", "/declarators/annotated", "/declarators/annotated-spaced"} {
+		endpoint := byPath[path]
+		if endpoint == nil || len(endpoint.Parameters) != 1 {
+			t.Fatalf("%s: endpoint = %+v, want one parameter", path, endpoint)
+		}
+		if p := endpoint.Parameters[0]; p.Name != "names" || p.In != "query" || p.TypeName != "String[]" {
+			t.Errorf("%s parameter = %+v, want names in query as String[]", path, p)
+		}
 	}
 
 	for path, wantKind := range varargsBodyExpectation {
