@@ -96,6 +96,40 @@ func TestResolveClass_ANestedClassIsReadFromTheSourceOfItsOuterClass(t *testing.
 	}
 }
 
+// A `$` may be part of the name of a top-level class. A name that reads as the
+// binary name of a nested class is read as one first, and as written when that
+// finds no class.
+func TestResolveClass_ADollarInTheNameOfATopLevelClassIsPartOfItsName(t *testing.T) {
+	var asked []string
+	r := nestedIndex(t, map[string]string{
+		"com.example.lib.Price$Value": "package com.example.lib;\n\npublic class Price$Value {\n    private long price;\n    public static class Part {\n        private String note;\n    }\n}",
+	}, &asked)
+
+	class := r.ResolveClass("com.example.lib.Price$Value")
+	if class == nil || class.Name != "Price$Value" || class.Outer != "" || fieldNames(class)[0] != "price" {
+		t.Fatalf("ResolveClass(Price$Value) = %+v, want the class named so", class)
+	}
+	count := len(asked)
+	if again := r.ResolveClass("com.example.lib.Price$Value"); again != class {
+		t.Errorf("a second lookup = %+v, want the class that was read", again)
+	}
+	if len(asked) != count {
+		t.Errorf("asked = %v, want no call for a class that was read", asked)
+	}
+	// The classes nested in it come with it, as they do for any class.
+	var siblings []string
+	for _, c := range r.Siblings("com.example.lib.Price$Value") {
+		siblings = append(siblings, c.QualifiedName())
+	}
+	if want := []string{"com.example.lib.Price$Value.Part"}; !reflect.DeepEqual(siblings, want) {
+		t.Errorf("Siblings(Price$Value) = %v, want %v", siblings, want)
+	}
+	// A name that no class carries as written stays a miss.
+	if missing := r.ResolveClass("com.example.lib.Price$Gone"); missing != nil {
+		t.Errorf("ResolveClass(Price$Gone) = %+v, want none", missing)
+	}
+}
+
 func TestResolveClass_AClassWhoseOuterClassIsNotInTheIndexIsAskedForAsWritten(t *testing.T) {
 	var asked []string
 	// A package that starts with a capital letter reads as a class.

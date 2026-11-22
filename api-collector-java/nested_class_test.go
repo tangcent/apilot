@@ -185,6 +185,41 @@ func TestNestedClassesOfADependencyAreReadFromTheSourceOfTheirOuterClass(t *test
 	}
 }
 
+// A `$` may be part of an identifier: a top-level class named Price$Value is
+// that class, not the class Value nested in a Price, and a field typed by it
+// exports its fields whether the name is written bare, qualified or as a type
+// argument.
+func TestADollarInAClassNameIsPartOfTheName(t *testing.T) {
+	p, err := parser.NewParser(parser.ParserOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+
+	var classes []parser.Class
+	for _, source := range []string{
+		"package p;\n\npublic class Price$Value {\n    private long price;\n}\n",
+		"package p;\n\nimport java.util.List;\n\npublic class Order {\n    private Price$Value value;\n    private List<Price$Value> values;\n    private p.Price$Value qualified;\n}\n",
+	} {
+		parsed, err := p.ParseSource([]byte(source))
+		if err != nil {
+			t.Fatal(err)
+		}
+		classes = append(classes, parsed...)
+	}
+
+	unresolved := collector.NewUnresolvedSet()
+	r := resolver.NewTypeResolver(classes)
+	r.SetUnresolved(unresolved)
+	want := `{qualified:{price:long},value:{price:long},values:[{price:long}]}`
+	if got := nestedShape(r.Resolve("p.Order", nil)); got != want {
+		t.Errorf("Order:\n got  %s\n want %s", got, want)
+	}
+	if counts := unresolved.Counts(); len(counts) != 0 {
+		t.Errorf("unresolved = %v, want none", counts)
+	}
+}
+
 // emptyIndex is a dependency index that holds nothing.
 type emptyIndex struct{ asked []string }
 
