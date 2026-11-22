@@ -206,10 +206,63 @@ func TestCanonicalName(t *testing.T) {
 		{"Map<String, A$B$C>[]", "Map<String, A.B.C>[]"},
 		{"? extends Outer$Inner", "? extends Outer.Inner"},
 	} {
-		if got := canonicalType(tc.name); got != tc.want {
+		if got := canonicalType(tc.name, canonicalName); got != tc.want {
 			t.Errorf("canonicalType(%q) = %q, want %q", tc.name, got, tc.want)
 		}
 	}
+}
+
+// A `$` may be part of an identifier: `Price$Value` is a top-level class of its
+// own, not the binary name of a class Value nested in Price. A name is read as a
+// binary name only when nothing carries it as written.
+func TestResolve_ADollarInAClassNameIsNotABinaryName(t *testing.T) {
+	classes := []parser.Class{
+		{Name: "Order", Package: "p", FilePath: "Order.java", Fields: []parser.Field{
+			{Name: "value", Type: "Price$Value"},
+			{Name: "values", Type: "List<Price$Value>"},
+			{Name: "qualified", Type: "p.Price$Value"},
+			// The binary name of a nested class is still read as such.
+			{Name: "binary", Type: "Outer$Inner"},
+		}},
+		{Name: "Price$Value", Package: "p", FilePath: "Price$Value.java", Fields: []parser.Field{{Name: "price", Type: "long"}}},
+		{Name: "Outer", Package: "p", FilePath: "Outer.java"},
+		{Name: "Inner", Package: "p", Outer: "Outer", FilePath: "Outer.java", Fields: []parser.Field{{Name: "ofInner", Type: "String"}}},
+	}
+
+	t.Run("a class of the scanned sources", func(t *testing.T) {
+		r := NewTypeResolver(classes)
+		unresolved := collector.NewUnresolvedSet()
+		r.SetUnresolved(unresolved)
+
+		assertShape(t, "Order", r.ResolveFrom(classes[0], "p.Order", nil),
+			"{binary:{ofInner:string},qualified:{price:long},value:{price:long},values:[{price:long}]}")
+		if got := r.resolveSimpleName(classes[0], "Price$Value"); got != "p.Price$Value" {
+			t.Errorf("resolveSimpleName(Price$Value) = %q, want p.Price$Value", got)
+		}
+		if got := r.Resolve("Price$Value", nil); !got.IsObject() {
+			t.Errorf("Resolve(Price$Value) = %+v, want the class", got)
+		}
+		if counts := unresolved.Counts(); len(counts) != 0 {
+			t.Errorf("unresolved = %v, want none", counts)
+		}
+	})
+
+	t.Run("a class of a library that the source imports by that name", func(t *testing.T) {
+		library := &nestedLibrary{classes: map[string]parser.Class{
+			"lib.Price$Value": {Name: "Price$Value", Package: "lib", Fields: []parser.Field{{Name: "price", Type: "long"}}},
+		}}
+		controller := parser.Class{
+			Name: "PriceController", Package: "app", FilePath: "PriceController.java",
+			Imports: []parser.Import{{Path: "lib.Price$Value"}},
+		}
+		r := NewTypeResolver([]parser.Class{controller})
+		r.SetDependencyResolver(library)
+
+		assertShape(t, "Price$Value", r.ResolveFrom(controller, "Price$Value", nil), "{price:long}")
+		if want := []string{"lib.Price$Value"}; !reflect.DeepEqual(library.asked, want) {
+			t.Errorf("asked = %v, want %v", library.asked, want)
+		}
+	})
 }
 
 // Two nested enums of one name hold their own constants: the key of each has the

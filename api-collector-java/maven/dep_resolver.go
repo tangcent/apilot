@@ -155,11 +155,17 @@ func (r *MavenDependencyResolver) Failed() []string {
 
 // ResolveClass returns the class a qualified name denotes. A class nested in
 // another is named through it, `com.example.Page.Sort`, or by its binary name,
-// `com.example.Page$Sort`.
+// `com.example.Page$Sort`. A name that reads as a binary name may also be that of
+// a top-level class whose identifier has a `$`, `com.example.Price$Value`, so it
+// is asked for as written when the nested class it names is not found.
 func (r *MavenDependencyResolver) ResolveClass(className string) *parser.Class {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.resolve(canonicalClassName(className))
+	canonical := canonicalClassName(className)
+	if class := r.resolve(canonical); class != nil || canonical == className {
+		return class
+	}
+	return r.resolve(className)
 }
 
 // resolve answers className from the cache, then from the index.
@@ -315,6 +321,10 @@ func (r *MavenDependencyResolver) Siblings(className string) []parser.Class {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	// A top-level class whose own name has a `$` is kept under it as written.
+	if siblings, ok := r.siblings[className]; ok {
+		return append([]parser.Class(nil), siblings...)
+	}
 	className = canonicalClassName(className)
 	if siblings, ok := r.siblings[className]; ok {
 		return append([]parser.Class(nil), siblings...)
@@ -448,6 +458,12 @@ func (r *MavenDependencyResolver) parse(className, language, source string) ([]p
 // carries the simple name, a top-level one first; and when no declaration
 // carries the simple name, the first one answers, as it always has.
 func pickClass(classes []parser.Class, className string) *parser.Class {
+	// A class whose own name has a `$` is the one asked for as written.
+	for i := range classes {
+		if classes[i].QualifiedName() == className {
+			return &classes[i]
+		}
+	}
 	className = canonicalClassName(className)
 	for i := range classes {
 		if classes[i].QualifiedName() == className {

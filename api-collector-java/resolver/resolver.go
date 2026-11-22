@@ -527,7 +527,7 @@ func (r *TypeResolver) scopedName(source parser.Class, name string, ask bool) st
 	if name == "" {
 		return name
 	}
-	name = canonicalName(name)
+	name = r.readName(source, name)
 	if strings.Contains(name, ".") {
 		return r.resolveQualified(source, name, func(s parser.Class, head string) string {
 			return r.scopedName(s, head, ask)
@@ -551,6 +551,51 @@ func (r *TypeResolver) isDependencySource(source parser.Class) bool {
 	return source.Name != "" && r.dependencyKeys[qualifiedName(source)]
 }
 
+// readName spells a name as the registry holds it. A `$` in a name is the
+// separator of a binary name, `Outer$Inner`, or a character of an identifier,
+// `Price$Value`, and the name alone does not say which: a name is read as a
+// binary name (see canonicalName) unless a class carries it as written, in which
+// case it is left alone.
+func (r *TypeResolver) readName(source parser.Class, name string) string {
+	if canonical := canonicalName(name); canonical != name && !r.carriedAsWritten(source, name) {
+		return canonical
+	}
+	return name
+}
+
+// carriedAsWritten reports whether a name spells a class with its `$` in the
+// identifier: a class the resolver holds, or one that source imports by that
+// name, carries a segment of the name as written. A class of a library that is
+// neither held nor imported is told apart from a nested one only by what the
+// dependencies answer, and is read as a binary name.
+func (r *TypeResolver) carriedAsWritten(source parser.Class, name string) bool {
+	for _, segment := range strings.Split(name, ".") {
+		if !strings.Contains(segment, "$") {
+			continue
+		}
+		if len(r.bySimpleName[segment]) > 0 || r.dependencyNamed(segment) {
+			return true
+		}
+		for _, imp := range source.Imports {
+			if !imp.Static && !imp.OnDemand && lastSegment(imp.Path) == segment {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// dependencyNamed reports whether a class read from the dependencies has the
+// simple name segment.
+func (r *TypeResolver) dependencyNamed(segment string) bool {
+	for key := range r.dependencyKeys {
+		if lastSegment(key) == segment {
+			return true
+		}
+	}
+	return false
+}
+
 // canonicalName spells the name of a nested class the way source does. A
 // decompiler may print the class Inner of Outer as `Outer$Inner`, the binary
 // name, and the Kotlin compiler names it so; a name written with `.` is the
@@ -572,9 +617,9 @@ func canonicalName(name string) string {
 	return strings.Join(parts, ".")
 }
 
-// canonicalType applies canonicalName to every name a type spelling holds:
+// canonicalType applies readName to every name a type spelling holds:
 // `List<Outer$Inner>` is `List<Outer.Inner>`.
-func canonicalType(rawType string) string {
+func canonicalType(rawType string, readName func(string) string) string {
 	if !strings.Contains(rawType, "$") {
 		return rawType
 	}
@@ -582,7 +627,7 @@ func canonicalType(rawType string) string {
 	start := -1
 	flush := func(end int) {
 		if start >= 0 {
-			out.WriteString(canonicalName(rawType[start:end]))
+			out.WriteString(readName(rawType[start:end]))
 			start = -1
 		}
 	}
@@ -1022,7 +1067,7 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	if rawType == "" {
 		return model.NullModel()
 	}
-	rawType = canonicalType(rawType)
+	rawType = canonicalType(rawType, func(name string) string { return r.readName(source, name) })
 
 	if typeBindings != nil {
 		if bound, ok := typeBindings[rawType]; ok {
