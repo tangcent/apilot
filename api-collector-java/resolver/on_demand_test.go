@@ -404,3 +404,220 @@ func TestResolve_AProjectClassKeepsWinningOnceTheLibraryClassIsRead(t *testing.T
 		t.Errorf("Class(Level) = %+v, %v, want the project's class", class, found)
 	}
 }
+
+// A class read from a library names its own neighbours without an import, and
+// an unrelated class of the project that carries the same simple name does not
+// take their place: the names of a library class follow the scope of that class
+// (a single-type import, its package, an import on demand), whatever the
+// project declares and whatever the resolver has read before.
+func TestResolve_ALibraryClassNamesItsOwnPackageBeforeAProjectClassOfTheSameName(t *testing.T) {
+	classes := map[string]parser.Class{
+		"lib.req.Request": {
+			Name: "Request", Package: "lib.req",
+			Imports: append([]parser.Import{{Path: "lib.file.FileInfo"}}, onDemand("lib.extra")...),
+			Fields: []parser.Field{
+				// Declared in the package of Request: no import names it.
+				{Name: "tiers", Type: "List<TierItem>"},
+				{Name: "file", Type: "FileInfo"},
+				{Name: "extra", Type: "Extra"},
+				// The package comes before an import on demand.
+				{Name: "both", Type: "Both"},
+			},
+		},
+		"lib.req.TierItem":  {Name: "TierItem", Package: "lib.req", Fields: []parser.Field{{Name: "fromLibrary", Type: "String"}}},
+		"lib.file.FileInfo": {Name: "FileInfo", Package: "lib.file", Fields: []parser.Field{{Name: "fromLibrary", Type: "String"}}},
+		"lib.extra.Extra":   {Name: "Extra", Package: "lib.extra", Fields: []parser.Field{{Name: "fromLibrary", Type: "String"}}},
+		"lib.req.Both":      {Name: "Both", Package: "lib.req", Fields: []parser.Field{{Name: "fromPackage", Type: "String"}}},
+		"lib.extra.Both":    {Name: "Both", Package: "lib.extra", Fields: []parser.Field{{Name: "fromOnDemand", Type: "String"}}},
+	}
+	// Classes of the project that are not the library's, under the simple names
+	// the library class uses.
+	project := func() []parser.Class {
+		var out []parser.Class
+		for _, name := range []string{"TierItem", "FileInfo", "Extra", "Both"} {
+			out = append(out, parser.Class{
+				Name: name, Package: "app.dto", FilePath: name + ".java",
+				Fields: []parser.Field{{Name: "fromProject", Type: "String"}},
+			})
+		}
+		return out
+	}
+	controller := parser.Class{Name: "Controller", Package: "app.web", FilePath: "Controller.java", Imports: onDemand("app.dto")}
+
+	for _, tc := range []struct {
+		name string
+		// preload reads a class before the library class is expanded.
+		preload func(r *TypeResolver)
+	}{
+		{name: "nothing read before"},
+		{name: "the project's class read first", preload: func(r *TypeResolver) {
+			for _, name := range []string{"TierItem", "FileInfo", "Extra", "Both"} {
+				if got := fieldNamesOf(t, r, controller, name); !reflect.DeepEqual(got, []string{"fromProject"}) {
+					t.Fatalf("%s from the controller has %v, want the project's", name, got)
+				}
+			}
+		}},
+		{name: "the library's neighbours read first", preload: func(r *TypeResolver) {
+			for _, name := range []string{"lib.req.TierItem", "lib.file.FileInfo", "lib.extra.Extra", "lib.extra.Both"} {
+				r.ResolveFrom(parser.Class{}, name, nil)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			library := &libraryClasses{classes: classes}
+			r := NewTypeResolver(append(project(), controller))
+			r.SetDependencyResolver(library)
+			if tc.preload != nil {
+				tc.preload(r)
+			}
+
+			request := r.ResolveFrom(parser.Class{}, "lib.req.Request", nil)
+			namesOf := func(field string) []string {
+				m := request.Fields[field].Model
+				if m != nil && m.Kind == model.KindArray {
+					m = m.Items
+				}
+				if m == nil || m.Kind != model.KindObject {
+					t.Fatalf("%s = %+v, want an expanded object", field, m)
+				}
+				var names []string
+				for name := range m.Fields {
+					names = append(names, name)
+				}
+				return names
+			}
+			for field, want := range map[string]string{
+				"tiers": "fromLibrary", "file": "fromLibrary", "extra": "fromLibrary", "both": "fromPackage",
+			} {
+				if got := namesOf(field); !reflect.DeepEqual(got, []string{want}) {
+					t.Errorf("%s of the library class has %v, want [%s]", field, got, want)
+				}
+			}
+		})
+	}
+}
+
+// A name that a source of the project wrote and a library class receives, as a
+// type argument bound to a type parameter or as the argument of a superclass,
+// is the project's class, not the same-named class next to the library class.
+// The names of the library class itself follow its own scope (see
+// TestResolve_ALibraryClassNamesItsOwnPackageBeforeAProjectClassOfTheSameName).
+func TestResolve_AProjectClassPassedToALibraryClassKeepsItsMeaning(t *testing.T) {
+	library := &libraryClasses{classes: map[string]parser.Class{
+		"lib.Page": {
+			Name: "Page", Package: "lib", TypeParameters: []string{"T"},
+			Fields: []parser.Field{
+				{Name: "first", Type: "T"},
+				{Name: "rows", Type: "List<T>"},
+				{Name: "byKey", Type: "Map<String, T>"},
+				{Name: "wide", Type: "List<? extends T>"},
+				// Written in the library: its own Item.
+				{Name: "own", Type: "Item"},
+			},
+		},
+		"lib.Base": {
+			Name: "Base", Package: "lib", TypeParameters: []string{"T"},
+			Fields: []parser.Field{{Name: "payload", Type: "T"}, {Name: "ownItem", Type: "Item"}},
+		},
+		// Not the class of the project.
+		"lib.Item": {Name: "Item", Package: "lib", Fields: []parser.Field{{Name: "fromLibrary", Type: "String"}}},
+	}}
+	controller := parser.Class{Name: "Controller", Package: "app.web", FilePath: "Controller.java", Imports: []parser.Import{{Path: "app.dto.Item"}, {Path: "lib.Page"}}}
+	derived := parser.Class{
+		Name: "Derived", Package: "app.web", FilePath: "Derived.java",
+		Imports:    []parser.Import{{Path: "app.dto.Item"}, {Path: "lib.Base"}},
+		SuperClass: "Base", SuperClassTypeArgs: []string{"Item"},
+	}
+	r := NewTypeResolver([]parser.Class{
+		{Name: "Item", Package: "app.dto", FilePath: "Item.java", Fields: []parser.Field{{Name: "fromProject", Type: "String"}}},
+		controller, derived,
+	})
+	r.SetDependencyResolver(library)
+	// The superclass is expanded when the resolver holds it.
+	r.ResolveFrom(parser.Class{}, "lib.Base", nil)
+
+	namesOf := func(m *model.ObjectModel) []string {
+		for m != nil && (m.Kind == model.KindArray || m.Kind == model.KindMap) {
+			if m.Kind == model.KindArray {
+				m = m.Items
+			} else {
+				m = m.ValueModel
+			}
+		}
+		if m == nil || m.Kind != model.KindObject {
+			t.Fatalf("model = %+v, want an expanded object", m)
+		}
+		var names []string
+		for name := range m.Fields {
+			names = append(names, name)
+		}
+		return names
+	}
+
+	page := r.ResolveFrom(controller, "Page<Item>", nil)
+	for field, want := range map[string]string{"first": "fromProject", "rows": "fromProject", "byKey": "fromProject", "wide": "fromProject", "own": "fromLibrary"} {
+		if got := namesOf(page.Fields[field].Model); !reflect.DeepEqual(got, []string{want}) {
+			t.Errorf("Page<Item>.%s has %v, want [%s]", field, got, want)
+		}
+	}
+
+	extended := r.ResolveFrom(controller, "Derived", nil)
+	for field, want := range map[string]string{"payload": "fromProject", "ownItem": "fromLibrary"} {
+		if extended.Fields[field] == nil {
+			t.Fatalf("Derived = %+v, want the field %s of its superclass", extended, field)
+		}
+		if got := namesOf(extended.Fields[field].Model); !reflect.DeepEqual(got, []string{want}) {
+			t.Errorf("Derived.%s has %v, want [%s]", field, got, want)
+		}
+	}
+}
+
+// A class of the project that a library generic class receives is named by its
+// qualified name wherever the library class reads it again, as it does for the
+// element of a list, a map value or a bounded wildcard. The library is not asked
+// for it by the package of the library class, since each of those lookups is a
+// call to the indexer, and another class of the project that carries the same
+// simple name does not stand in for it.
+func TestResolve_AProjectClassPassedToALibraryClassIsNotAskedOfTheLibrary(t *testing.T) {
+	library := &libraryClasses{classes: map[string]parser.Class{
+		"lib.Page": {
+			Name: "Page", Package: "lib", TypeParameters: []string{"T"},
+			Fields: []parser.Field{
+				{Name: "first", Type: "T"},
+				{Name: "rows", Type: "List<T>"},
+				{Name: "byKey", Type: "Map<String, T>"},
+				{Name: "wide", Type: "List<? extends T>"},
+			},
+		},
+	}}
+	controller := parser.Class{Name: "Controller", Package: "app.web", FilePath: "Controller.java", Imports: []parser.Import{{Path: "lib.Page"}, {Path: "app.dto.Item"}}}
+	r := NewTypeResolver([]parser.Class{
+		{Name: "Item", Package: "app.dto", FilePath: "Item.java", Fields: []parser.Field{{Name: "fromProject", Type: "String"}}},
+		// Another Item of the project, which sorts first and which controller
+		// does not import.
+		{Name: "Item", Package: "app.api", FilePath: "api/Item.java", Fields: []parser.Field{{Name: "fromOther", Type: "String"}}},
+		controller,
+	})
+	r.SetDependencyResolver(library)
+
+	page := r.ResolveFrom(controller, "Page<Item>", nil)
+	if page.Kind != model.KindObject || len(page.Fields) != 4 {
+		t.Fatalf("Page<Item> = %+v, want Page with its four fields", page)
+	}
+	for name, field := range page.Fields {
+		m := field.Model
+		for m != nil && (m.Kind == model.KindArray || m.Kind == model.KindMap) {
+			if m.Kind == model.KindArray {
+				m = m.Items
+			} else {
+				m = m.ValueModel
+			}
+		}
+		if m == nil || m.Kind != model.KindObject || m.Fields["fromProject"] == nil {
+			t.Errorf("%s = %+v, want the project's Item", name, field.Model)
+		}
+	}
+	if want := []string{"lib.Page"}; !reflect.DeepEqual(library.asked, want) {
+		t.Errorf("asked = %v, want %v", library.asked, want)
+	}
+}

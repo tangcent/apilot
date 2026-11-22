@@ -421,15 +421,30 @@ func (r *TypeResolver) resolveSimpleName(source parser.Class, name string) strin
 // name denotes does not depend on which lookup came first:
 //
 //  1. the declarations of the scanned sources in scope of source (inScope);
-//  2. a declaration of the scanned sources that carries the name anywhere
+//  2. when source is a class read from a library, the classes of the
+//     dependencies in scope of source (inDependencies);
+//  3. a declaration of the scanned sources that carries the name anywhere
 //     (declaredElsewhere);
-//  3. the classes of the dependencies in scope of source, in the order of
-//     JLS 6.4.1 (inDependencies), a class already read and one still to be
-//     asked for standing at the same place in that order;
-//  4. a class read from the dependencies under the name alone (readElsewhere).
+//  4. when source is a compilation unit of the scanned sources, the classes of
+//     the dependencies in scope of source (inDependencies);
+//  5. a class read from the dependencies under the name alone (readElsewhere).
+//
+// The classes of the dependencies in scope of source are those of JLS 6.4.1: a
+// class already read and one still to be asked for stand at the same place in
+// that order. The scope of a class read from a library is its own, so a class
+// of the project that happens to carry the same simple name as one of its
+// neighbours does not take the neighbour's place (step 2 before step 3). A
+// scanned source has no such claim: what its imports and package do not name
+// falls back to the project's declaration (step 3 before step 4).
 func (r *TypeResolver) scopedName(source parser.Class, name string, ask bool) string {
 	if key, found := r.inScope(source, name); found {
 		return key
+	}
+	library := !r.isScannedSource(source)
+	if library {
+		if key, found := r.inDependencies(source, name, ask); found {
+			return key
+		}
 	}
 	// A class of the project that carries the name wins over a library's: the
 	// resolver spells a type by its simple name again when a bound type
@@ -438,8 +453,10 @@ func (r *TypeResolver) scopedName(source parser.Class, name string, ask bool) st
 	if key, found := r.declaredElsewhere(name); found {
 		return key
 	}
-	if key, found := r.inDependencies(source, name, ask); found {
-		return key
+	if !library {
+		if key, found := r.inDependencies(source, name, ask); found {
+			return key
+		}
 	}
 	if key, found := r.readElsewhere(name); found {
 		return key
