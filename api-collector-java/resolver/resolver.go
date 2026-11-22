@@ -14,6 +14,9 @@ import (
 	model "github.com/tangcent/apilot/api-model"
 )
 
+// primitiveTypes maps the keyword of a primitive type to the JSON scalar it
+// serialises to. A keyword names the same type in every compilation unit, so no
+// declaration can hide it.
 var primitiveTypes = map[string]string{
 	"int":     model.JsonTypeInt,
 	"short":   model.JsonTypeInt,
@@ -21,15 +24,30 @@ var primitiveTypes = map[string]string{
 	"float":   model.JsonTypeFloat,
 	"double":  model.JsonTypeDouble,
 	"boolean": model.JsonTypeBoolean,
+	"byte":    model.JsonTypeInt,
+	"char":    model.JsonTypeString,
 	"void":    model.JsonTypeNull,
-	"Void":    model.JsonTypeNull,
-	"String":  model.JsonTypeString,
-	"Integer": model.JsonTypeInt,
-	"Short":   model.JsonTypeInt,
-	"Long":    model.JsonTypeLong,
-	"Float":   model.JsonTypeFloat,
-	"Double":  model.JsonTypeDouble,
-	"Boolean": model.JsonTypeBoolean,
+}
+
+// javaLangScalars maps the simple name of a java.lang value class to the JSON
+// scalar it serialises to.
+//
+// Unlike a keyword, a class name can be hidden by a declaration of the same
+// name, so these names are read as the JDK classes only where java.lang is the
+// scope that supplies them (see javaLangType). `Object` is java.lang too but
+// has no scalar; it is an open object (see isJavaLangType).
+var javaLangScalars = map[string]string{
+	"Void":      model.JsonTypeNull,
+	"String":    model.JsonTypeString,
+	"Integer":   model.JsonTypeInt,
+	"Short":     model.JsonTypeInt,
+	"Long":      model.JsonTypeLong,
+	"Float":     model.JsonTypeFloat,
+	"Double":    model.JsonTypeDouble,
+	"Boolean":   model.JsonTypeBoolean,
+	"Number":    model.JsonTypeDouble,
+	"Byte":      model.JsonTypeInt,
+	"Character": model.JsonTypeString,
 }
 
 // javaLangBuiltIns maps the qualified name of each class of primitiveTypes
@@ -72,14 +90,9 @@ var jdkQualifiedScalars = map[string]string{
 // imported bare `LocalDateTime` must give the same answer. This is easy-yapi's
 // IrType.fromJavaType layer, which strips the package and reads the simple name.
 var jdkScalarTypes = map[string]string{
-	// java.lang
-	"string":     model.JsonTypeString,
-	"char":       model.JsonTypeString,
-	"character":  model.JsonTypeString,
-	"byte":       model.JsonTypeInt,
+	// java.math
 	"biginteger": model.JsonTypeLong,
 	"bigdecimal": model.JsonTypeDouble,
-	"number":     model.JsonTypeDouble,
 	// java.time
 	"instant":       model.JsonTypeString,
 	"localdate":     model.JsonTypeString,
@@ -627,6 +640,12 @@ func (r *TypeResolver) scopedPlain(source parser.Class, name string, ask bool) s
 	if key, found := r.inScope(source, name, ask); found {
 		return key
 	}
+	// java.lang is the last scope of every compilation unit, so a name it
+	// declares is declared in scope: the fallback below, which exists for a name
+	// that nothing declares, must not offer a project class instead.
+	if isJavaLangType(name) {
+		return name
+	}
 	if r.isDependencySource(source) || r.mayComeFromAnUnscannedPackage(source) {
 		return name
 	}
@@ -1127,6 +1146,36 @@ func (r *TypeResolver) isRegistered(key string) bool {
 	return found
 }
 
+// isJavaLangType reports whether a simple name is one of the java.lang classes
+// the resolver answers for itself.
+func isJavaLangType(name string) bool {
+	_, scalar := javaLangScalars[name]
+	return scalar || name == "Object"
+}
+
+// javaLangType reports which java.lang class typeName denotes as seen from
+// source, by its simple name (`Short`), when it denotes one the resolver
+// answers for itself.
+//
+// A qualified spelling names its own package and so needs no scope. A simple
+// name denotes the JDK class only when nothing closer declares it: java.lang is
+// imported by every compilation unit, but only as the last on-demand import
+// (JLS 6.4.1), so a class of the same file, a single-type import, a class of
+// the same package or another on-demand import of that name comes first.
+// Importing the JDK class by name is no such declaration.
+func (r *TypeResolver) javaLangType(source parser.Class, typeName string) (string, bool) {
+	if simple, qualified := strings.CutPrefix(typeName, "java.lang."); qualified {
+		return simple, isJavaLangType(simple)
+	}
+	if !isJavaLangType(typeName) {
+		return "", false
+	}
+	if key, declared := r.inScope(source, typeName, false); declared && key != "java.lang."+typeName {
+		return "", false
+	}
+	return typeName, true
+}
+
 // mayBeDependencyClass reports whether an unqualified name could denote a class
 // of the dependencies, as seen from source. A type variable in scope in source
 // does not, and neither does a name the resolver answers for before it consults
@@ -1145,7 +1194,7 @@ func (r *TypeResolver) mayBeDependencyClass(source parser.Class, name string) bo
 	if name == "" || strings.Contains(name, ".") || r.isTypeVariable(source, name) {
 		return false
 	}
-	if _, ok := primitiveTypes[name]; ok || collectionTypes[name] || mapTypes[name] {
+	if _, ok := primitiveTypes[name]; ok || javaLangScalars[name] != "" || collectionTypes[name] || mapTypes[name] {
 		return false
 	}
 	return true
@@ -1282,15 +1331,26 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 		return model.ArrayModel(r.ResolveFrom(source, element, typeBindings))
 	}
 
-	// Every compilation unit imports java.lang, so `java.lang.Short` is the
-	// type `Short` names, however the source spells it.
-	if jsonType, ok := primitiveTypes[strings.TrimPrefix(rawType, "java.lang.")]; ok {
+	if jsonType, ok := primitiveTypes[rawType]; ok {
 		return model.SingleModel(jsonType)
 	}
 	// The same, written in full: a type argument passes `String` on as
 	// `java.lang.String` (see qualifyTypeName).
 	if jsonType, ok := javaLangBuiltIns[rawType]; ok {
 		return model.SingleModel(jsonType)
+	}
+
+	// Every compilation unit imports java.lang, so `java.lang.Short` is the
+	// type `Short` names, however the source spells it. The simple name is
+	// that type only where no declaration in scope hides it: a project class
+	// named `Short` is a class, not a number.
+	if simple, ok := r.javaLangType(source, rawType); ok {
+		if simple == "Object" {
+			// `java.lang.Object` carries no fields, so an empty object is its
+			// true shape rather than an opaque scalar.
+			return model.EmptyObject()
+		}
+		return model.SingleModel(javaLangScalars[simple])
 	}
 
 	baseName, typeArgs := parseGenericType(rawType)
@@ -1374,9 +1434,9 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	if jsonType, ok := jdkScalarTypes[simpleTypeName(name)]; ok {
 		return model.SingleModel(jsonType)
 	}
-	// `java.lang.Object` carries no fields, so an empty object is its true
-	// shape rather than an opaque scalar.
-	if simpleTypeName(name) == "object" {
+	// An open object names itself `object` (see model.EmptyObject), and a type
+	// argument bound to one is resolved by that name.
+	if name == model.EmptyObject().TypeName {
 		return model.EmptyObject()
 	}
 
