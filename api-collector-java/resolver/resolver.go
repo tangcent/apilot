@@ -409,11 +409,36 @@ func (r *TypeResolver) ResolveForBinding(source parser.Class, rawType string, ty
 // type whose body is not among the scanned sources still selects the imported
 // type instead of a same-named class that happens to sit elsewhere in the
 // project.
+//
+// Only the classes the resolver already holds answer. resolveName is the same
+// lookup that reads the dependencies as well.
 func (r *TypeResolver) resolveSimpleName(source parser.Class, name string) string {
+	return r.scopedName(source, name, false)
+}
+
+// scopedName is the lookup behind resolveSimpleName and resolveName. Its answer
+// follows one order whatever the resolver has read before, so that the class a
+// name denotes does not depend on which lookup came first:
+//
+//  1. the declarations of the scanned sources in scope of source (inScope);
+//  2. a declaration of the scanned sources that carries the name anywhere
+//     (declaredElsewhere);
+//  3. the classes of the dependencies in scope of source, in the order of
+//     JLS 6.4.1 (inDependencies), a class already read and one still to be
+//     asked for standing at the same place in that order;
+//  4. a class read from the dependencies under the name alone (readElsewhere).
+func (r *TypeResolver) scopedName(source parser.Class, name string, ask bool) string {
 	if key, found := r.inScope(source, name); found {
 		return key
 	}
+	// A class of the project that carries the name wins over a library's: the
+	// resolver spells a type by its simple name again when a bound type
+	// argument is expanded inside a generic class, where no import of the
+	// project applies, and that name must still denote the project's class.
 	if key, found := r.declaredElsewhere(name); found {
+		return key
+	}
+	if key, found := r.inDependencies(source, name, ask); found {
 		return key
 	}
 	if key, found := r.readElsewhere(name); found {
@@ -424,8 +449,13 @@ func (r *TypeResolver) resolveSimpleName(source parser.Class, name string) strin
 
 // inScope returns the registry key an unqualified name denotes through the
 // scope of source: the four steps of JLS 6.4.1 that need no more than the
-// declarations already held. A qualified name denotes itself; a name that
-// nothing in scope declares is not found.
+// declarations of the scanned sources. A qualified name denotes itself; a name
+// that nothing in scope declares is not found.
+//
+// A class read from the dependencies does not answer here, in the package of
+// source or in an import on demand alike: it takes part in the order only
+// through inDependencies, where a class not read yet stands at the same place,
+// so that reading a class earlier cannot move it ahead of another.
 func (r *TypeResolver) inScope(source parser.Class, name string) (string, bool) {
 	if name == "" || strings.Contains(name, ".") {
 		return name, true
@@ -451,7 +481,7 @@ func (r *TypeResolver) inScope(source parser.Class, name string) (string, bool) 
 
 	// 3. Same package.
 	if source.Package != "" {
-		if key := source.Package + "." + name; r.isRegistered(key) {
+		if key := source.Package + "." + name; r.isDeclared(key) {
 			return key, true
 		}
 	}
@@ -461,12 +491,19 @@ func (r *TypeResolver) inScope(source parser.Class, name string) (string, bool) 
 		if imp.Static || !imp.OnDemand {
 			continue
 		}
-		if key := imp.Path + "." + name; r.isRegistered(key) {
+		if key := imp.Path + "." + name; r.isDeclared(key) {
 			return key, true
 		}
 	}
 
 	return "", false
+}
+
+// isDeclared reports whether key is a declaration of the scanned sources that
+// the current view sees, as against a class read from the dependencies.
+func (r *TypeResolver) isDeclared(key string) bool {
+	c, found := r.lookup(key)
+	return found && !slices.Contains(r.depBySimpleName[c.Name], key)
 }
 
 // declaredElsewhere returns the declaration of the scanned sources that carries
@@ -511,10 +548,23 @@ func (r *TypeResolver) isRegistered(key string) bool {
 // resolveName is resolveSimpleName that also reads the dependencies. A name
 // that nothing in the scope of source declares among the scanned sources may
 // still be a class of a library: one the package of source declares, or one
-// that an import-on-demand brings in, as in `import com.example.model.*`. Such
-// a class is asked of the dependencies by each qualified name the name may
-// denote, the package of source first and then each import-on-demand in the
-// order they are written (JLS 6.4.1), until one answers.
+// that an import-on-demand brings in, as in `import com.example.model.*`. See
+// inDependencies for how such a class is found.
+func (r *TypeResolver) resolveName(source parser.Class, name string) string {
+	return r.scopedName(source, name, true)
+}
+
+// inDependencies returns the qualified name of the class of the dependencies
+// that an unqualified name denotes through the scope of source: the package of
+// source first and then each import-on-demand in the order they are written
+// (JLS 6.4.1), the first that holds a class by that name.
+//
+// A class already read, by an earlier lookup of any source, and a class not
+// read yet are candidates in the same order. When ask is set, each candidate
+// not held is asked of the dependencies by its qualified name until one
+// answers; without it only the classes held answer. A class found is registered
+// under its qualified name (see registerDependency), so each candidate is asked
+// once and later answered from the registry.
 //
 // A source of the project does not ask for a package that the scanned sources
 // declare: the project owns it, and a name its classes do not carry is not in
@@ -524,43 +574,35 @@ func (r *TypeResolver) isRegistered(key string) bool {
 // package, a library class in a package of the project, which a project source
 // does not find. A class read from a library asks for every package, its own
 // included: its neighbours need no import, whoever else declares the package.
-//
-// A class found is registered under its qualified name (see
-// registerDependency), so each candidate is asked of the dependencies once and
-// later answered from the registry.
-func (r *TypeResolver) resolveName(source parser.Class, name string) string {
-	if key, found := r.inScope(source, name); found {
-		return key
+func (r *TypeResolver) inDependencies(source parser.Class, name string, ask bool) (string, bool) {
+	ask = ask && r.dependencyResolver != nil && r.mayBeDependencyClass(name)
+	if !ask && len(r.depBySimpleName[name]) == 0 {
+		return "", false
 	}
-	// A class of the project that carries the name wins over a library's: the
-	// resolver spells a type by its simple name again when a bound type
-	// argument is expanded inside a generic class, where no import of the
-	// project applies, and that name must still denote the project's class.
-	if key, found := r.declaredElsewhere(name); found {
-		return key
-	}
-	if r.dependencyResolver != nil && r.mayBeDependencyClass(name) {
-		for _, candidate := range dependencyCandidates(source, name) {
-			if _, held := r.classRegistry[candidate]; held {
-				// The resolver already holds a declaration of that name that the
-				// current view does not see: an enum of the JSON view. It is what
-				// the name denotes, so a package imported after it cannot supply
-				// another.
-				break
+	scannedSource := r.isScannedSource(source)
+	for _, candidate := range dependencyCandidates(source, name) {
+		if held, found := r.classRegistry[candidate]; found {
+			if r.sees(held) {
+				return candidate, true
 			}
-			if r.isScannedSource(source) && r.scannedPackages[candidate[:strings.LastIndex(candidate, ".")]] {
-				continue
-			}
-			if class := r.dependencyClass(candidate); class != nil {
-				r.registerDependency(*class, candidate)
-				return candidate
-			}
+			// The resolver already holds a declaration of that name that the
+			// current view does not see: an enum of the JSON view. It is what
+			// the name denotes, so a package imported after it cannot supply
+			// another.
+			return "", false
+		}
+		if !ask {
+			continue
+		}
+		if scannedSource && r.scannedPackages[candidate[:strings.LastIndex(candidate, ".")]] {
+			continue
+		}
+		if class := r.dependencyClass(candidate); class != nil {
+			r.registerDependency(*class, candidate)
+			return candidate, true
 		}
 	}
-	if key, found := r.readElsewhere(name); found {
-		return key
-	}
-	return name
+	return "", false
 }
 
 // isScannedSource reports whether source is a compilation unit of the scanned
