@@ -14,6 +14,10 @@ public class ArrayFieldForm {
     /** The brackets may follow the name. */
     private String legacy[];
 
+    /** Spaces may stand in front of the brackets and between them. */
+    private List<String []> spaced;
+    private List<int [ ]> spacedIds;
+
     /** A name qualified with its package is the same type as the simple one. */
     private java.time.LocalDate day;
     private java.math.BigDecimal[] amounts;

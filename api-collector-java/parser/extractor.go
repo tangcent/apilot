@@ -818,7 +818,7 @@ func extractTypeArguments(node *tree_sitter.Node, source []byte) []string {
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Kind() {
-		case "type_identifier", "generic_type", "annotated_type":
+		case "type_identifier", "generic_type", "annotated_type", "array_type":
 			args = append(args, typeText(child, source))
 		}
 	}
@@ -826,52 +826,74 @@ func extractTypeArguments(node *tree_sitter.Node, source []byte) []string {
 	return args
 }
 
-// typeText returns a type as written, without the annotations written inside
-// it: `List<@NotBlank(message = "x") String>` is `List<String>`.
+// typeText returns a type as written, except for two things.
 //
-// An annotation in a type argument is a type annotation. It says something of
-// the elements, not of the declaration that holds the type, so it is no part of
-// the type's name; kept in the spelling, it made `@NotBlank(message = X) String`
-// a type of its own that no declaration could be found for. The annotation is
-// left to the declaration's own annotations, which are read from its modifiers.
+// The annotations written inside it are left out: `List<@NotBlank(message = "x")
+// String>` is `List<String>`. An annotation in a type argument is a type
+// annotation. It says something of the elements, not of the declaration that
+// holds the type, so it is no part of the type's name; kept in the spelling, it
+// made `@NotBlank(message = X) String` a type of its own that no declaration
+// could be found for. The annotation is left to the declaration's own
+// annotations, which are read from its modifiers.
+//
+// An array type, wherever it stands, is its element type followed by one `[]`
+// per dimension: `List<String []>` and `List<int [ ]>` are `List<String[]>` and
+// `List<int[]>`. The resolver reads the brackets off the end of the spelling,
+// so a space left in front of them or between them made the element a name
+// that no declaration has.
 func typeText(node *tree_sitter.Node, source []byte) string {
-	var cuts [][2]uint
-	collectTypeAnnotations(node, &cuts)
-	if len(cuts) == 0 {
+	var edits []typeEdit
+	collectTypeEdits(node, &edits)
+	if len(edits) == 0 {
 		return node.Utf8Text(source)
 	}
 
 	start, end := node.StartByte(), node.EndByte()
 	var out []byte
 	pos := start
-	for _, cut := range cuts {
-		out = append(out, source[pos:cut[0]]...)
-		pos = cut[1]
-		// The space that set the annotation apart from the type goes with it.
-		for pos < end && isSpaceByte(source[pos]) {
-			pos++
-		}
-		if pos < end && source[pos] == '[' {
-			// `String @A []`: nothing is left to keep the dimension apart.
-			out = []byte(strings.TrimRight(string(out), " \t\r\n"))
+	for _, edit := range edits {
+		out = append(out, source[pos:edit.start]...)
+		out = append(out, edit.text...)
+		pos = edit.end
+		if edit.annotation {
+			// The space that set the annotation apart from the type goes with it.
+			for pos < end && isSpaceByte(source[pos]) {
+				pos++
+			}
 		}
 	}
 	out = append(out, source[pos:end]...)
 	return string(out)
 }
 
-// collectTypeAnnotations gathers the byte ranges of the annotations under a type
-// node, outermost first and in source order. An annotation's own arguments are
-// not searched: they sit inside the range that is cut.
-func collectTypeAnnotations(node *tree_sitter.Node, cuts *[][2]uint) {
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		switch child.Kind() {
-		case "annotation", "marker_annotation":
-			*cuts = append(*cuts, [2]uint{child.StartByte(), child.EndByte()})
-		default:
-			collectTypeAnnotations(child, cuts)
+// typeEdit is a range of the source text of a type and what stands in its place.
+type typeEdit struct {
+	start, end uint
+	text       string
+	annotation bool
+}
+
+// collectTypeEdits gathers the edits that spell the type under a node, in source
+// order. An annotation is cut, and an array type has the space and the
+// annotations in front of its brackets, and the brackets themselves, replaced by
+// one `[]` per dimension. What lies inside either is not searched: an
+// annotation's own arguments sit inside the range that is cut, and the
+// annotations among the dimensions inside the range that is replaced.
+func collectTypeEdits(node *tree_sitter.Node, edits *[]typeEdit) {
+	switch node.Kind() {
+	case "annotation", "marker_annotation":
+		*edits = append(*edits, typeEdit{start: node.StartByte(), end: node.EndByte(), annotation: true})
+		return
+	case "array_type":
+		element, dimensions := node.ChildByFieldName("element"), node.ChildByFieldName("dimensions")
+		if element != nil && dimensions != nil {
+			collectTypeEdits(element, edits)
+			*edits = append(*edits, typeEdit{start: element.EndByte(), end: dimensions.EndByte(), text: dimensionSuffix(dimensions)})
+			return
 		}
+	}
+	for i := uint(0); i < node.ChildCount(); i++ {
+		collectTypeEdits(node.Child(i), edits)
 	}
 }
 

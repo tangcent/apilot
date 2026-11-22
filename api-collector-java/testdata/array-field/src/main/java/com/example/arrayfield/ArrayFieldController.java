@@ -24,4 +24,9 @@ public class ArrayFieldController {
     public ArrayFieldItem[] items() {
         return new ArrayFieldItem[0];
     }
+
+    @GetMapping("/box")
+    public ArrayFieldBox<ArrayFieldItem> box() {
+        return null;
+    }
 }

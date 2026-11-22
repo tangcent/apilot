@@ -17,9 +17,9 @@ import (
 // with its package is the type it names.
 //
 // The Java collector asserts the same table for the same declarations written
-// in Java (api-collector-java/array_field_test.go), where `legacy` is also
-// declared, as `String legacy[]`, which only Java can spell: keep the two in
-// sync.
+// in Java (api-collector-java/array_field_test.go), where `legacy`, `spaced`
+// and `spacedIds` are also declared, as `String legacy[]`, `List<String []>` and
+// `List<int [ ]>`, which only Java can spell: keep the two in sync.
 var arrayFieldExpectation = map[string]string{
 	"names":   "array<string>",
 	"ids":     "array<int>",

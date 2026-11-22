@@ -89,3 +89,78 @@ func TestResolve_ArrayOfATypeParameterFollowsItsBinding(t *testing.T) {
 		t.Errorf("tags = %s, want array<string>", got)
 	}
 }
+
+// A type argument that is an array of a type parameter keeps the binding of that
+// parameter: `Wrapper<T[]>` written in `Box<T>` is `Wrapper<Order[]>` once the
+// box is resolved as `Box<Order>`, so the wrapper's `U data` is an array of
+// Order. Before, the argument stayed the spelling `T[]` and was resolved inside
+// the wrapper, where T is not bound, and the element was reported as an
+// unresolved `T`.
+func TestResolve_ArrayOfATypeParameterAsATypeArgumentFollowsItsBinding(t *testing.T) {
+	r := NewTypeResolver([]parser.Class{
+		{Name: "Order", Package: "com.example", Fields: []parser.Field{{Name: "id", Type: "long"}}},
+		{Name: "Wrapper", Package: "com.example", TypeParameters: []string{"U"}, Fields: []parser.Field{
+			{Name: "data", Type: "U"},
+		}},
+		{Name: "Box", Package: "com.example", TypeParameters: []string{"T"}, Fields: []parser.Field{
+			{Name: "payload", Type: "Wrapper<T[]>"},
+			{Name: "grid", Type: "Wrapper<T[][]>"},
+			{Name: "lists", Type: "Wrapper<List<T[]>>"},
+			{Name: "byName", Type: "Wrapper<Map<String, T[]>>"},
+			{Name: "direct", Type: "Map<String, T[]>"},
+		}},
+	})
+	r.SetUnresolved(collector.NewUnresolvedSet())
+	box := r.Resolve("com.example.Box<com.example.Order>", nil)
+
+	// The wrapper carries the argument in its `data` field.
+	for field, want := range map[string]string{
+		"payload": "array<object:Order>",
+		"grid":    "array<array<object:Order>>",
+		"lists":   "array<array<object:Order>>",
+		"byName":  "map<array<object:Order>>",
+	} {
+		fm := box.Fields[field]
+		if fm == nil || fm.Model.Fields["data"] == nil {
+			t.Errorf("%s = %+v, want a wrapper with a data field", field, fm)
+			continue
+		}
+		if got := arrayShape(fm.Model.Fields["data"].Model); got != want {
+			t.Errorf("%s.data = %s, want %s", field, got, want)
+		}
+	}
+	if got := arrayShape(box.Fields["direct"].Model); got != "map<array<object:Order>>" {
+		t.Errorf("direct = %s, want map<array<object:Order>>", got)
+	}
+	// The element is Order, with its fields, not a name that stands for it.
+	element := box.Fields["payload"].Model.Fields["data"].Model.Items
+	if element == nil || element.Fields["id"] == nil {
+		t.Errorf("payload.data element = %+v, want Order with its fields", element)
+	}
+	if unresolved := r.Unresolved(); len(unresolved) != 0 {
+		t.Errorf("unresolved = %v, want none", unresolved)
+	}
+}
+
+// The same holds for a superclass: `Sub<T> extends Base<T[]>` binds Base's
+// parameter to an array of whatever T is bound to in the subclass.
+func TestResolve_ArrayOfATypeParameterAsASuperclassArgumentFollowsItsBinding(t *testing.T) {
+	r := NewTypeResolver([]parser.Class{
+		{Name: "Order", Package: "com.example", Fields: []parser.Field{{Name: "id", Type: "long"}}},
+		{Name: "Base", Package: "com.example", TypeParameters: []string{"E"}, Fields: []parser.Field{
+			{Name: "data", Type: "E"},
+		}},
+		{Name: "Sub", Package: "com.example", TypeParameters: []string{"T"}, SuperClass: "Base", SuperClassTypeArgs: []string{"T[]"}},
+	})
+	r.SetUnresolved(collector.NewUnresolvedSet())
+	sub := r.Resolve("com.example.Sub<com.example.Order>", nil)
+	if sub.Fields["data"] == nil {
+		t.Fatalf("Sub = %+v, want the data field of Base", sub)
+	}
+	if got := arrayShape(sub.Fields["data"].Model); got != "array<object:Order>" {
+		t.Errorf("data = %s, want array<object:Order>", got)
+	}
+	if unresolved := r.Unresolved(); len(unresolved) != 0 {
+		t.Errorf("unresolved = %v, want none", unresolved)
+	}
+}

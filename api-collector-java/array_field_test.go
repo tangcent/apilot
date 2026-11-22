@@ -18,18 +18,21 @@ import (
 //
 // The Kotlin collector asserts the same table for the same declarations
 // written in Kotlin (api-collector-kotlin/array_field_test.go), except for
-// `legacy`, which only Java can spell: keep the two in sync.
+// `legacy`, `spaced` and `spacedIds`, which only Java can spell: keep the two
+// in sync.
 var arrayFieldExpectation = map[string]string{
-	"names":   "array<string>",
-	"ids":     "array<int>",
-	"longs":   "array<long>",
-	"items":   "array<object{name}>",
-	"groups":  "array<array<string>>",
-	"grid":    "array<array<int>>",
-	"legacy":  "array<string>",
-	"day":     "string",
-	"amounts": "array<double>",
-	"codes":   "array<string>",
+	"names":     "array<string>",
+	"ids":       "array<int>",
+	"longs":     "array<long>",
+	"items":     "array<object{name}>",
+	"groups":    "array<array<string>>",
+	"grid":      "array<array<int>>",
+	"legacy":    "array<string>",
+	"spaced":    "array<array<string>>",
+	"spacedIds": "array<array<int>>",
+	"day":       "string",
+	"amounts":   "array<double>",
+	"codes":     "array<string>",
 }
 
 func TestArrayFieldsAreExportedAsArrays(t *testing.T) {
@@ -89,6 +92,42 @@ func TestArrayFieldsAreExportedAsArrays(t *testing.T) {
 		t.Errorf("items response = %s, want array<object{name}>", got)
 	}
 
+	if unresolved := c.Unresolved(); len(unresolved) != 0 {
+		t.Errorf("unresolved = %v, want none", unresolved)
+	}
+}
+
+// An array of a type parameter, written as the argument of another generic
+// type, is bound to what the parameter is bound to in the export: `Box<T>` with
+// a `Wrapper<T[]> payload`, and `Wrapper<U>` with a `U data`, is a payload whose
+// data is an array of the element when the box is `Box<Item>`. Before, the
+// element was left as an unresolved `T`.
+func TestArrayOfATypeParameterInATypeArgumentIsBoundInTheExport(t *testing.T) {
+	abs, err := filepath.Abs("testdata/array-field")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := New().(*JavaCollector)
+	endpoints, err := c.Collect(collector.CollectContext{SourceDir: abs, NoDeps: true})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	var box *collector.ApiEndpoint
+	for i := range endpoints {
+		if endpoints[i].Path == "/array-fields/box" {
+			box = &endpoints[i]
+		}
+	}
+	if box == nil || box.Response == nil || box.Response.Body == nil {
+		t.Fatalf("endpoints = %+v, want the box endpoint with a response", endpoints)
+	}
+	payload := box.Response.Body.Fields["payload"]
+	if payload == nil || payload.Model.Fields["data"] == nil {
+		t.Fatalf("response = %+v, want a payload with a data field", box.Response.Body)
+	}
+	if got := arrayFieldKind(payload.Model.Fields["data"].Model); got != "array<object{name}>" {
+		t.Errorf("payload.data = %s, want array<object{name}>", got)
+	}
 	if unresolved := c.Unresolved(); len(unresolved) != 0 {
 		t.Errorf("unresolved = %v, want none", unresolved)
 	}
