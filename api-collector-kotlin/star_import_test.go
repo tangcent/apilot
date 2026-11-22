@@ -260,3 +260,57 @@ func starModelKind(m *model.ObjectModel) string {
 	}
 	return m.TypeName
 }
+
+// A class of a library names its neighbours without an import, and a class of
+// the project that carries the same simple name does not take their place,
+// whether or not the project's class was read first.
+func TestAClassOfALibraryNamesItsOwnPackageBeforeAClassOfTheProject(t *testing.T) {
+	sources := map[string]string{
+		"lib.req.RateConfigRequest": `package lib.req
+
+class RateConfigRequest {
+    var tiers: List<TierItem> = emptyList()
+    var files: List<FileItem>? = null
+}
+`,
+		"lib.req.TierItem": `package lib.req
+
+class TierItem {
+    var libraryTier: String = ""
+}
+`,
+		"lib.req.FileItem": `package lib.req
+
+class FileItem {
+    var libraryFile: String = ""
+}
+`,
+	}
+	caller := ktparser.Class{
+		Name: "RateController", Package: "app.web", FilePath: "RateController.kt",
+		Imports: []ktparser.Import{{Path: "app.dto.TierItem"}, {Path: "lib.req.RateConfigRequest"}},
+	}
+	project := []ktparser.Class{
+		{Name: "TierItem", Package: "app.dto", FilePath: "TierItem.kt", Fields: []ktparser.Property{{Name: "projectTier", Type: "String"}}},
+		{Name: "FileItem", Package: "app.files", FilePath: "FileItem.kt", Fields: []ktparser.Property{{Name: "projectFile", Type: "String"}}},
+		caller,
+	}
+
+	for _, readFirst := range []string{"", "TierItem"} {
+		t.Run("project class read first "+readFirst, func(t *testing.T) {
+			typeResolver := resolver.New(project)
+			typeResolver.SetDependencyResolver(&starLibrary{t: t, sources: sources})
+			if readFirst != "" {
+				if got, want := starModelKind(typeResolver.ResolveFrom(&caller, readFirst, nil)), "object{projectTier}"; got != want {
+					t.Fatalf("%s = %s, want %s", readFirst, got, want)
+				}
+			}
+
+			request := typeResolver.ResolveFrom(&caller, "RateConfigRequest", nil)
+			want := map[string]string{"tiers": "array<object{libraryTier}>", "files": "array<object{libraryFile}>"}
+			if got := starFieldKinds(request); !reflect.DeepEqual(got, want) {
+				t.Errorf("RateConfigRequest:\n got  %v\n want %v", got, want)
+			}
+		})
+	}
+}

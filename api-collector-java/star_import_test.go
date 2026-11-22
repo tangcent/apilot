@@ -85,11 +85,17 @@ type starLibrary struct {
 	t      *testing.T
 	parser *parser.Parser
 	asked  []string
+	// sources replaces starLibrarySources when set.
+	sources map[string]string
 }
 
 func (l *starLibrary) ResolveClass(name string) *parser.Class {
 	l.asked = append(l.asked, name)
-	source, ok := starLibrarySources[name]
+	sources := l.sources
+	if sources == nil {
+		sources = starLibrarySources
+	}
+	source, ok := sources[name]
 	if !ok {
 		return nil
 	}
@@ -213,4 +219,102 @@ func starModelKind(m *model.ObjectModel) string {
 		return "object{" + strings.Join(names, ",") + "}"
 	}
 	return m.TypeName
+}
+
+// A class of a library names its neighbours without an import, and a class of
+// the project that carries the same simple name does not take their place,
+// whether or not the project's class was read first.
+func TestAClassOfALibraryNamesItsOwnPackageBeforeAClassOfTheProject(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		"src/main/java/app/dto/TierItem.java": `package app.dto;
+
+public class TierItem {
+    private String projectTier;
+}
+`,
+		"src/main/java/app/files/FileItem.java": `package app.files;
+
+public class FileItem {
+    private String projectFile;
+}
+`,
+		// The project's TierItem is read for the first endpoint, before the
+		// library class that names a TierItem of its own.
+		"src/main/java/app/web/RateController.java": `package app.web;
+
+import app.dto.TierItem;
+import java.util.List;
+import lib.req.RateConfigRequest;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/rate")
+public class RateController {
+
+    @GetMapping("/tiers")
+    public List<TierItem> tiers() {
+        return null;
+    }
+
+    @PostMapping("/save")
+    public String save(@RequestBody RateConfigRequest request) {
+        return null;
+    }
+}
+`,
+	})
+	sources := map[string]string{
+		"lib.req.RateConfigRequest": `package lib.req;
+
+import java.util.List;
+
+public class RateConfigRequest {
+    private List<TierItem> tiers;
+    private List<FileItem> files;
+}
+`,
+		"lib.req.TierItem": `package lib.req;
+
+public class TierItem {
+    private String libraryTier;
+}
+`,
+		"lib.req.FileItem": `package lib.req;
+
+public class FileItem {
+    private String libraryFile;
+}
+`,
+	}
+
+	p, err := parser.NewParser(parser.ParserOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	results, err := p.ParseDirectory(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := springmvc.NewParser()
+	sm.SetDependencyResolver(&starLibrary{t: t, parser: p, sources: sources})
+	endpoints := map[string]collector.ApiEndpoint{}
+	for _, ctrl := range sm.ExtractControllers(results) {
+		for _, ep := range ctrl.Endpoints {
+			endpoints[ep.MethodName] = springmvcEndpointToAPI(ep, ctrl.Name)
+		}
+	}
+
+	tiers, save := endpoints["tiers"], endpoints["save"]
+	if tiers.Response == nil || save.RequestBody == nil || save.RequestBody.Body == nil {
+		t.Fatalf("tiers = %+v, save = %+v, want a response and a request body", tiers, save)
+	}
+	if got, want := starModelKind(tiers.Response.Body), "array<object{projectTier}>"; got != want {
+		t.Errorf("response of tiers = %s, want %s", got, want)
+	}
+	want := map[string]string{"tiers": "array<object{libraryTier}>", "files": "array<object{libraryFile}>"}
+	if got := starFieldKinds(save.RequestBody.Body); !reflect.DeepEqual(got, want) {
+		t.Errorf("request body:\n got  %v\n want %v", got, want)
+	}
 }
