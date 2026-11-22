@@ -83,11 +83,17 @@ class StarEnvelope<T> {
 type starLibrary struct {
 	t     *testing.T
 	asked []string
+	// sources replaces starLibrarySources when set.
+	sources map[string]string
 }
 
 func (l *starLibrary) ResolveClass(name string) *javaparser.Class {
 	l.asked = append(l.asked, name)
-	source, ok := starLibrarySources[name]
+	sources := l.sources
+	if sources == nil {
+		sources = starLibrarySources
+	}
+	source, ok := sources[name]
 	if !ok {
 		return nil
 	}
@@ -179,6 +185,53 @@ func TestImportOnDemandNamesClassesOfADependency(t *testing.T) {
 		if strings.HasPrefix(name, "com.example.ondemand.") {
 			t.Errorf("%s, a package of the scanned sources, was asked for: %v", name, library.asked)
 		}
+	}
+}
+
+// A class of a library finds its neighbour in its own package before the one an
+// import on demand names, whether or not the class of the import was read first.
+func TestAPackageOfALibraryClassComesBeforeItsImportOnDemand(t *testing.T) {
+	sources := map[string]string{
+		"lib.a.Holder": `package lib.a
+
+import lib.b.*
+
+class Holder {
+    var shared: Shared? = null
+}
+`,
+		"lib.a.Shared": `package lib.a
+
+class Shared {
+    var fromSamePackage: String = ""
+}
+`,
+		"lib.b.Shared": `package lib.b
+
+class Shared {
+    var fromOnDemand: String = ""
+}
+`,
+	}
+	caller := &ktparser.Class{Name: "OrderController", Package: "app", FilePath: "OrderController.kt"}
+
+	for _, preload := range []string{"", "lib.b.Shared"} {
+		t.Run("preloaded "+preload, func(t *testing.T) {
+			typeResolver := resolver.New(nil)
+			typeResolver.SetDependencyResolver(&starLibrary{t: t, sources: sources})
+			if preload != "" {
+				typeResolver.ResolveFrom(caller, preload, nil)
+			}
+
+			holder := typeResolver.ResolveFrom(caller, "lib.a.Holder", nil)
+			field := holder.Fields["shared"]
+			if field == nil {
+				t.Fatalf("Holder = %+v, want a shared field", holder)
+			}
+			if got, want := starModelKind(field.Model), "object{fromSamePackage}"; got != want {
+				t.Errorf("shared = %s, want %s", got, want)
+			}
+		})
 	}
 }
 

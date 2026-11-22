@@ -305,3 +305,102 @@ func TestResolve_ALibraryClassDoesNotAnswerForAProjectEnumsName(t *testing.T) {
 		}
 	}
 }
+
+// Which class a name denotes does not depend on what the resolver has read
+// before: the package of the source comes before an import on demand, and the
+// imports on demand keep the order they are written in, whether the classes
+// they would name are already held or still to be asked for (JLS 6.4.1).
+func TestResolve_TheScopeOrderDoesNotDependOnWhatWasReadBefore(t *testing.T) {
+	classes := map[string]parser.Class{
+		"lib.a.Holder": {
+			Name: "Holder", Package: "lib.a", Imports: onDemand("lib.b"),
+			Fields: []parser.Field{{Name: "shared", Type: "Shared"}},
+		},
+		"lib.a.Shared": {Name: "Shared", Package: "lib.a", Fields: []parser.Field{{Name: "fromSamePackage", Type: "String"}}},
+		"lib.b.Shared": {Name: "Shared", Package: "lib.b", Fields: []parser.Field{{Name: "fromOnDemand", Type: "String"}}},
+
+		"lib.c.Many": {
+			Name: "Many", Package: "lib.c", Imports: onDemand("lib.d", "lib.e"),
+			Fields: []parser.Field{{Name: "thing", Type: "Thing"}},
+		},
+		"lib.d.Thing": {Name: "Thing", Package: "lib.d", Fields: []parser.Field{{Name: "fromFirst", Type: "String"}}},
+		"lib.e.Thing": {Name: "Thing", Package: "lib.e", Fields: []parser.Field{{Name: "fromSecond", Type: "String"}}},
+	}
+	// A source that names the wildcard class through its own import on demand.
+	reader := parser.Class{Name: "Reader", Package: "app", FilePath: "Reader.java", Imports: onDemand("lib.b")}
+	for _, tc := range []struct {
+		name   string
+		holder string
+		// preload reads a class before the holder is resolved; loaded is its key.
+		preload func(r *TypeResolver)
+		loaded  string
+		want    string
+	}{
+		{name: "same package, nothing read before", holder: "lib.a.Holder", want: "fromSamePackage"},
+		{
+			name: "same package, the wildcard class read by its qualified name", holder: "lib.a.Holder", want: "fromSamePackage",
+			preload: func(r *TypeResolver) { r.ResolveFrom(parser.Class{}, "lib.b.Shared", nil) }, loaded: "lib.b.Shared",
+		},
+		{
+			name: "same package, the wildcard class read through an import", holder: "lib.a.Holder", want: "fromSamePackage",
+			preload: func(r *TypeResolver) { r.ResolveFrom(reader, "Shared", nil) }, loaded: "lib.b.Shared",
+		},
+		{name: "first import, nothing read before", holder: "lib.c.Many", want: "fromFirst"},
+		{
+			name: "first import, the later import's class read before", holder: "lib.c.Many", want: "fromFirst",
+			preload: func(r *TypeResolver) { r.ResolveFrom(parser.Class{}, "lib.e.Thing", nil) }, loaded: "lib.e.Thing",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			library := &libraryClasses{classes: classes}
+			r := NewTypeResolver(nil)
+			r.SetDependencyResolver(library)
+
+			if tc.preload != nil {
+				tc.preload(r)
+				if _, held := r.classRegistry[tc.loaded]; !held {
+					t.Fatalf("%s was not read before the holder is resolved", tc.loaded)
+				}
+			}
+
+			holder := r.ResolveFrom(parser.Class{}, tc.holder, nil)
+			var fieldModel *model.ObjectModel
+			for _, field := range holder.Fields {
+				fieldModel = field.Model
+			}
+			if fieldModel == nil || fieldModel.Kind != model.KindObject {
+				t.Fatalf("the field of %s = %+v, want an expanded object", tc.holder, fieldModel)
+			}
+			var got []string
+			for name := range fieldModel.Fields {
+				got = append(got, name)
+			}
+			if !reflect.DeepEqual(got, []string{tc.want}) {
+				t.Errorf("the field of %s has %v, want %q", tc.holder, got, tc.want)
+			}
+		})
+	}
+}
+
+// A class of the project that carries the name wins over a library class that
+// the source reaches by its package or an import, and that holds also once the
+// library class has been read: reading it does not move it ahead.
+func TestResolve_AProjectClassKeepsWinningOnceTheLibraryClassIsRead(t *testing.T) {
+	library := &libraryClasses{classes: map[string]parser.Class{
+		"lib.Level": {Name: "Level", Package: "lib", Fields: []parser.Field{{Name: "rank", Type: "int"}}},
+	}}
+	imported := parser.Class{Name: "Imported", Package: "app.web", FilePath: "Imported.java", Imports: onDemand("lib")}
+	r := NewTypeResolver([]parser.Class{
+		{Name: "Level", Package: "app.model", FilePath: "Level.java", Fields: []parser.Field{{Name: "score", Type: "int"}}},
+		imported,
+	})
+	r.SetDependencyResolver(library)
+
+	assertFieldNames(t, fieldNamesOf(t, r, imported, "Level"), []string{"score"})
+	// Read through its qualified name, as a source that spells it in full does.
+	assertFieldNames(t, fieldNamesOf(t, r, parser.Class{}, "lib.Level"), []string{"rank"})
+	assertFieldNames(t, fieldNamesOf(t, r, imported, "Level"), []string{"score"})
+	if class, found := r.Class(imported, "Level"); !found || class.Package != "app.model" {
+		t.Errorf("Class(Level) = %+v, %v, want the project's class", class, found)
+	}
+}
