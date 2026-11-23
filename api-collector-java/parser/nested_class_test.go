@@ -172,3 +172,50 @@ public class Holder extends Base.Part<Holder.Detail, String> implements Base.Mar
 		t.Errorf("interfaces = %v, want %v", holder.Interfaces, want)
 	}
 }
+
+// An interface inherits the member types of the interfaces it extends, so the
+// parser keeps them as it keeps the interfaces a class implements.
+func TestParser_ReadsTheInterfacesAnInterfaceExtends(t *testing.T) {
+	classes := parseNestedSource(t, `package com.example;
+
+public interface Wide extends Base.Marker, java.io.Serializable, Comparable<Wide>, Mid {
+}
+
+interface Plain {
+}
+`)
+	if want := []string{"Base.Marker", "java.io.Serializable", "Comparable", "Mid"}; !reflect.DeepEqual(classes["com.example.Wide"].Interfaces, want) {
+		t.Errorf("Wide extends %v, want %v", classes["com.example.Wide"].Interfaces, want)
+	}
+	if got := classes["com.example.Plain"].Interfaces; len(got) != 0 {
+		t.Errorf("Plain extends %v, want nothing", got)
+	}
+}
+
+// The type arguments of a superclass are read whether a name is written simply
+// or in full, and so is the superclass itself.
+func TestParser_ReadsTheTypeArgumentsOfASuperclassWrittenInFull(t *testing.T) {
+	classes := parseNestedSource(t, `package com.example;
+
+class Dated extends Base<java.util.Date> {}
+class Itemised extends Base<com.example.Item> {}
+class Both extends com.example.Base<java.lang.String, com.example.Item[]> {}
+class Mapped extends java.util.HashMap<String, Item> {}
+class Nested extends Base<java.util.List<com.example.Item>> {}
+`)
+	for _, tc := range []struct {
+		key, super string
+		args       []string
+	}{
+		{"com.example.Dated", "Base", []string{"java.util.Date"}},
+		{"com.example.Itemised", "Base", []string{"com.example.Item"}},
+		{"com.example.Both", "com.example.Base", []string{"java.lang.String", "com.example.Item[]"}},
+		{"com.example.Mapped", "java.util.HashMap", []string{"String", "Item"}},
+		{"com.example.Nested", "Base", []string{"java.util.List<com.example.Item>"}},
+	} {
+		c := classes[tc.key]
+		if c.SuperClass != tc.super || !reflect.DeepEqual(c.SuperClassTypeArgs, tc.args) {
+			t.Errorf("%s extends %q%v, want %q%v", tc.key, c.SuperClass, c.SuperClassTypeArgs, tc.super, tc.args)
+		}
+	}
+}

@@ -174,6 +174,7 @@ type TypeResolver struct {
 	scannedKeys        map[string]bool         // qualified names of the classes of the scanned sources
 	scannedPackages    map[string]bool         // packages that a class of the scanned sources declares
 	supertypeOf        map[string]bool         // classes whose header is being read: their member types are out of scope (see inHeader)
+	supertypesHeld     map[string]bool         // classes whose supertypes were read from the dependencies (see holdSupertypes)
 	allTypeParams      map[string]bool
 	resolving          map[string][]string // class -> the types it is being expanded as, innermost last (see isBeingExpanded)
 	dependencyResolver DependencyResolver
@@ -207,6 +208,7 @@ func NewTypeResolver(classes []parser.Class) *TypeResolver {
 		scannedKeys:     make(map[string]bool),
 		scannedPackages: make(map[string]bool),
 		supertypeOf:     make(map[string]bool),
+		supertypesHeld:  make(map[string]bool),
 	}
 	for _, c := range classes {
 		r.register(c, qualifiedName(c))
@@ -376,24 +378,36 @@ func (r *TypeResolver) supertypeClass(c parser.Class, key, name string) (parser.
 	return *class, heldAs, true
 }
 
-// holdSuperclasses reads the superclasses of class from the dependencies when the
-// resolver does not hold them yet, so that the member types they declare are known
-// before the fields of class are read: a field typed by an inherited member type
-// is read in the scope of class, which includes it (JLS 8.5).
-func (r *TypeResolver) holdSuperclasses(class parser.Class) {
-	seen := map[string]bool{}
-	for c := class; c.SuperClass != ""; {
-		key := qualifiedName(c)
-		if seen[key] {
-			return
-		}
-		seen[key] = true
-		super, _, found := r.supertypeClass(c, key, c.SuperClass)
-		if !found {
-			return
-		}
-		c = super
+// holdSupertypes reads the superclass and the interfaces of the class registered
+// under key from the dependencies when the resolver does not hold them yet, and
+// theirs in turn. A class inherits the member types of its supertypes, and a name
+// in its body denotes one of them before anything the file declares or imports
+// (JLS 8.5, 9.5), so they have to be known before such a name is looked up: the
+// member types a library declares are registered with its class, and a name is
+// looked for among the member types that something holds (see memberTypeInScope).
+// A class is held once; without dependencies there is nothing to read.
+func (r *TypeResolver) holdSupertypes(c parser.Class, key string) {
+	if r.dependencyResolver == nil || r.supertypesHeld[key] {
+		return
 	}
+	r.supertypesHeld[key] = true
+	for _, super := range supertypeNames(c) {
+		if superClass, superKey, found := r.supertypeClass(c, key, super); found {
+			r.holdSupertypes(superClass, superKey)
+		}
+	}
+}
+
+// supertypeNames lists the types that c names in its extends and implements
+// clauses, the superclass first.
+func supertypeNames(c parser.Class) []string {
+	names := make([]string, 0, 1+len(c.Interfaces))
+	for _, name := range append([]string{c.SuperClass}, c.Interfaces...) {
+		if name = strings.TrimSpace(name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // sees reports whether the current view takes a declaration into account.
@@ -749,9 +763,15 @@ func (r *TypeResolver) memberKey(key, segment string) string {
 // it: an enum nested in a class is what its name denotes inside that class, and
 // the top-level class of the same name is not.
 func (r *TypeResolver) memberTypeInScope(source parser.Class, name string) (string, bool) {
-	// A member type is a nested declaration that something holds: without one
-	// of that name there is nothing to find, and most names have none.
-	if len(r.nestedByName[name]) == 0 || source.Name == "" {
+	if source.Name == "" {
+		return "", false
+	}
+	// The supertypes of the classes around source are read first, so that a member
+	// type that only a library declares is held. A member type is a nested
+	// declaration that something holds: without one of that name there is nothing
+	// to find, and most names have none.
+	r.holdMemberScope(source)
+	if len(r.nestedByName[name]) == 0 {
 		return "", false
 	}
 	for c := source; ; c = r.enclosing(c) {
@@ -765,6 +785,23 @@ func (r *TypeResolver) memberTypeInScope(source parser.Class, name string) (stri
 		}
 		if c.Outer == "" {
 			return "", false
+		}
+	}
+}
+
+// holdMemberScope holds the supertypes of source and of the classes around it,
+// the classes whose member types are in scope in the body of source, and, in the
+// header of one of them, those of the classes around it.
+func (r *TypeResolver) holdMemberScope(source parser.Class) {
+	if r.dependencyResolver == nil {
+		return
+	}
+	for c := source; ; c = r.enclosing(c) {
+		if key := qualifiedName(c); !r.supertypeOf[key] {
+			r.holdSupertypes(c, key)
+		}
+		if c.Outer == "" {
+			return
 		}
 	}
 }
@@ -799,11 +836,7 @@ func (r *TypeResolver) memberOf(c parser.Class, key, name string, seen map[strin
 	if r.supertypeOf[key] {
 		return "", false
 	}
-	for _, super := range append([]string{c.SuperClass}, c.Interfaces...) {
-		super = strings.TrimSpace(super)
-		if super == "" {
-			continue
-		}
+	for _, super := range supertypeNames(c) {
 		if superClass, superKey, found := r.supertypeClass(c, key, super); found {
 			if member, found := r.memberOf(superClass, superKey, name, seen); found {
 				return member, true
@@ -902,9 +935,50 @@ func (r *TypeResolver) inScope(source parser.Class, name string, ask bool) (stri
 		if key, found := r.declares(source, imp.Path+"."+name, ask); found {
 			return key, true
 		}
+		if key, found := r.inheritedMember(imp.Path, name, ask); found {
+			return key, true
+		}
 	}
 
 	return "", false
+}
+
+// inheritedMember returns the member type name that the class path stands for
+// inherits from a supertype. An import on demand of a class brings in its member
+// types, declared or inherited (JLS 7.5.2); the declared ones were looked for
+// already.
+func (r *TypeResolver) inheritedMember(path, name string, ask bool) (string, bool) {
+	class, key, found := r.importedClass(path, ask)
+	if !found {
+		return "", false
+	}
+	r.holdSupertypes(class, key)
+	if len(r.nestedByName[name]) == 0 {
+		return "", false
+	}
+	return r.memberOf(class, key, name, map[string]bool{})
+}
+
+// importedClass returns the class that an import on demand names, if it names
+// one: a class the resolver holds, or, when ask is set, one that the dependencies
+// read for it. A package is not asked for as if it were a class: as far as the
+// spelling goes, the name of a class starts with a capital letter and the name of
+// a package does not.
+func (r *TypeResolver) importedClass(path string, ask bool) (parser.Class, string, bool) {
+	if class, found := r.classRegistry[path]; found {
+		return class, path, true
+	}
+	if !ask || r.dependencyResolver == nil {
+		return parser.Class{}, "", false
+	}
+	if first, _ := utf8.DecodeRuneInString(lastSegment(path)); !unicode.IsUpper(first) {
+		return parser.Class{}, "", false
+	}
+	class, key := r.readQualified(path)
+	if class == nil {
+		return parser.Class{}, "", false
+	}
+	return *class, key, true
 }
 
 // declares reports whether a class stands under key, as seen from source: one of
@@ -1065,11 +1139,13 @@ func lastSegment(name string) string {
 func (r *TypeResolver) SetDependencyResolver(dr DependencyResolver) {
 	r.dependencyResolver = dr
 	r.dependencyAnswers = nil
+	r.supertypesHeld = make(map[string]bool)
 }
 
 func (r *TypeResolver) SetCollectorDependencyResolver(cdr collector.DependencyResolver) {
 	r.dependencyResolver = &collectorDependencyAdapter{resolver: cdr}
 	r.dependencyAnswers = nil
+	r.supertypesHeld = make(map[string]bool)
 }
 
 // SetUnresolved attaches a shared sink that records type names this resolver
@@ -1377,8 +1453,6 @@ func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []s
 			delete(r.resolving, key)
 		}
 	}()
-
-	r.holdSuperclasses(class)
 
 	localBindings := make(map[string]string)
 	for i, tp := range class.TypeParameters {
