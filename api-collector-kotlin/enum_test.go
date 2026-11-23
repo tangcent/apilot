@@ -376,3 +376,42 @@ func TestJSONViewTellsEnumsNestedInDifferentClassesApart(t *testing.T) {
 		t.Errorf("unresolved = %v, want %v", names, want)
 	}
 }
+
+// enumPackagesExpectation is the export of testdata/enum-packages: two enums named
+// Status in different packages, and a class of that name in a third that nothing
+// imports. Each name takes the enum its scope gives it, and the class is taken for
+// neither.
+//
+// The Java collector asserts the same table for the same declarations written in
+// Java (api-collector-java/enum_test.go): keep the two in sync.
+var enumPackagesExpectation = map[string]enumField{
+	"own":    {"string", []string{"OPEN: ", "CLOSED: "}},
+	"ownLib": {"string", []string{"ON: ", "OFF: "}},
+	"many":   {"array<string>", []string{"OPEN: ", "CLOSED: "}},
+}
+
+func TestJSONViewTellsEnumsOfOneNameInPackagesApart(t *testing.T) {
+	endpoints, c := collectDir(t, "testdata/enum-packages")
+	byName := map[string]collector.ApiEndpoint{}
+	for _, ep := range endpoints {
+		byName[ep.Name] = ep
+	}
+	create := byName["create"]
+	if create.RequestBody == nil || create.RequestBody.Body == nil {
+		t.Fatalf("endpoints = %+v, want create with a body", endpoints)
+	}
+	checkEnumFields(t, "request body", create.RequestBody.Body.Fields, enumPackagesExpectation)
+	for name, want := range map[string]string{"direct": "string", "list": "array<string>"} {
+		ep := byName[name]
+		if ep.Response == nil || ep.Response.Body == nil {
+			t.Errorf("endpoint %s has no response", name)
+			continue
+		}
+		if got := describeModel(ep.Response.Body); got != want {
+			t.Errorf("response of %s = %s, want %s", name, got, want)
+		}
+	}
+	if got := c.Unresolved(); len(got) != 0 {
+		t.Errorf("unresolved = %v, want none", got)
+	}
+}
