@@ -375,3 +375,69 @@ func TestResolve_ALibraryClassReadForOneSourceDoesNotAnswerForASourceThatCannotR
 		t.Errorf("Level from a source that reaches no Level, after the read = %+v, want an opaque value", got)
 	}
 }
+
+// A class read from the dependencies can never name a class of the scanned
+// project: the library was built without it. A name that nothing in the scope of
+// such a class declares (a class nested in it, which a source jar declares and the
+// resolver does not model here) is unresolved, and the class of the project that
+// happens to carry the same simple name does not answer for it. A source of the
+// project that cannot reach the name still falls back to the project's class.
+func TestResolve_ALibraryClassNeverNamesAClassOfTheProject(t *testing.T) {
+	response := parser.Class{
+		Name: "Response", Package: "lib",
+		Fields: []parser.Field{
+			{Name: "summary", Type: "Summary"},
+			{Name: "summaries", Type: "List<Summary>"},
+			{Name: "boxed", Type: "Box<Summary>"},
+		},
+	}
+	box := parser.Class{Name: "Box", Package: "lib", TypeParameters: []string{"T"}, Fields: []parser.Field{{Name: "value", Type: "T"}, {Name: "own", Type: "Summary"}}}
+	project := marked("app.model", "Summary", "fromProject")
+	project.FilePath = "Summary.java"
+	controller := parser.Class{Name: "Controller", Package: "app.web", FilePath: "Controller.java", Imports: []parser.Import{{Path: "lib.Response"}}}
+	stranger := parser.Class{Name: "Stranger", Package: "app.web", FilePath: "Stranger.java"}
+
+	for _, warm := range []bool{false, true} {
+		name := "fresh"
+		if warm {
+			name = "the project's class read before"
+		}
+		t.Run(name, func(t *testing.T) {
+			library := &libraryClasses{classes: map[string]parser.Class{"lib.Response": response, "lib.Box": box}}
+			r := NewTypeResolver([]parser.Class{controller, stranger, project})
+			r.SetDependencyResolver(library)
+			if warm {
+				r.ResolveFrom(controller, "app.model.Summary", nil)
+			}
+
+			got := r.ResolveFrom(controller, "Response", nil)
+			for field, m := range map[string]*model.ObjectModel{
+				"summary":   got.Fields["summary"].Model,
+				"summaries": got.Fields["summaries"].Model.Items,
+				"boxed.own": got.Fields["boxed"].Model.Fields["own"].Model,
+			} {
+				if m.Kind != model.KindSingle || m.TypeName != "Summary" {
+					t.Errorf("%s is a %v with the fields %v, want the unresolved name Summary, not the project's class", field, m.Kind, fieldsOf(m))
+				}
+			}
+			// The same name, written in the project and reaching no class, is the
+			// project's.
+			if got := fieldsOf(r.ResolveFrom(stranger, "Summary", nil)); !reflect.DeepEqual(got, []string{"fromProject"}) {
+				t.Errorf("Summary from a source of the project has %v, want the project's class", got)
+			}
+		})
+	}
+
+	t.Run("a class next to it in the library is the one it names", func(t *testing.T) {
+		library := &libraryClasses{classes: map[string]parser.Class{
+			"lib.Response": response, "lib.Box": box, "lib.Summary": marked("lib", "Summary", "fromLibrary"),
+		}}
+		r := NewTypeResolver([]parser.Class{controller, stranger, project})
+		r.SetDependencyResolver(library)
+
+		got := r.ResolveFrom(controller, "Response", nil)
+		if fields := fieldsOf(got.Fields["summary"].Model); !reflect.DeepEqual(fields, []string{"fromLibrary"}) {
+			t.Errorf("summary has %v, want the library's Summary", fields)
+		}
+	})
+}

@@ -232,7 +232,9 @@ project (it can still be written in full). Which class a simple name denotes
 follows the scope of the source, tier by tier, whatever the class comes from: a
 class declared in the same file, a single-type import, the package of the source,
 then the imports on demand. A class of the project that the source reaches by none
-of these answers only when no tier does.
+of these answers only when no tier does, and never for a class read from a library:
+the library was built without the project, so a name it writes that no tier
+declares stays unresolved.
 
 With maven-indexer-cli 1.2.0 or later, APilot asks the indexer to pin each
 class to the version the project's dependency tree names (`--project-path`),
