@@ -73,7 +73,8 @@ func typeArgLibrary() []parser.Class {
 		typeArgLibraryClass("Outer", []string{"T"}, "", nil,
 			f("wrapped", "Wrapper<T>"), f("wrappedList", "Wrapper<List<T>>"),
 			f("wrappedArray", "Wrapper<T[]>"), f("wrappedMap", "Wrapper<Map<String, T>>"),
-			f("paired", "Wrapper<Pair<T, List<T>>>")),
+			f("paired", "Wrapper<Pair<T, List<T>>>"),
+			f("deep", "Wrapper<Wrapper<T>>")),
 		// The parameter has the name of the one it is passed to.
 		typeArgLibraryClass("Same", []string{"T"}, "", nil, f("inner", "SameInner<T>")),
 		typeArgLibraryClass("SameInner", []string{"T"}, "", nil, f("data", "T")),
@@ -325,6 +326,7 @@ func TestResolve_ATypeArgumentIsTheClassTheCallerNames(t *testing.T) {
 				"wrappedArray.data":  "[" + arg.shape + "]",
 				"wrappedMap.data":    "{" + arg.shape + "}",
 				"paired.data.first":  arg.shape,
+				"deep.data.data":     arg.shape,
 				"paired.data.second": "[" + arg.shape + "]",
 			} {
 				if got := typeArgShape(typeArgAt(outer, path)); got != want {

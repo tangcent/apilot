@@ -3,6 +3,7 @@ package com.example.typearg.app;
 import com.example.typearg.dto.Item;
 import com.example.typearg.lib.Box;
 import com.example.typearg.lib.Holder;
+import com.example.typearg.lib.Node;
 import com.example.typearg.lib.Outer;
 import java.time.Period;
 import java.util.Date;
@@ -70,6 +71,21 @@ public class TypeArgumentController {
 
     @GetMapping("/box-string")
     public Box<String> boxString() {
+        return null;
+    }
+
+    @GetMapping("/box-box")
+    public Box<Box<Item>> boxBox() {
+        return null;
+    }
+
+    @GetMapping("/outer-outer")
+    public Outer<Outer<Item>> outerOuter() {
+        return null;
+    }
+
+    @GetMapping("/node")
+    public Node<Item> node() {
         return null;
     }
 
