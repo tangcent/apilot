@@ -639,62 +639,73 @@ func (r *TypeResolver) isDependencySource(source parser.Class) bool {
 
 // dollarName resolves a name with a `$` in it. The `$` is the separator of a
 // binary name, `Outer$Inner`, or a character of an identifier, `Price$Value`, and
-// the name alone does not say which. It is read as a binary name first, `canonical`
-// (see canonicalName), unless a class carries it as written; when that finds no
-// class it is read as written, in the same scope.
+// the name alone does not say which. Written by hand it is a character of the name
+// (JLS 3.8): `Price$Value` is the class of that name, whatever class `Price.Value`
+// is. Only bytecode spells a nested class with the `$` of its binary name, and so
+// does a source that a decompiler printed from it.
+//
+// A name is read as written first, in the scope of source, and as the binary name,
+// `canonical` (see canonicalName), when that finds no class. The source of a
+// decompiled class reads it the other way round: as the binary name first, which
+// costs no call for a spelling that nothing is named so, and as written when that
+// finds no class. A single-type import that spells the name with the `$` says the
+// class is named so, and the name is read as written only.
 //
 // A name that neither reading finds a class for is returned as it was written,
 // not as the binary name, so that it reaches the dependencies in the spelling the
 // source used: only the dependency resolver can say whether `lib.Price$Value` is
 // the class Value nested in Price or a class of that name.
 func (r *TypeResolver) dollarName(source parser.Class, name, canonical string, ask bool) string {
-	binary := ""
-	if !r.carriedAsWritten(source, name) {
-		binary = r.scopedPlain(source, canonical, ask)
-		if r.isDeclared(binary) {
-			return binary
-		}
-	}
-	written := r.scopedPlain(source, name, ask)
+	imported := importedAsWritten(source, name)
+	spellings := []string{name, canonical}
 	switch {
-	case r.isDeclared(written):
-		return written
-	case binary != "" && binary != canonical:
+	case imported:
+		spellings = []string{name}
+	case source.Decompiled:
+		spellings = []string{canonical, name}
+	}
+	keys := make(map[string]string, 2)
+	for _, spelling := range spellings {
+		key := r.scopedPlain(source, spelling, ask)
+		if r.isDeclared(key) {
+			return key
+		}
+		// A key that no tier read a class for, because it is written in full or a
+		// single-type import names it, is asked of the dependencies here: whether
+		// the class is read must not depend on what was read before.
+		if _, held := r.readNamed(key, ask); held != "" {
+			return held
+		}
+		keys[spelling] = key
+	}
+	if binary := keys[canonical]; binary != "" && binary != canonical {
 		// The name of the class that encloses it was found: the path to the member
 		// is that class's key followed by the name, to be asked for.
 		return binary
 	}
-	return written
+	return keys[name]
 }
 
-// carriedAsWritten reports whether a name spells a class with its `$` in the
-// identifier: a class the resolver holds, or one that source imports by that
-// name, carries a segment of the name as written. A class of a library that is
-// neither held nor imported is told apart from a nested one only by what the
-// dependencies answer, and is read as a binary name.
-func (r *TypeResolver) carriedAsWritten(source parser.Class, name string) bool {
+// readNamed reads the class that a key names from the dependencies, when the key is
+// a name that a package qualifies, and returns it with the key it is held under.
+func (r *TypeResolver) readNamed(key string, ask bool) (*parser.Class, string) {
+	if first, _ := utf8.DecodeRuneInString(key); !ask || !unicode.IsLower(first) {
+		return nil, ""
+	}
+	return r.readQualified(key)
+}
+
+// importedAsWritten reports whether source imports a class by a name that spells a
+// segment of name with its `$`: the import says that the class is named so.
+func importedAsWritten(source parser.Class, name string) bool {
 	for _, segment := range strings.Split(name, ".") {
 		if !strings.Contains(segment, "$") {
 			continue
-		}
-		if len(r.bySimpleName[segment]) > 0 || r.dependencyNamed(segment) {
-			return true
 		}
 		for _, imp := range source.Imports {
 			if !imp.Static && !imp.OnDemand && lastSegment(imp.Path) == segment {
 				return true
 			}
-		}
-	}
-	return false
-}
-
-// dependencyNamed reports whether a class read from the dependencies has the
-// simple name segment.
-func (r *TypeResolver) dependencyNamed(segment string) bool {
-	for key := range r.dependencyKeys {
-		if lastSegment(key) == segment {
-			return true
 		}
 	}
 	return false
@@ -818,7 +829,7 @@ func (r *TypeResolver) enclosing(c parser.Class) parser.Class {
 	if held, found := r.classRegistry[qualify(c.Package, c.Outer)]; found {
 		return held
 	}
-	outer := parser.Class{Name: c.Outer, Package: c.Package, FilePath: c.FilePath, Imports: c.Imports}
+	outer := parser.Class{Name: c.Outer, Package: c.Package, FilePath: c.FilePath, Imports: c.Imports, Decompiled: c.Decompiled}
 	if dot := strings.LastIndex(c.Outer, "."); dot >= 0 {
 		outer.Name, outer.Outer = c.Outer[dot+1:], c.Outer[:dot]
 	}
@@ -1015,10 +1026,8 @@ func (r *TypeResolver) importedClass(path string, ask bool) (parser.Class, strin
 // `lib.Price.Value`.
 func (r *TypeResolver) declares(source parser.Class, key string, ask bool) (string, bool) {
 	splitPackage := r.isScannedSource(source) && r.scannedPackages[packageOf(key)]
-	for _, held := range []string{key, canonicalName(key)} {
-		if _, found := r.classRegistry[held]; found {
-			return held, !splitPackage || !r.dependencyKeys[held]
-		}
+	if _, found := r.classRegistry[key]; found {
+		return key, !splitPackage || !r.dependencyKeys[key]
 	}
 	if !ask || splitPackage || isPlatformName(key) || r.isDeclared(packageOf(key)) {
 		return "", false

@@ -73,9 +73,11 @@ func TestResolveClass_ANestedClassIsReadFromTheSourceOfItsOuterClass(t *testing.
 			t.Errorf("ResolveClass(%q) = %+v, want %s nested in %q", tc.name, class, tc.want, tc.outer)
 		}
 	}
-	// The outer class is asked for once, and no nested name is: the index holds
-	// none, and the answer for a name it holds is cached.
-	if want := []string{"com.example.lib.Page"}; !reflect.DeepEqual(asked, want) {
+	// The outer class is asked for once, and no dotted nested name is: the index
+	// holds none, and the answer for a name it holds is cached. A binary name is
+	// asked for as written first, for it may be the name of a top-level class, and
+	// that is a miss of the index.
+	if want := []string{"com.example.lib.Page", "com.example.lib.Page$Sort", "com.example.lib.Page$Sort$Order"}; !reflect.DeepEqual(asked, want) {
 		t.Errorf("asked = %v, want %v", asked, want)
 	}
 
@@ -86,8 +88,8 @@ func TestResolveClass_ANestedClassIsReadFromTheSourceOfItsOuterClass(t *testing.
 			t.Errorf("Page.Missing = %+v, want none", class)
 		}
 	}
-	if len(asked) != 1 {
-		t.Errorf("asked = %v, want the outer class once", asked)
+	if len(asked) != 3 {
+		t.Errorf("asked = %v, want no call for a nested class of a class that was read", asked)
 	}
 	// Only the classes read count as resolved: Page, and the nested classes
 	// asked for by their names, a binary name counted with the dotted one.
@@ -272,6 +274,44 @@ func TestOutermostClass(t *testing.T) {
 	} {
 		if got, nested := outermostClass(tc.name); got != tc.want || nested != tc.nested {
 			t.Errorf("outermostClass(%q) = %q, %v; want %q, %v", tc.name, got, nested, tc.want, tc.nested)
+		}
+	}
+}
+
+// A source the indexer decompiled from bytecode says so above its package, and
+// every class of it is marked: its names are those of bytecode.
+func TestResolveClass_MarksTheClassesOfADecompiledSource(t *testing.T) {
+	const decompiled = "/*\n * Decompiled with CFR 0.152.\n */\npackage com.example.lib;\n\npublic class Page {\n    public static class Sort {\n        private Page$Footer footer;\n    }\n}"
+	const written = "package com.example.lib;\n\n/** Page, as the sources JAR holds it; it is not decompiled. */\npublic class Plain {\n    public static class Sort {\n    }\n}"
+	var asked []string
+	r := nestedIndex(t, map[string]string{"com.example.lib.Page": decompiled, "com.example.lib.Plain": written}, &asked)
+
+	for _, name := range []string{"com.example.lib.Page", "com.example.lib.Page.Sort"} {
+		if class := r.ResolveClass(name); class == nil || !class.Decompiled {
+			t.Errorf("ResolveClass(%q) = %+v, want a class marked as decompiled", name, class)
+		}
+	}
+	for _, name := range []string{"com.example.lib.Plain", "com.example.lib.Plain.Sort"} {
+		if class := r.ResolveClass(name); class == nil || class.Decompiled {
+			t.Errorf("ResolveClass(%q) = %+v, want a class read from the source a developer wrote", name, class)
+		}
+	}
+}
+
+func TestIsDecompiled(t *testing.T) {
+	for _, tc := range []struct {
+		source string
+		want   bool
+	}{
+		{"/*\n * Decompiled with CFR 0.152.\n */\npackage p;\nclass A {}", true},
+		{"// Decompiled by Procyon v0.6.0\npackage p;\nclass A {}", true},
+		{"// Source code recreated from a .class file by IntelliJ IDEA\n// (powered by FernFlower decompiler)\npackage p;\nclass A {}", true},
+		{"package p;\n\nclass A {}", false},
+		// A word in the class's own documentation, after the package, is no mark.
+		{"package p;\n\n/** Reads what a decompiler printed. */\nclass A {}", false},
+	} {
+		if got := isDecompiled(tc.source); got != tc.want {
+			t.Errorf("isDecompiled(%q) = %v, want %v", tc.source, got, tc.want)
 		}
 	}
 }

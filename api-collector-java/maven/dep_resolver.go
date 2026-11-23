@@ -155,17 +155,21 @@ func (r *MavenDependencyResolver) Failed() []string {
 
 // ResolveClass returns the class a qualified name denotes. A class nested in
 // another is named through it, `com.example.Page.Sort`, or by its binary name,
-// `com.example.Page$Sort`. A name that reads as a binary name may also be that of
-// a top-level class whose identifier has a `$`, `com.example.Price$Value`, so it
-// is asked for as written when the nested class it names is not found.
+// `com.example.Page$Sort`. A `$` is also a character of an identifier, and a name
+// written with one, `com.example.Price$Value`, is a top-level class of that name,
+// so a name is asked for as written first and read as a binary name when that
+// finds no class. A caller that has a binary name from bytecode asks for the
+// dotted name, which costs no call for the spelling that nothing is named so.
 func (r *MavenDependencyResolver) ResolveClass(className string) *parser.Class {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	canonical := canonicalClassName(className)
-	if class := r.resolve(canonical); class != nil || canonical == className {
+	if class := r.resolve(className); class != nil {
 		return class
 	}
-	return r.resolve(className)
+	if canonical := canonicalClassName(className); canonical != className {
+		return r.resolve(canonical)
+	}
+	return nil
 }
 
 // resolve answers className from the cache, then from the index.
@@ -443,12 +447,35 @@ func (r *MavenDependencyResolver) parse(className, language, source string) ([]p
 		if r.parser == nil {
 			return nil, fmt.Errorf("no Java parser")
 		}
-		return r.parser.ParseSource([]byte(source))
+		classes, err := r.parser.ParseSource([]byte(source))
+		if err == nil && isDecompiled(source) {
+			for i := range classes {
+				classes[i].Decompiled = true
+			}
+		}
+		return classes, err
 	}
 	if p := registeredSourceParser(language); p != nil {
 		return p(className, []byte(source))
 	}
 	return nil, fmt.Errorf("no parser for %s sources", language)
+}
+
+// isDecompiled reports whether a source was printed by a decompiler: the indexer
+// reads a class that has no sources JAR from its bytecode, and the decompiler says
+// so in the comment it writes above the package, as CFR does with
+// `Decompiled with CFR`. The indexer reports such a source as Java, so this is the
+// only mark of it.
+func isDecompiled(source string) bool {
+	head := source
+	if i := strings.Index(head, "package "); i >= 0 {
+		head = head[:i]
+	}
+	if len(head) > 1024 {
+		head = head[:1024]
+	}
+	head = strings.ToLower(head)
+	return strings.Contains(head, "decompiled") || strings.Contains(head, "decompiler")
 }
 
 // pickClass returns the declaration a class name denotes among the

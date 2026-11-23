@@ -470,7 +470,8 @@ func (l *nestedLibrary) Siblings(name string) []parser.Class {
 
 func newNestedLibrary() *nestedLibrary {
 	const pkg = "com.example.lib"
-	page := parser.Class{Name: "Page", Package: pkg, TypeParameters: []string{"T"}, Fields: []parser.Field{
+	// Page is a decompiled class: it spells a nested class by its binary name.
+	page := parser.Class{Name: "Page", Package: pkg, Decompiled: true, TypeParameters: []string{"T"}, Fields: []parser.Field{
 		{Name: "rows", Type: "List<T>"},
 		{Name: "sort", Type: "Sort"},
 		{Name: "footer", Type: "Page.Footer"},
