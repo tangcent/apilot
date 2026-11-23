@@ -103,3 +103,107 @@ func TestADollarNameIsAskedOfTheIndexOnce(t *testing.T) {
 		t.Errorf("lib.Price$Value was asked %d times, want once: %v", count["lib.Price$Value"], asked)
 	}
 }
+
+// decompiledHeader is what CFR writes above a class it decompiled.
+const decompiledHeader = "/*\n * Decompiled with CFR 0.152.\n */\n"
+
+// dollarBothLibrary holds a top-level class Price$Value and a class Value nested in
+// Price: the same text names either, and which one it is depends on where the text
+// comes from.
+var dollarBothLibrary = map[string]string{
+	"lib.Price$Value": "package lib;\n\npublic class Price$Value {\n    private String top;\n}\n",
+	"lib.Price":       "package lib;\n\npublic class Price {\n    public static class Value {\n        private String nested;\n    }\n}\n",
+	// Written by hand, `Price$Value` is a name like any other: the top-level class.
+	"lib.H": "package lib;\n\npublic class H {\n    private Price$Value pv;\n    private Price.Value nv;\n    private lib.Price$Value fq;\n}\n",
+	// Decompiled, it is the binary name of a class that bytecode names so: the class
+	// nested in Price.
+	"lib.D": decompiledHeader + "package lib;\n\npublic class D {\n    private Price$Value pv;\n    private Price.Value nv;\n}\n",
+}
+
+// A `$` written in source is a character of the name: `Price$Value` is the class of
+// that name, whichever class `Price.Value` is and whatever was read before. Only the
+// names that bytecode gives a nested class, `Outer$Inner`, are binary names, and
+// those come from a decompiled source.
+func TestADollarWrittenInSourceIsPartOfTheNameButADecompiledOneIsABinaryName(t *testing.T) {
+	bare := parser.Class{Name: "Bare", Package: "app", FilePath: "Bare.java"}
+	starred := parser.Class{Name: "Starred", Package: "app", FilePath: "Starred.java", Imports: []parser.Import{{Path: "lib", OnDemand: true}}}
+
+	for _, tc := range []struct {
+		name    string
+		source  parser.Class
+		rawType string
+		want    string
+		warm    []string
+	}{
+		{"project, in full", bare, "lib.Price$Value", "{top:string}", nil},
+		{"project, in full, the nested class read first", bare, "lib.Price$Value", "{top:string}", []string{"lib.Price"}},
+		{"project, through an import on demand", starred, "Price$Value", "{top:string}", nil},
+		{"project, through an import on demand, the nested class read first", starred, "Price$Value", "{top:string}", []string{"lib.Price.Value"}},
+		{"project, the nested class by its path", starred, "Price.Value", "{nested:string}", []string{"lib.Price$Value"}},
+		{"library source, by hand", bare, "lib.H", "{fq:{top:string},nv:{nested:string},pv:{top:string}}", nil},
+		{"library source, by hand, the nested class read first", bare, "lib.H", "{fq:{top:string},nv:{nested:string},pv:{top:string}}", []string{"lib.Price"}},
+		{"library source, decompiled", bare, "lib.D", "{nv:{nested:string},pv:{nested:string}}", nil},
+		{"library source, decompiled, the top-level class read first", bare, "lib.D", "{nv:{nested:string},pv:{nested:string}}", []string{"lib.Price$Value"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var asked []string
+			index, err := maven.NewMavenDependencyResolver()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer index.Close()
+			index.SetRunner(scriptedIndex(dollarBothLibrary, &asked))
+			r := resolver.NewTypeResolver([]parser.Class{bare, starred})
+			r.SetDependencyResolver(index)
+			for _, w := range tc.warm {
+				r.ResolveFrom(bare, w, nil)
+			}
+
+			if got := nestedShape(r.ResolveFrom(tc.source, tc.rawType, nil)); got != tc.want {
+				t.Errorf("%s:\n got  %s\n want %s\n asked %v", tc.rawType, got, tc.want, asked)
+			}
+		})
+	}
+}
+
+// A decompiled source reads the name as a binary name first, so a library of
+// decompiled classes costs no call for a name that nothing is named so, and a name
+// written by hand is asked for as written first.
+func TestADollarNameIsAskedForInTheOrderItsSourceReadsIt(t *testing.T) {
+	nestedOnly := map[string]string{
+		"lib.Price": dollarBothLibrary["lib.Price"],
+		"lib.D":     dollarBothLibrary["lib.D"],
+		"lib.H":     dollarBothLibrary["lib.H"],
+	}
+	for _, tc := range []struct {
+		name  string
+		class string
+		want  []string
+		shape string
+	}{
+		{"decompiled: the binary name only", "lib.D", []string{"lib.D", "lib.Price"}, "{nv:{nested:string},pv:{nested:string}}"},
+		// By hand: the class of that name is looked for, and only the nested class
+		// is there, which the binary reading finds in the end.
+		{"by hand: the binary name is the fall back", "lib.H", []string{"lib.H", "lib.Price$Value", "lib.Price"}, "{fq:{nested:string},nv:{nested:string},pv:{nested:string}}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var asked []string
+			index, err := maven.NewMavenDependencyResolver()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer index.Close()
+			index.SetRunner(scriptedIndex(nestedOnly, &asked))
+			bare := parser.Class{Name: "Bare", Package: "app", FilePath: "Bare.java"}
+			r := resolver.NewTypeResolver([]parser.Class{bare})
+			r.SetDependencyResolver(index)
+
+			if got := nestedShape(r.ResolveFrom(bare, tc.class, nil)); got != tc.shape {
+				t.Errorf("%s = %s, want %s", tc.class, got, tc.shape)
+			}
+			if !reflect.DeepEqual(asked, tc.want) {
+				t.Errorf("asked = %v, want %v", asked, tc.want)
+			}
+		})
+	}
+}

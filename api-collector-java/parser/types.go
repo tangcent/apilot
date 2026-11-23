@@ -100,6 +100,11 @@ type Class struct {
 	// neither a member type of the class around it nor a class of its package.
 	// Outer still names the types around it.
 	Local bool
+	// Decompiled marks a class read from a source that a decompiler printed from
+	// bytecode, as against one a developer wrote. Bytecode spells the class Inner
+	// of Outer as `Outer$Inner`, its binary name, and a decompiler may keep that
+	// spelling; written by hand, a `$` is a character of an identifier.
+	Decompiled bool
 	// FilePath is the compilation unit that declared this class. Simple-name
 	// resolution needs it to tell a declaration in the same file apart from
 	// one that is merely imported (JLS 6.5.5.1). Empty for sources parsed
