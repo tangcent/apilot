@@ -126,21 +126,7 @@ func (r *TypeResolver) memberConstant(class parser.Class, name string, hops int,
 // (Outer.Headers), or a qualified name. A class missing from the scanned
 // sources is read from the dependencies.
 func (r *TypeResolver) constantClass(source parser.Class, name string) (parser.Class, bool) {
-	key := name
-	head, rest, nested := strings.Cut(name, ".")
-	if scoped := r.resolveName(source, head); scoped != head || !nested {
-		key = scoped
-		if nested {
-			key += "." + rest
-		}
-		// The parsers register a nested class under its package and simple
-		// name, not under the name of the class enclosing it.
-		if enclosing, found := r.classRegistry[scoped]; found && nested {
-			if c, found := r.classRegistry[qualify(enclosing.Package, lastSegment(name))]; found {
-				return c, true
-			}
-		}
-	}
+	key := r.resolveName(source, name)
 	if c, found := r.classRegistry[key]; found {
 		return c, true
 	}
@@ -150,7 +136,7 @@ func (r *TypeResolver) constantClass(source parser.Class, name string) (parser.C
 	// JDK and the Kotlin standard library are not asked either: they are
 	// reached as supertypes (Serializable) far more often than as the home of
 	// a binding name.
-	if r.dependencyResolver == nil || !strings.Contains(key, ".") || isPlatformName(key) || r.isPackage(key) {
+	if r.dependencyResolver == nil || !strings.Contains(key, ".") || isPlatformName(key) || r.isPackage(key) || r.memberOfScanned(key) {
 		return parser.Class{}, false
 	}
 	if c := r.readDependency(key); c != nil {

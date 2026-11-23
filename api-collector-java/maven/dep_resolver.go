@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 
 	collector "github.com/tangcent/apilot/api-collector"
 	"github.com/tangcent/apilot/api-collector-java/parser"
@@ -59,6 +61,10 @@ type MavenDependencyResolver struct {
 	projectPath string
 	cache       map[string]*parser.Class
 	misses      map[string]bool
+	// siblings maps a class read from the index to the classes nested in it, as
+	// its source declares them. The index holds top-level classes only, so a
+	// nested class is read from the source of the class that declares it.
+	siblings map[string][]parser.Class
 	// unpinned maps a class the indexer could not pin to the project's
 	// dependency versions to the artifact it was read from.
 	unpinned map[string]string
@@ -77,6 +83,7 @@ func NewMavenDependencyResolver() (*MavenDependencyResolver, error) {
 		run:      runCLI,
 		cache:    make(map[string]*parser.Class),
 		misses:   make(map[string]bool),
+		siblings: make(map[string][]parser.Class),
 		unpinned: make(map[string]string),
 		failed:   make(map[string]string),
 	}, nil
@@ -146,10 +153,17 @@ func (r *MavenDependencyResolver) Failed() []string {
 	return out
 }
 
+// ResolveClass returns the class a qualified name denotes. A class nested in
+// another is named through it, `com.example.Page.Sort`, or by its binary name,
+// `com.example.Page$Sort`.
 func (r *MavenDependencyResolver) ResolveClass(className string) *parser.Class {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.resolve(canonicalClassName(className))
+}
 
+// resolve answers className from the cache, then from the index.
+func (r *MavenDependencyResolver) resolve(className string) *parser.Class {
 	if cached, ok := r.cache[className]; ok {
 		return cached
 	}
@@ -157,6 +171,20 @@ func (r *MavenDependencyResolver) ResolveClass(className string) *parser.Class {
 	if r.misses[className] {
 		return nil
 	}
+
+	// The index holds top-level classes only: none of its names is that of a
+	// class nested in another, so a nested class is taken from the source of the
+	// class that declares it.
+	if outer, nested := outermostClass(className); nested && r.resolve(outer) != nil {
+		if class := r.nestedClass(outer, className); class != nil {
+			r.cache[className] = class
+			return class
+		}
+		r.misses[className] = true
+		return nil
+	}
+	// A name whose outermost class is not in the index is asked for as written: a
+	// package that starts with a capital letter reads as a class.
 
 	class := r.resolveFromCLI(className)
 	if class != nil {
@@ -234,10 +262,72 @@ func (r *MavenDependencyResolver) resolveFromCLI(className string) *parser.Class
 	}
 
 	class := pickClass(classes, className)
+	if class != nil {
+		r.keepSiblings(className, classes, class)
+	}
 	if class != nil && fetched.Unpinned {
 		r.unpinned[className] = fetched.Artifact
 	}
 	return class
+}
+
+// keepSiblings remembers the classes nested in the class that was asked for, so
+// that a class nested in it is answered without another call. The other
+// top-level classes of the source are not kept: each is asked for on its own, as
+// it always was, and may be read from another version of the library.
+func (r *MavenDependencyResolver) keepSiblings(className string, classes []parser.Class, picked *parser.Class) {
+	var siblings []parser.Class
+	for i := range classes {
+		c := classes[i]
+		if &classes[i] == picked || c.Package != picked.Package {
+			continue
+		}
+		if outermost, _, _ := strings.Cut(c.Outer, "."); outermost == picked.Name && picked.Outer == "" {
+			siblings = append(siblings, c)
+		}
+	}
+	if len(siblings) == 0 {
+		return
+	}
+	if r.siblings == nil {
+		r.siblings = make(map[string][]parser.Class)
+	}
+	r.siblings[className] = siblings
+}
+
+// nestedClass returns the class named name that the source of the class outer
+// declares.
+func (r *MavenDependencyResolver) nestedClass(outer, name string) *parser.Class {
+	for _, sibling := range r.siblings[outer] {
+		if sibling.QualifiedName() == name {
+			class := sibling
+			return &class
+		}
+	}
+	return nil
+}
+
+// Siblings returns the classes nested in the class className was read from, or
+// in the class that declares it when className is a nested class, and that
+// declaring class too. The type resolver registers them with the class, so that
+// a name that denotes one of them is not asked of the index.
+func (r *MavenDependencyResolver) Siblings(className string) []parser.Class {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	className = canonicalClassName(className)
+	if siblings, ok := r.siblings[className]; ok {
+		return append([]parser.Class(nil), siblings...)
+	}
+	outer, nested := outermostClass(className)
+	if !nested {
+		return nil
+	}
+	var siblings []parser.Class
+	if declaring := r.cache[outer]; declaring != nil {
+		siblings = append(siblings, *declaring)
+	}
+	return append(siblings, r.siblings[outer]...)
 }
 
 func languageName(language string) string {
@@ -353,11 +443,23 @@ func (r *MavenDependencyResolver) parse(className, language, source string) ([]p
 
 // pickClass returns the declaration a class name denotes among the
 // declarations of one source: the source of Outer also declares Outer.Inner,
-// and a Kotlin file may declare several top-level classes. When no
-// declaration carries the simple name, the first one answers, as it always
-// has.
+// and a Kotlin file may declare several top-level classes. The declaration
+// whose qualified name is the one asked for answers; failing that, one that
+// carries the simple name, a top-level one first; and when no declaration
+// carries the simple name, the first one answers, as it always has.
 func pickClass(classes []parser.Class, className string) *parser.Class {
+	className = canonicalClassName(className)
+	for i := range classes {
+		if classes[i].QualifiedName() == className {
+			return &classes[i]
+		}
+	}
 	simple := className[strings.LastIndexAny(className, ".$")+1:]
+	for i := range classes {
+		if classes[i].Outer == "" && classes[i].Name == simple {
+			return &classes[i]
+		}
+	}
 	for i := range classes {
 		if classes[i].Name == simple {
 			return &classes[i]
@@ -367,6 +469,48 @@ func pickClass(classes []parser.Class, className string) *parser.Class {
 		return &classes[0]
 	}
 	return nil
+}
+
+// canonicalClassName spells a binary class name, `com.example.Page$Sort`, with
+// the dot of source, `com.example.Page.Sort`: a decompiler or a build tool may
+// name a nested class either way. A `$` that is not a separator between two
+// names, as in `Outer$1`, is left alone.
+func canonicalClassName(name string) string {
+	if !strings.Contains(name, "$") {
+		return name
+	}
+	parts := strings.Split(name, "$")
+	for _, part := range parts {
+		if part == "" || strings.HasSuffix(part, ".") {
+			return name
+		}
+		if first, _ := utf8.DecodeRuneInString(part); !unicode.IsLetter(first) && first != '_' {
+			return name
+		}
+	}
+	return strings.Join(parts, ".")
+}
+
+// outermostClass returns the top-level class a class name is nested in, and
+// whether the name is that of a nested class at all: the outermost class of
+// com.example.Page.Sort is com.example.Page. A package name starts with a
+// lower-case letter and a class name does not, which is as far as the spelling
+// goes.
+func outermostClass(name string) (string, bool) {
+	segments := strings.Split(name, ".")
+	for i, segment := range segments {
+		if segment == "" {
+			return name, false
+		}
+		if first, _ := utf8.DecodeRuneInString(segment); unicode.IsLower(first) {
+			continue
+		}
+		if i == len(segments)-1 {
+			return name, false
+		}
+		return strings.Join(segments[:i+1], "."), true
+	}
+	return name, false
 }
 
 func (r *MavenDependencyResolver) DetectDependencies(sourceDir string) ([]collector.Dependency, error) {

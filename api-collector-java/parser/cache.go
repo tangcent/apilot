@@ -26,7 +26,8 @@ import (
 // `List<@NotBlank String>` is no longer the type the parser reads.
 // Version 8: a field or return type that is an array or a qualified name is
 // read instead of skipped, and `String tags[]` is the type `String[]`.
-const cacheSchemaVersion = "8"
+// Version 9: Class carries Outer, the classes it is nested in.
+const cacheSchemaVersion = "9"
 
 // Cache provides file-level caching based on content hash.
 type Cache struct {

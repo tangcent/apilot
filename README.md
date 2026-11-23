@@ -236,6 +236,16 @@ of these answers only when no tier does, and never for a class read from a libra
 the library was built without the project, so a name it writes that no tier
 declares stays unresolved.
 
+A class nested in another is a class of its own, known by the classes it is
+nested in: `Order.Item` and `Cart.Item` are two classes. Inside `Order`, and in
+a class nested in it or one that extends it, a bare `Item` is the `Item` nested
+in `Order`; elsewhere it is named `Order.Item`, by an import of
+`com.example.Order.Item`, or by `import com.example.Order.*`. A bare name that no
+scope declares is not guessed between two nested classes of that name, and it
+is reported as unresolved. The indexer holds top-level classes only, so a class
+nested in a library class is read from the source of the class that declares
+it, in one call for the class and all that is nested in it.
+
 With maven-indexer-cli 1.2.0 or later, APilot asks the indexer to pin each
 class to the version the project's dependency tree names (`--project-path`),
 but on released CLIs up to 1.2.1 most types are still read from the version

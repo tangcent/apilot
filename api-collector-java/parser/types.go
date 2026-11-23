@@ -89,6 +89,11 @@ type Class struct {
 	SuperClassTypeArgs []string
 	TypeParameters     []string
 	Interfaces         []string
+	// Outer is the dotted path of the classes this declaration is nested in,
+	// outermost first: "Outer" for Outer.Inner, "Outer.Mid" for Deep in
+	// Outer.Mid.Deep. Empty for a top-level declaration. A nested class is a
+	// declaration of its own, and this is all that says where it belongs.
+	Outer string
 	// FilePath is the compilation unit that declared this class. Simple-name
 	// resolution needs it to tell a declaration in the same file apart from
 	// one that is merely imported (JLS 6.5.5.1). Empty for sources parsed
@@ -106,6 +111,21 @@ type Class struct {
 	// EnumConstantDocs holds the doc comment of each constant, cleaned, in
 	// the order of EnumConstants: "" for a constant without one.
 	EnumConstantDocs []string
+}
+
+// QualifiedName returns the name a declaration is known by: its package, the
+// classes it is nested in and its own name, dot-separated, as in
+// com.example.Outer.Inner. Two declarations that share a simple name still
+// differ here, whether they sit in different packages or in different classes.
+func (c Class) QualifiedName() string {
+	name := c.Name
+	if c.Outer != "" {
+		name = c.Outer + "." + name
+	}
+	if c.Package == "" {
+		return name
+	}
+	return c.Package + "." + name
 }
 
 // ParseResult contains the parsing result for a single file.
