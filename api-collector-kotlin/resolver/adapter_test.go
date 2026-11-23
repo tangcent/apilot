@@ -12,6 +12,11 @@ func testProperty(name, typ string, annotations ...ktparser.Annotation) ktparser
 	return ktparser.Property{Name: name, Type: typ, Annotations: annotations}
 }
 
+// mutableProperty is a var, which Spring can bind from a request parameter.
+func mutableProperty(name, typ string) ktparser.Property {
+	return ktparser.Property{Name: name, Type: typ, IsMutable: true}
+}
+
 func testAnnotation(name string, params map[string]string) ktparser.Annotation {
 	return ktparser.Annotation{Name: name, Params: params}
 }
@@ -572,4 +577,68 @@ func fieldNames(object *model.ObjectModel) []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// Two classes of one file each nest an enum named Status that declares the entry
+// A, and only Order.Status declares @JsonValue. A property typed Status inside a
+// class is the enum nested in that class, in the JSON view and in the binding
+// view, whichever order the declarations come in; a property typed
+// Order.Status, in a class that nests neither, is the enum of Order.
+func TestResolveFromEnumsNestedInDifferentClassesOfOneFile(t *testing.T) {
+	jsonValue := testProperty("code", "String", testAnnotation("JsonValue", nil))
+	order := ktparser.Class{Name: "Order", Package: "p", FilePath: "p/Models.kt", Fields: []ktparser.Property{testProperty("own", "Status")}}
+	orderStatus := ktparser.Class{
+		Name: "Status", Outer: "Order", Package: "p", FilePath: "p/Models.kt", IsEnum: true,
+		EnumValues: []string{"A", "B"}, Fields: []ktparser.Property{jsonValue},
+	}
+	product := ktparser.Class{Name: "Product", Package: "p", FilePath: "p/Models.kt", Fields: []ktparser.Property{testProperty("own", "Status")}}
+	productStatus := ktparser.Class{Name: "Status", Outer: "Product", Package: "p", FilePath: "p/Models.kt", IsEnum: true, EnumValues: []string{"A", "C"}}
+	holder := ktparser.Class{
+		Name: "Holder", Package: "p", FilePath: "p/Holder.kt",
+		Fields: []ktparser.Property{mutableProperty("order", "Order.Status"), mutableProperty("product", "Product.Status")},
+	}
+
+	values := func(field *model.FieldModel) []string {
+		var got []string
+		for _, option := range field.Options {
+			got = append(got, option.Value.(string))
+		}
+		return got
+	}
+	for name, classes := range map[string][]ktparser.Class{
+		"as declared": {order, orderStatus, product, productStatus, holder},
+		"reversed":    {holder, productStatus, product, orderStatus, order},
+	} {
+		r := New(classes)
+
+		own := r.ResolveFrom(&order, "Order", nil).Fields["own"]
+		if own.Model.TypeName != "Status" || len(own.Options) != 0 {
+			t.Errorf("%s: Order.own = %+v, options %v, want the type name of the enum that declares @JsonValue", name, own.Model, values(own))
+		}
+		if got := values(objectField(t, r.ResolveFrom(&product, "Product", nil), "own")); !reflect.DeepEqual(got, []string{"A", "C"}) {
+			t.Errorf("%s: Product.own options = %v, want A and C", name, got)
+		}
+		h := r.ResolveFrom(&holder, "Holder", nil)
+		if got := h.Fields["order"]; got.Model.TypeName != "Order.Status" || len(got.Options) != 0 {
+			t.Errorf("%s: Holder.order = %+v, options %v, want the type name of the enum that declares @JsonValue", name, got.Model, values(got))
+		}
+		if got := values(h.Fields["product"]); !reflect.DeepEqual(got, []string{"A", "C"}) {
+			t.Errorf("%s: Holder.product options = %v, want A and C", name, got)
+		}
+
+		// The binding view reads every enum, and the one the name denotes.
+		bound := r.ResolveForBinding(&holder, "Holder", nil)
+		if got := values(bound.Fields["order"]); !reflect.DeepEqual(got, []string{"A", "B"}) {
+			t.Errorf("%s: binding Holder.order options = %v, want A and B", name, got)
+		}
+		if got := values(bound.Fields["product"]); !reflect.DeepEqual(got, []string{"A", "C"}) {
+			t.Errorf("%s: binding Holder.product options = %v, want A and C", name, got)
+		}
+		if got, ok := r.EnumValuesFrom(&product, "Status"); !ok || !reflect.DeepEqual(got, []string{"A", "C"}) {
+			t.Errorf("%s: EnumValuesFrom(Product, Status) = %v, %v, want A and C", name, got, ok)
+		}
+		if got, ok := r.EnumValuesFrom(&order, "Status"); !ok || !reflect.DeepEqual(got, []string{"A", "B"}) {
+			t.Errorf("%s: EnumValuesFrom(Order, Status) = %v, %v, want A and B", name, got, ok)
+		}
+	}
 }
