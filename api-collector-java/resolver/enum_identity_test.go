@@ -563,3 +563,103 @@ class Holder {
 		}
 	}
 }
+
+// An enum that the JSON view leaves unresolved is still the enum its name binds
+// to: a JDK value type of the same simple name does not take its place, nor does
+// it for an enum of a dependency.
+func TestResolve_AnExcludedEnumIsNotTakenForAJDKTypeOfItsName(t *testing.T) {
+	classes := parseFiles(t, map[string]string{
+		"p/Period.java": `package p;
+
+import com.fasterxml.jackson.annotation.JsonValue;
+
+public enum Period {
+    DAY, WEEK;
+    @JsonValue String text() { return null; }
+}
+`,
+		"p/Date.java": `package p;
+
+public enum Date { TODAY }
+`,
+		"p/Holder.java": `package p;
+
+class Holder {
+    Period period;
+    Date date;
+    java.time.Period real;
+    lib.Duration fromLibrary;
+}
+`,
+	})
+	r := NewTypeResolver(classes)
+	r.SetUnresolved(collector.NewUnresolvedSet())
+	r.SetDependencyResolver(&libraryClasses{classes: map[string]parser.Class{
+		"lib.Duration": {Name: "Duration", Package: "lib", IsEnum: true, EnumConstants: []string{"SHORT", "LONG"}, EnumJsonValue: true},
+	}})
+	holder := r.Resolve("p.Holder", nil)
+
+	if got := fieldFrom(r, "p.Holder", "period", false); !wantUnresolved(got) {
+		t.Errorf("Holder.period = %v, want it unresolved: p.Period declares @JsonValue, and is no java.time.Period", got)
+	}
+	if got := fieldFrom(r, "p.Holder", "fromLibrary", false); !wantUnresolved(got) {
+		t.Errorf("Holder.fromLibrary = %v, want it unresolved: lib.Duration declares @JsonValue, and is no java.time.Duration", got)
+	}
+	if got := fieldFrom(r, "p.Holder", "date", false); !wantConstants(got, "TODAY") {
+		t.Errorf("Holder.date = %v, want a string of TODAY: p.Date is an enum, and no java.util.Date", got)
+	}
+	// The JDK type written in full is still the JDK type: a string, with no options.
+	if got := holder.Fields["real"]; got.Model.TypeName != model.JsonTypeString || len(got.Options) != 0 {
+		t.Errorf("Holder.real = %+v, options %v, want a string", got.Model, got.Options)
+	}
+}
+
+// Two classes nest a class of one name, and each of those nests an enum of one
+// name: written inside the class that nests Order, Order.Status is the enum of
+// that Order, and written outside, A.Order.Status is.
+func TestResolve_ANestedEnumThroughAClassNestedInTheSourceIsTold(t *testing.T) {
+	classes := parseFiles(t, map[string]string{
+		"p/A.java": `package p;
+
+import java.util.List;
+
+public class A {
+    public static class Order {
+        public enum Status { FROM_A }
+    }
+    List<Order.Status> inside;
+}
+`,
+		"p/B.java": `package p;
+
+import java.util.List;
+
+public class B {
+    public static class Order {
+        public enum Status { FROM_B }
+    }
+    List<Order.Status> inside;
+}
+`,
+		"p/Holder.java": `package p;
+
+import java.util.List;
+
+class Holder {
+    List<A.Order.Status> a;
+    List<B.Order.Status> b;
+}
+`,
+	})
+	for order, ordered := range map[string][]parser.Class{"as declared": classes, "reversed": reversed(classes)} {
+		for holder, field := range map[string][2]string{"A.inside": {"p.A", "inside"}, "B.inside": {"p.B", "inside"}, "Holder.a": {"p.Holder", "a"}, "Holder.b": {"p.Holder", "b"}} {
+			want := "FROM_A"
+			if holder == "B.inside" || holder == "Holder.b" {
+				want = "FROM_B"
+			}
+			if got := fieldOf(ordered, field[0], field[1], false); !wantConstants(got, want) {
+				t.Errorf("%s: %s = %v, want a string of %s", order, holder, got, want)
+			}
+		}
+	}
+}
