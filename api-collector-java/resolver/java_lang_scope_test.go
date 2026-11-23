@@ -165,7 +165,9 @@ func TestResolve_QualifiedNameIgnoresTheScope(t *testing.T) {
 func TestResolve_ProjectClassHidesJavaLangNameInTypeArguments(t *testing.T) {
 	form := parser.Class{
 		Name: "Form", Package: "app", FilePath: "src/app/Form.java",
-		Imports: []parser.Import{{Path: "domain.Short"}},
+		Imports: []parser.Import{
+			{Path: "domain.Short"}, {Path: "reactor.core.publisher.Mono"}, {Path: "org.springframework.http.ResponseEntity"},
+		},
 	}
 	r := NewTypeResolver([]parser.Class{projectType("domain", "Short"), form})
 

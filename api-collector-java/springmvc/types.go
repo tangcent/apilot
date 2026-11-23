@@ -18,25 +18,17 @@ const (
 type EndpointParameter struct {
 	Name string
 	Type string
-	// ValueType is the type the parameter holds: the type inside a
-	// java.util.Optional, which is how Spring binds one, and Type itself for
-	// any other. It is empty for a parameter built from a property of a bound
-	// object.
-	ValueType    string
+	// File marks a parameter that is uploaded as file parts: Spring's
+	// MultipartFile, or a collection or an array of them, held by a
+	// java.util.Optional or not. The parser decides it where the type is
+	// written, so that the scope of its names is known.
+	File         bool
 	ParamType    string
 	Required     bool
 	DefaultValue string
 	Description  string
 	Example      string
 	Enum         []string
-}
-
-// HeldType returns the type the parameter holds (see ValueType).
-func (p EndpointParameter) HeldType() string {
-	if p.ValueType != "" {
-		return p.ValueType
-	}
-	return p.Type
 }
 
 // Endpoint represents a REST API endpoint

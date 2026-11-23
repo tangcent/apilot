@@ -371,8 +371,7 @@ func (p *Parser) extractParameter(param *ktparser.Parameter, methodDocParams map
 	ep := &EndpointParameter{
 		Name:        param.Name,
 		Type:        param.Type,
-		File:        javaspringmvc.IsFileType(p.valueType(source, param.Type)),
-		ValueType:   p.valueType(source, param.Type),
+		File:        p.typeResolver != nil && p.typeResolver.IsMultipartFile(source, param.Type),
 		ParamType:   paramType,
 		Required:    true,
 		Description: doc.Description,
@@ -396,7 +395,7 @@ func (p *Parser) extractParameter(param *ktparser.Parameter, methodDocParams map
 	for _, ann := range param.Annotations {
 		names = append(names, ann.Name)
 	}
-	if javaspringmvc.OptionalArgument(paramType, param.Type, names, param.Nullable || param.HasDefault) {
+	if javaspringmvc.OptionalArgument(paramType, names, (p.typeResolver != nil && p.typeResolver.IsOptionalType(source, param.Type)) || param.Nullable || param.HasDefault) {
 		ep.Required = false
 	}
 	if doc.Default != "" {
@@ -440,7 +439,9 @@ func (p *Parser) implicitParameters(param *ktparser.Parameter, in, methodName st
 	// Spring binds a java.util.Optional parameter as the type it holds, and
 	// leaves it empty when the request has no value for it.
 	typeName := p.valueType(source, param.Type)
-	kind, blocker := javaspringmvc.ClassifyImplicit(typeName, names, p.typeResolver.IsEnum)
+	isEnum := func(name string) bool { return p.typeResolver.IsEnumIn(source, name) }
+	identity := func(name string) string { return p.typeResolver.Identity(source, name) }
+	kind, blocker := javaspringmvc.ClassifyImplicit(typeName, names, isEnum, identity)
 	if blocker != "" {
 		p.warnings = append(p.warnings, javaspringmvc.ImplicitNoneWarning(source.Name, methodName, param.Name, blocker))
 		return nil
@@ -451,12 +452,11 @@ func (p *Parser) implicitParameters(param *ktparser.Parameter, in, methodName st
 	case javaspringmvc.ImplicitParam:
 		enum := doc.Enum
 		if len(enum) == 0 {
-			enum = p.typeResolver.EnumValues(javaspringmvc.ElementType(typeName))
+			enum = p.typeResolver.EnumValues(javaspringmvc.ElementType(typeName, identity))
 		}
 		return []EndpointParameter{{
 			Name:         param.Name,
 			Type:         param.Type,
-			ValueType:    typeName,
 			ParamType:    in,
 			Required:     javaspringmvc.ImplicitRequired(names),
 			DefaultValue: doc.Default,
@@ -469,7 +469,6 @@ func (p *Parser) implicitParameters(param *ktparser.Parameter, in, methodName st
 			Name:        param.Name,
 			Type:        param.Type,
 			File:        true,
-			ValueType:   typeName,
 			ParamType:   "form",
 			Required:    javaspringmvc.ImplicitRequired(names),
 			Description: doc.Description,

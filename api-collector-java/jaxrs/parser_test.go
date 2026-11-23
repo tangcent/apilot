@@ -948,3 +948,53 @@ func TestParser_AProjectClassCalledVoidIsAResponse(t *testing.T) {
 		}
 	}
 }
+
+// A parameter is an upload by the class its type names: Spring's MultipartFile
+// where the resource imports it, and a class of the project that bears the same
+// name is an ordinary form field.
+func TestParser_AnUploadIsTheClassItsTypeNames(t *testing.T) {
+	file := parser.Class{Name: "MultipartFile", Package: "com.example.model", FilePath: "model/MultipartFile.java", Fields: []parser.Field{{Name: "name", Type: "String"}}}
+	resource := func(pkg string, imports ...string) parser.Class {
+		class := parser.Class{
+			Name: "UploadResource", Package: pkg, FilePath: pkg + "/UploadResource.java",
+			Annotations: []parser.Annotation{{Name: "Path", Params: map[string]string{"value": "/uploads"}}},
+			Methods: []parser.Method{{
+				Name:        "upload",
+				Annotations: []parser.Annotation{{Name: "POST"}},
+				Parameters: []parser.Parameter{
+					{Name: "file", Type: "MultipartFile", Annotations: []parser.Annotation{{Name: "FormParam", Params: map[string]string{"value": "file"}}}},
+					{Name: "files", Type: "MultipartFile[]", Annotations: []parser.Annotation{{Name: "FormParam", Params: map[string]string{"value": "files"}}}},
+				},
+				ReturnType: "String",
+			}},
+		}
+		for _, path := range imports {
+			class.Imports = append(class.Imports, parser.Import{Path: path})
+		}
+		return class
+	}
+	for name, tc := range map[string]struct {
+		class   parser.Class
+		uploads bool
+	}{
+		"imported from Spring":          {resource("com.example.api", "org.springframework.web.multipart.MultipartFile"), true},
+		"imported on demand":            {resource("com.example.api", "org.springframework.web.multipart.*"), true},
+		"class of the package":          {resource("com.example.model"), false},
+		"imported class of the project": {resource("com.example.api", "com.example.model.MultipartFile"), false},
+	} {
+		on := tc.class.Imports
+		for i := range on {
+			on[i].OnDemand = strings.HasSuffix(on[i].Path, "multipart.*")
+			on[i].Path = strings.TrimSuffix(on[i].Path, ".*")
+		}
+		resources := NewParser().ExtractResources([]parser.ParseResult{{Classes: []parser.Class{file, tc.class}}})
+		if len(resources) != 1 || len(resources[0].Endpoints) != 1 {
+			t.Fatalf("%s: want 1 resource with 1 endpoint, got %+v", name, resources)
+		}
+		for _, p := range resources[0].Endpoints[0].Parameters {
+			if p.File != tc.uploads {
+				t.Errorf("%s: parameter %s is an upload = %v, want %v", name, p.Name, p.File, tc.uploads)
+			}
+		}
+	}
+}

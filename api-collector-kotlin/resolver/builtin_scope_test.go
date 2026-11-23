@@ -437,7 +437,8 @@ func TestResolve_ARenamingImportBindsOnlyTheNewName(t *testing.T) {
 // and to a superclass, whose bindings are the shared resolver's own spelling and
 // are not read as Kotlin names again.
 func TestResolve_AProjectClassPassedAsAnArgumentKeepsItsName(t *testing.T) {
-	names := []string{"Sequence", "Array", "Number", "MutableList", "IntArray", "Unit"}
+	// List, Set, Iterable and Map are read by the class their name denotes too.
+	names := []string{"Sequence", "Array", "Number", "MutableList", "IntArray", "Unit", "List", "Set", "Iterable", "Map"}
 	classes := scopeLibrary()
 	var subs []ktparser.Class
 	for _, name := range names {

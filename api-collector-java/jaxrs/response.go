@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"github.com/tangcent/apilot/api-collector-java/expr"
+	"github.com/tangcent/apilot/api-collector-java/parser"
+	"github.com/tangcent/apilot/api-collector-java/resolver"
 )
 
 // JAX-RS Response is opaque: the declared type names no payload, and the
@@ -15,14 +17,18 @@ import (
 // the shapes are few and regular, and a receiver or argument that cannot be
 // named is reported as opaque instead of guessed at.
 
-// isJaxrsResponse reports whether returnType denotes the JAX-RS Response type,
-// in either namespace: javax.ws.rs until Jakarta EE 9, jakarta.ws.rs after it.
-func isJaxrsResponse(returnType string) bool {
-	switch strings.TrimSpace(returnType) {
-	case "Response", "javax.ws.rs.core.Response", "jakarta.ws.rs.core.Response":
-		return true
-	}
-	return false
+// jaxrsResponseClasses are the identities of the JAX-RS Response type, in either
+// namespace: javax.ws.rs until Jakarta EE 9, jakarta.ws.rs after it. A return
+// type is that type by the class its name denotes where it is written (see
+// resolver.TypeResolver.IsClass), not by its simple name: a class of the project
+// that is called Response is not.
+var jaxrsResponseClasses = []string{"javax.ws.rs.core.Response", "jakarta.ws.rs.core.Response"}
+
+// isJaxrsResponse reports whether returnType, written in source, is the JAX-RS
+// Response type. Response is not generic, so a type with arguments is another
+// class.
+func isJaxrsResponse(typeResolver *resolver.TypeResolver, source parser.Class, returnType string) bool {
+	return !strings.Contains(returnType, "<") && typeResolver.IsClass(source, returnType, jaxrsResponseClasses...)
 }
 
 // responsePayload recovers the payload type of a JAX-RS Response from the

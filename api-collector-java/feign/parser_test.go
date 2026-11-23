@@ -978,6 +978,7 @@ func TestParser_UnannotatedParameterIsBody(t *testing.T) {
 					Name:        "PaymentClient",
 					Package:     "com.example.client",
 					IsInterface: true,
+					Imports:     []parser.Import{{Path: "java.net.URI"}},
 					Methods: []parser.Method{
 						{
 							Name: "paymentCallback",
@@ -1139,6 +1140,65 @@ func TestParser_AProjectClassCalledVoidIsAResponse(t *testing.T) {
 		}
 		if got := clients[0].Endpoints[0].ResponseSchema != nil; got != tc.want {
 			t.Errorf("%s: response exported = %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+// A parameter is the request target, or an upload, by the class its type names:
+// java.net.URI and Spring's MultipartFile where the client imports them, and a
+// class of the project that bears the same name is an ordinary parameter.
+func TestParser_ParametersAreReadByTheClassTheirTypesName(t *testing.T) {
+	uri := parser.Class{Name: "URI", Package: "com.example.model", FilePath: "model/URI.java", Fields: []parser.Field{{Name: "host", Type: "String"}}}
+	file := parser.Class{Name: "MultipartFile", Package: "com.example.model", FilePath: "model/MultipartFile.java", Fields: []parser.Field{{Name: "name", Type: "String"}}}
+	client := func(pkg string, imports ...string) parser.Class {
+		class := parser.Class{
+			Name: "TestClient", Package: pkg, FilePath: pkg + "/TestClient.java", IsInterface: true,
+			Annotations: []parser.Annotation{{Name: "FeignClient", Params: map[string]string{"name": "test-service"}}},
+			Methods: []parser.Method{
+				{
+					Name:        "fetch",
+					Annotations: []parser.Annotation{{Name: "GetMapping", Params: map[string]string{"value": "/fetch"}}},
+					Parameters:  []parser.Parameter{{Name: "target", Type: "URI"}},
+					ReturnType:  "String",
+				},
+				{
+					Name:        "upload",
+					Annotations: []parser.Annotation{{Name: "PostMapping", Params: map[string]string{"value": "/upload"}}},
+					Parameters: []parser.Parameter{
+						{Name: "file", Type: "MultipartFile", Annotations: []parser.Annotation{{Name: "RequestPart"}}},
+						{Name: "files", Type: "List<MultipartFile>", Annotations: []parser.Annotation{{Name: "RequestPart"}}},
+					},
+					ReturnType: "String",
+				},
+			},
+		}
+		for _, path := range imports {
+			class.Imports = append(class.Imports, parser.Import{Path: path})
+		}
+		return class
+	}
+	for name, tc := range map[string]struct {
+		class   parser.Class
+		target  bool
+		uploads bool
+	}{
+		"imported from the libraries": {client("com.example.client", "java.net.URI", "java.util.List", "org.springframework.web.multipart.MultipartFile"), true, true},
+		"classes of the package":      {client("com.example.model", "java.util.List"), false, false},
+		"imported classes of the project": {client("com.example.client", "java.util.List", "com.example.model.URI", "com.example.model.MultipartFile"),
+			false, false},
+	} {
+		clients := NewParser().ExtractClients([]parser.ParseResult{{Classes: []parser.Class{uri, file, tc.class}}})
+		if len(clients) != 1 || len(clients[0].Endpoints) != 2 {
+			t.Fatalf("%s: want 1 client with 2 endpoints, got %+v", name, clients)
+		}
+		fetch, upload := clients[0].Endpoints[0], clients[0].Endpoints[1]
+		if got := len(fetch.Parameters) == 0; got != tc.target {
+			t.Errorf("%s: the URI argument is the request target = %v, want %v; parameters %+v", name, got, tc.target, fetch.Parameters)
+		}
+		for _, p := range upload.Parameters {
+			if p.File != tc.uploads {
+				t.Errorf("%s: parameter %s is an upload = %v, want %v", name, p.Name, p.File, tc.uploads)
+			}
 		}
 	}
 }

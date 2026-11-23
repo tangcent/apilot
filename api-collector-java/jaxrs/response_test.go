@@ -6,22 +6,46 @@ import (
 
 	"github.com/tangcent/apilot/api-collector-java/expr"
 	"github.com/tangcent/apilot/api-collector-java/parser"
+	"github.com/tangcent/apilot/api-collector-java/resolver"
 )
 
 func TestIsJaxrsResponse(t *testing.T) {
-	responses := []string{"Response", "javax.ws.rs.core.Response", "jakarta.ws.rs.core.Response"}
-	for _, returnType := range responses {
-		if !isJaxrsResponse(returnType) {
-			t.Errorf("isJaxrsResponse(%q) = false, want true", returnType)
+	core := parser.Class{Name: "Resource", Package: "com.example.api", Imports: []parser.Import{{Path: "javax.ws.rs.core.Response"}}}
+	jakarta := parser.Class{Name: "Resource", Package: "com.example.api", Imports: []parser.Import{{Path: "jakarta.ws.rs.core.Response"}}}
+	demand := parser.Class{Name: "Resource", Package: "com.example.api", Imports: []parser.Import{{Path: "jakarta.ws.rs.core", OnDemand: true}}}
+	unscoped := parser.Class{Name: "Resource", Package: "com.example.api"}
+	r := resolver.NewTypeResolver(nil)
+	for name, tc := range map[string]struct {
+		source     parser.Class
+		returnType string
+	}{
+		"imported from javax":      {core, "Response"},
+		"imported from jakarta":    {jakarta, "Response"},
+		"imported on demand":       {demand, "Response"},
+		"written in full, javax":   {unscoped, "javax.ws.rs.core.Response"},
+		"written in full, jakarta": {unscoped, "jakarta.ws.rs.core.Response"},
+	} {
+		if !isJaxrsResponse(r, tc.source, tc.returnType) {
+			t.Errorf("%s: isJaxrsResponse(%q) = false, want true", name, tc.returnType)
 		}
 	}
 
 	// A project's own Response<T> is a class of its own and must reach the
 	// resolver instead of being read as the JAX-RS wrapper.
-	others := []string{"", "ResponseEntity<Order>", "Responses", "HttpResponse"}
-	for _, returnType := range others {
-		if isJaxrsResponse(returnType) {
+	for _, returnType := range []string{"", "ResponseEntity<Order>", "Responses", "HttpResponse", "Response<Order>"} {
+		if isJaxrsResponse(r, core, returnType) {
 			t.Errorf("isJaxrsResponse(%q) = true, want false", returnType)
+		}
+	}
+	// So is a class of that name that the project declares, in the package of the
+	// resource or imported, or that an import brings from another library.
+	own := parser.Class{Name: "Response", Package: "com.example.api", FilePath: "api/Response.java"}
+	owned := resolver.NewTypeResolver([]parser.Class{own})
+	imported := parser.Class{Name: "Resource", Package: "com.example.web", Imports: []parser.Import{{Path: "com.example.api.Response"}}}
+	elsewhere := parser.Class{Name: "Resource", Package: "com.example.web", Imports: []parser.Import{{Path: "com.example.other.Response"}}}
+	for name, source := range map[string]parser.Class{"same package": unscoped, "imported": imported, "another library's": elsewhere} {
+		if isJaxrsResponse(owned, source, "Response") {
+			t.Errorf("%s: isJaxrsResponse(Response) = true, want false: another class of that name", name)
 		}
 	}
 }

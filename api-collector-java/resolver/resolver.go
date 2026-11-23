@@ -129,8 +129,8 @@ var platformModels = map[string]func() *model.ObjectModel{
 	"com.fasterxml.jackson.databind.node.ArrayNode": func() *model.ObjectModel {
 		return model.ArrayModel(model.EmptyObject())
 	},
-	"org.springframework.web.multipart.MultipartFile": func() *model.ObjectModel {
-		return model.SingleModel("MultipartFile")
+	MultipartFileClass: func() *model.ObjectModel {
+		return model.SingleModel(MultipartFileClass)
 	},
 }
 
@@ -279,25 +279,27 @@ func (r *TypeResolver) isMapType(source parser.Class, name string) bool {
 	return mapTypes[r.jdkClassName(source, name)]
 }
 
-// reactiveWrappers maps a reactor publisher's simple name to whether its
+// reactiveWrappers maps the identity of a reactor publisher to whether its
 // payload is streamed as an array.
 //
 // A publisher is plumbing, not payload: nothing of `Mono` or `Flux` reaches
 // the wire, so the exported schema is the type argument. `Mono<T>` is `T`;
-// `Flux<T>` is a stream and serialises as an array of `T`.
+// `Flux<T>` is a stream and serialises as an array of `T`. A class of the
+// project that is called Mono is a class.
 var reactiveWrappers = map[string]bool{
-	"mono": false,
-	"flux": true,
+	"reactor.core.publisher.Mono":  false,
+	"reactor.core.publisher.Flux": true,
 }
 
-// responseWrappers are the framework types that carry the payload as their
-// single type argument: Spring's `ResponseEntity<Order>` and Feign's.
+// responseWrappers are the identities of the framework types that carry the
+// payload as their single type argument: Spring's `ResponseEntity<Order>` and
+// Feign's.
 //
 // They are plumbing in the same way a publisher is — nothing of the wrapper
 // reaches the wire — so the unwrap lives here rather than in each framework
 // parser, and a wrapper nested inside another type keeps working.
 var responseWrappers = map[string]bool{
-	"responseentity": true,
+	"org.springframework.http.ResponseEntity": true,
 }
 
 type DependencyResolver interface {
@@ -1319,6 +1321,9 @@ func isPlatformType(qualified string) bool {
 	if _, ok := platformModels[qualified]; ok {
 		return true
 	}
+	if IsLibraryClass(qualified) {
+		return true
+	}
 	if simple, ok := strings.CutPrefix(qualified, "java.lang."); ok && isJavaLangType(simple) {
 		return true
 	}
@@ -1407,7 +1412,7 @@ func lastSegment(name string) string {
 // the project or of another library called `Optional` holds nothing.
 func (r *TypeResolver) optionalValue(source parser.Class, typeName string) (string, bool) {
 	base, args := parseGenericType(strings.TrimSpace(typeName))
-	if !isOptionalType(r.resolveName(source, base)) {
+	if !isOptionalType(r.Identity(source, base)) {
 		return "", false
 	}
 	if len(args) == 1 {
@@ -1423,7 +1428,7 @@ func (r *TypeResolver) optionalValue(source parser.Class, typeName string) (stri
 // class named Optional is an object like any other.
 func (r *TypeResolver) UnwrapOptional(source parser.Class, typeName string) string {
 	base, args := parseGenericType(strings.TrimSpace(typeName))
-	if len(args) == 1 && r.resolveName(source, base) == javaUtilOptional {
+	if len(args) == 1 && r.Identity(source, base) == javaUtilOptional {
 		return args[0]
 	}
 	return strings.TrimSpace(typeName)
@@ -1576,7 +1581,7 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 		// Reactor publishers used as a return type (`Mono<Result<User>>`)
 		// carry no data of their own, so the schema is the type argument.
 		// easy-yapi resolves these through a handled rule of the same shape.
-		if isStream, ok := reactiveWrappers[simpleTypeName(baseName)]; ok && len(typeArgs) == 1 {
+		if isStream, ok := reactiveWrappers[r.Identity(source, baseName)]; ok && len(typeArgs) == 1 {
 			payload := r.ResolveFrom(source, typeArgs[0], typeBindings)
 			if isStream {
 				return model.ArrayModel(payload)
@@ -1586,14 +1591,14 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 
 		// Response wrappers are the same shape: `ResponseEntity<Order>` is
 		// `Order`, and the wrapper itself never appears in the schema.
-		if responseWrappers[simpleTypeName(baseName)] && len(typeArgs) == 1 {
+		if responseWrappers[r.Identity(source, baseName)] && len(typeArgs) == 1 {
 			return r.ResolveFrom(source, typeArgs[0], typeBindings)
 		}
 
 		// An Optional is plumbing too: what Jackson writes is the value it
 		// holds. Only java.util.Optional is, which the scope of the name
 		// decides: a project's own `Optional` or another library's is a class.
-		if len(typeArgs) == 1 && r.resolveName(source, baseName) == javaUtilOptional {
+		if len(typeArgs) == 1 && r.Identity(source, baseName) == javaUtilOptional {
 			return r.ResolveFrom(source, typeArgs[0], typeBindings)
 		}
 

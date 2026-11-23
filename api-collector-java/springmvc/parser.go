@@ -396,7 +396,7 @@ func (p *Parser) extractParameter(param parser.Parameter, method parser.Method, 
 	ep := &EndpointParameter{
 		Name:        param.Name,
 		Type:        param.Type,
-		ValueType:   typeResolver.UnwrapOptional(source, param.Type),
+		File:        typeResolver.IsMultipartFile(source, param.Type),
 		ParamType:   paramType,
 		Required:    true,
 		Description: doc.Description,
@@ -420,7 +420,7 @@ func (p *Parser) extractParameter(param parser.Parameter, method parser.Method, 
 	for _, ann := range param.Annotations {
 		names = append(names, ann.Name)
 	}
-	if OptionalArgument(paramType, param.Type, names, false) {
+	if OptionalArgument(paramType, names, typeResolver.IsOptionalType(source, param.Type)) {
 		ep.Required = false
 	}
 	if doc.Default != "" {
@@ -462,10 +462,11 @@ func (p *Parser) implicitParameters(param parser.Parameter, in string, method pa
 		_, ok := typeResolver.EnumConstants(source, typeName)
 		return ok
 	}
+	identity := func(name string) string { return typeResolver.Identity(source, name) }
 	// Spring binds a java.util.Optional parameter as the type it holds, and
 	// leaves it empty when the request has no value for it.
 	valueType := typeResolver.UnwrapOptional(source, param.Type)
-	kind, blocker := ClassifyImplicit(valueType, names, isEnum)
+	kind, blocker := ClassifyImplicit(valueType, names, isEnum, identity)
 	if blocker != "" {
 		p.warnings = append(p.warnings, ImplicitNoneWarning(source.Name, method.Name, param.Name, blocker))
 		return nil
@@ -481,12 +482,11 @@ func (p *Parser) implicitParameters(param parser.Parameter, in string, method pa
 	case ImplicitParam:
 		enum := doc.Enum
 		if len(enum) == 0 {
-			enum, _ = typeResolver.EnumConstants(source, ElementType(valueType))
+			enum, _ = typeResolver.EnumConstants(source, ElementType(valueType, identity))
 		}
 		return []EndpointParameter{{
 			Name:         param.Name,
 			Type:         param.Type,
-			ValueType:    valueType,
 			ParamType:    in,
 			Required:     ImplicitRequired(names),
 			DefaultValue: doc.Default,
@@ -498,7 +498,7 @@ func (p *Parser) implicitParameters(param parser.Parameter, in string, method pa
 		return []EndpointParameter{{
 			Name:        param.Name,
 			Type:        param.Type,
-			ValueType:   valueType,
+			File:        true,
 			ParamType:   "form",
 			Required:    ImplicitRequired(names),
 			Description: doc.Description,
@@ -520,6 +520,7 @@ func boundParameters(fields []BoundField, in string) []EndpointParameter {
 		out = append(out, EndpointParameter{
 			Name:         f.Name,
 			Type:         f.TypeName,
+			File:         f.File,
 			ParamType:    in,
 			Required:     f.Required,
 			DefaultValue: f.Default,

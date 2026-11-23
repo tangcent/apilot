@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	collector "github.com/tangcent/apilot/api-collector"
@@ -528,7 +527,7 @@ func springmvcEndpointToAPI(ep springmvc.Endpoint, folder string) collector.ApiE
 	for _, p := range ep.Parameters {
 		if p.ParamType == "body" {
 			out.RequestBody = &collector.ApiBody{Name: p.Name, MediaType: "application/json"}
-		} else if isMultipartFile(p.HeldType()) {
+		} else if p.File {
 			out.Parameters = append(out.Parameters, collector.ApiParameter{
 				Name:        p.Name,
 				Type:        "file",
@@ -590,7 +589,7 @@ func jaxrsEndpointToAPI(ep jaxrs.Endpoint, folder string) collector.ApiEndpoint 
 	for _, p := range ep.Parameters {
 		if p.ParamType == "body" {
 			out.RequestBody = &collector.ApiBody{Name: p.Name, MediaType: firstMediaType(ep.Consumes)}
-		} else if isMultipartFile(p.Type) {
+		} else if p.File {
 			out.Parameters = append(out.Parameters, collector.ApiParameter{
 				Name:        p.Name,
 				Type:        "file",
@@ -650,7 +649,7 @@ func feignEndpointToAPI(ep feign.Endpoint, folder string) collector.ApiEndpoint 
 	for _, p := range ep.Parameters {
 		if p.ParamType == "body" {
 			out.RequestBody = &collector.ApiBody{Name: p.Name, MediaType: "application/json"}
-		} else if isMultipartFile(p.Type) {
+		} else if p.File {
 			out.Parameters = append(out.Parameters, collector.ApiParameter{
 				Name:        p.Name,
 				Type:        "file",
@@ -694,16 +693,6 @@ func feignEndpointToAPI(ep feign.Endpoint, folder string) collector.ApiEndpoint 
 		}
 	}
 	return out
-}
-
-// isMultipartFile reports whether a declared Java type is a multipart file
-// part. The parameter travels in a multipart form body, so it is a form
-// parameter: documenting it under Query would tell a reader to send ?file=.
-// isMultipartFile reports whether a parameter of this type is uploaded as
-// file parts: a MultipartFile, or a collection or array of them.
-func isMultipartFile(javaType string) bool {
-	element := springmvc.ElementType(javaType)
-	return element == "MultipartFile" || strings.HasSuffix(element, ".MultipartFile")
 }
 
 // firstMediaType returns the first declared media type, or fallback when the

@@ -237,7 +237,8 @@ func (p *Parser) extractSpringStyleEndpoint(method parser.Method, class, source 
 	var params []EndpointParameter
 	var requestBodyType string
 	for _, param := range method.Parameters {
-		if ep := p.extractSpringParameter(param, method.JavaDocParams); ep != nil {
+		if ep := p.extractSpringParameter(param, method.JavaDocParams, source, typeResolver); ep != nil {
+			ep.File = typeResolver.IsMultipartFile(source, param.Type)
 			params = append(params, *ep)
 			if ep.ParamType == "body" {
 				requestBodyType = param.Type
@@ -326,13 +327,13 @@ func extractSpringRequestMappingMethod(ann parser.Annotation) HTTPMethod {
 
 // extractSpringParameter resolves the Spring MVC binding of a Feign method
 // parameter and layers any documented metadata on top of it.
-func (p *Parser) extractSpringParameter(param parser.Parameter, methodJavaDocParams map[string]string) *EndpointParameter {
+func (p *Parser) extractSpringParameter(param parser.Parameter, methodJavaDocParams map[string]string, source parser.Class, typeResolver *resolver.TypeResolver) *EndpointParameter {
 	paramType, required := detectSpringParameterType(param.Annotations)
 	if paramType == "" {
 		// SpringMvcContract binds a parameter with no Spring annotation as the
 		// body, the same way the default contract does: a scalar payload is a
 		// body too, and dropping it exported the endpoint without a request.
-		if isRequestTarget(param.Type) {
+		if isRequestTarget(source, typeResolver, param.Type) {
 			return nil
 		}
 		paramType, required = "body", true
@@ -435,7 +436,8 @@ func (p *Parser) extractRequestLineEndpoint(method parser.Method, class, source 
 	var params []EndpointParameter
 	var requestBodyType string
 	for _, param := range method.Parameters {
-		if ep := p.extractFeignParam(param, methodPath, method.JavaDocParams); ep != nil {
+		if ep := p.extractFeignParam(param, methodPath, method.JavaDocParams, source, typeResolver); ep != nil {
+			ep.File = typeResolver.IsMultipartFile(source, param.Type)
 			params = append(params, *ep)
 			if ep.ParamType == "body" {
 				requestBodyType = param.Type
@@ -496,7 +498,7 @@ func parseRequestLine(value string) (HTTPMethod, string) {
 	}
 }
 
-func (p *Parser) extractFeignParam(param parser.Parameter, methodPath string, methodJavaDocParams map[string]string) *EndpointParameter {
+func (p *Parser) extractFeignParam(param parser.Parameter, methodPath string, methodJavaDocParams map[string]string, source parser.Class, typeResolver *resolver.TypeResolver) *EndpointParameter {
 	ann := findAnnotation(param.Annotations, "Param")
 	if ann == nil {
 		// Feign binds an unannotated parameter as the request body whatever its
@@ -504,7 +506,7 @@ func (p *Parser) extractFeignParam(param parser.Parameter, methodPath string, me
 		// body too, and dropping it exported the endpoint without a request at
 		// all. Feign rejects a second unannotated parameter, so at most one
 		// parameter reaches this branch as the body.
-		if isRequestTarget(param.Type) {
+		if isRequestTarget(source, typeResolver, param.Type) {
 			return nil
 		}
 		return documentedParameter(param, methodJavaDocParams, "body", true, "")
@@ -531,11 +533,11 @@ func (p *Parser) extractFeignParam(param parser.Parameter, methodPath string, me
 // isRequestTarget reports whether a parameter supplies the target URI of the
 // call rather than the body. Feign accepts an unannotated URI argument that
 // overrides the client url, and that argument is not part of the payload.
-func isRequestTarget(typ string) bool {
+func isRequestTarget(source parser.Class, typeResolver *resolver.TypeResolver, typ string) bool {
 	if typ == "" {
 		return true
 	}
-	return typ == "URI" || typ == "java.net.URI"
+	return typeResolver.IsClass(source, typ, "java.net.URI")
 }
 
 func findAnnotation(annotations []parser.Annotation, name string) *parser.Annotation {

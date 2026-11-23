@@ -116,7 +116,7 @@ func TestResolve_OptionalIsTheValueItHolds(t *testing.T) {
 	})
 	r.SetUnresolved(collector.NewUnresolvedSet())
 
-	named := importing("com.example", "java.util.Optional")
+	named := importing("com.example", "java.util.Optional", "reactor.core.publisher.Mono")
 	onDemand := importing("com.example", "java.util.*")
 	for _, tc := range []struct {
 		source   parser.Class
@@ -490,7 +490,7 @@ func TestResolve_LibraryTypes(t *testing.T) {
 			"com.fasterxml.jackson.databind.JsonNode":         "object:object",
 			"com.fasterxml.jackson.databind.node.ObjectNode":  "object:object",
 			"com.fasterxml.jackson.databind.node.ArrayNode":   "array<object:object>",
-			"org.springframework.web.multipart.MultipartFile": "MultipartFile",
+			"org.springframework.web.multipart.MultipartFile": MultipartFileClass,
 		} {
 			if got := arrayShape(r.ResolveFrom(source, typeName, nil)); got != want {
 				t.Errorf("%s = %s, want %s", typeName, got, want)
@@ -502,9 +502,9 @@ func TestResolve_LibraryTypes(t *testing.T) {
 			"JsonNode":              "object:object",
 			"ObjectNode":            "object:object",
 			"ArrayNode":             "array<object:object>",
-			"MultipartFile":         "MultipartFile",
-			"List<MultipartFile>":   "array<MultipartFile>",
-			"MultipartFile[]":       "array<MultipartFile>",
+			"MultipartFile":         MultipartFileClass,
+			"List<MultipartFile>":   "array<" + MultipartFileClass + ">",
+			"MultipartFile[]":       "array<" + MultipartFileClass + ">",
 			"Map<String, JsonNode>": "map<object:object>",
 		} {
 			if got := arrayShape(r.ResolveFrom(source, typeName, nil)); got != want {

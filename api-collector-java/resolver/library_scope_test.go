@@ -31,7 +31,7 @@ var libraryNames = map[string]libraryName{
 	"JsonNode":       {"JsonNode", "com.fasterxml.jackson.databind", "object:object"},
 	"ObjectNode":     {"ObjectNode", "com.fasterxml.jackson.databind.node", "object:object"},
 	"ArrayNode":      {"ArrayNode", "com.fasterxml.jackson.databind.node", "array<object:object>"},
-	"MultipartFile":  {"MultipartFile", "org.springframework.web.multipart", "MultipartFile"},
+	"MultipartFile":  {"MultipartFile", "org.springframework.web.multipart", MultipartFileClass},
 	"List":           {"List<String>", "java.util", "array<string>"},
 	"Set":            {"Set<String>", "java.util", "array<string>"},
 	"Collection":     {"Collection<String>", "java.util", "array<string>"},

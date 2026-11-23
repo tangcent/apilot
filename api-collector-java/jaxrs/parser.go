@@ -259,6 +259,7 @@ func (p *Parser) extractEndpoint(method parser.Method, basePath string, class, s
 	var requestBodyType string
 	for _, param := range method.Parameters {
 		if ep := p.extractParameter(param, method.JavaDocParams); ep != nil {
+			ep.File = typeResolver.IsMultipartFile(source, param.Type)
 			params = append(params, *ep)
 			if ep.ParamType == "body" {
 				requestBodyType = param.Type
@@ -448,7 +449,7 @@ func (p *Parser) responseSchema(method parser.Method, class, source parser.Class
 		return nil
 	}
 
-	if !isJaxrsResponse(method.ReturnType) {
+	if !isJaxrsResponse(typeResolver, source, method.ReturnType) {
 		return typeResolver.ResolveFrom(source, method.ReturnType, typeBindings)
 	}
 

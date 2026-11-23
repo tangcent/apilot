@@ -236,6 +236,48 @@ func (r *Resolver) UnwrapOptional(source *ktparser.Class, rawType string) string
 	return r.tr.UnwrapOptional(javaSource, r.scope.normalize(source, rawType))
 }
 
+// javaClass converts the file a type is written in, which is the scope its
+// names are bound in.
+func (r *Resolver) javaClass(source *ktparser.Class) javaparser.Class {
+	if source == nil {
+		return javaparser.Class{}
+	}
+	return r.scope.toJavaClass(*source)
+}
+
+// Identity returns the qualified name that a class name written in source
+// denotes, bound by the scope of its file (see
+// javaresolver.TypeResolver.Identity). A name of the Kotlin standard library is
+// the class of the JDK it stands for. Pass the base name of a type, not a type
+// spelled with arguments.
+func (r *Resolver) Identity(source *ktparser.Class, name string) string {
+	return r.tr.Identity(r.javaClass(source), r.scope.normalize(source, name))
+}
+
+// IsOptionalType reports whether a type written in source is a java.util class
+// that holds a value or nothing.
+func (r *Resolver) IsOptionalType(source *ktparser.Class, rawType string) bool {
+	return r.tr.IsOptionalType(r.javaClass(source), r.scope.normalize(source, rawType))
+}
+
+// IsMultipartFile reports whether a handler parameter of a type written in
+// source is uploaded as parts of a multipart request: Spring's MultipartFile, or
+// a collection or an array of them, held by a java.util.Optional or not. A
+// class of the project that is called MultipartFile is not.
+func (r *Resolver) IsMultipartFile(source *ktparser.Class, rawType string) bool {
+	return r.tr.IsMultipartFile(r.javaClass(source), r.scope.normalize(source, rawType))
+}
+
+// IsEnumIn reports whether a class name written in source denotes an enum of the
+// project, by the scope of its file.
+func (r *Resolver) IsEnumIn(source *ktparser.Class, name string) bool {
+	if source == nil {
+		return false
+	}
+	class, found := r.FindClass(source, strings.TrimSpace(name))
+	return found && class.IsEnum
+}
+
 // SetRequiredFields selects how resolved fields are marked required: one of
 // collector.RequiredFieldsDefault or collector.RequiredFieldsConstraints.
 // The binding view, built later, uses the same mode.
