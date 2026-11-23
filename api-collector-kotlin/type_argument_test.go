@@ -53,6 +53,12 @@ var typeArgumentExpectation = map[string]map[string]string{
 	"/type-args/box-map": {
 		"response.data": "map<string,object{name}>", "response.list": "array<map<string,object{name}>>",
 	},
+	// A type of the JDK the caller imports while the library declares a class of
+	// the same name, and a scalar the resolver answers for by its spelling.
+	"/type-args/box-period":    {"response.data": "string", "response.list": "array<string>"},
+	"/type-args/box-date":      {"response.data": "string", "response.array": "array<string>"},
+	"/type-args/box-date-list": {"response.data": "array<string>"},
+	"/type-args/box-string":    {"response.data": "string", "response.byKey": "map<string,string>"},
 	// The classes the library's Holder writes in full are the ones it names,
 	// and the one it writes simply is its own.
 	"/type-args/holder": {

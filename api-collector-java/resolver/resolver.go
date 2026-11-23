@@ -28,6 +28,20 @@ var primitiveTypes = map[string]string{
 	"Boolean": model.JsonTypeBoolean,
 }
 
+// javaLangBuiltIns maps the qualified name of each class of primitiveTypes
+// (`java.lang.Integer`) to the scalar its simple name gives, so that a type
+// argument can be passed on in full and still be answered for by its spelling,
+// without a scope or the dependencies being consulted.
+var javaLangBuiltIns = func() map[string]string {
+	out := make(map[string]string)
+	for name, jsonType := range primitiveTypes {
+		if name[0] >= 'A' && name[0] <= 'Z' {
+			out["java.lang."+name] = jsonType
+		}
+	}
+	return out
+}()
+
 // jdkQualifiedScalars maps a fully qualified JDK value type to the JSON scalar
 // it serialises to.
 //
@@ -551,6 +565,11 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	if jsonType, ok := primitiveTypes[rawType]; ok {
 		return model.SingleModel(jsonType)
 	}
+	// The same, written in full: a type argument passes `String` on as
+	// `java.lang.String` (see qualifyTypeName).
+	if jsonType, ok := javaLangBuiltIns[rawType]; ok {
+		return model.SingleModel(jsonType)
+	}
 
 	baseName, typeArgs := parseGenericType(rawType)
 
@@ -609,7 +628,9 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 
 	// An enum of the scanned sources is already known; the JSON view just
 	// does not see it, and a dependency's copy of it would not be seen either.
-	if r.dependencyResolver != nil && !r.isRegisteredEnum(name) {
+	// A class of the JDK is no dependency of the project: asking for it would
+	// only cost a call to the indexer.
+	if r.dependencyResolver != nil && !r.isRegisteredEnum(name) && !strings.HasPrefix(name, "java.") {
 		if depClass := r.dependencyClass(name); depClass != nil {
 			r.register(*depClass, name)
 			if r.sees(*depClass) {
@@ -1075,11 +1096,12 @@ func (r *TypeResolver) qualifyTypeArgs(source parser.Class, bindings map[string]
 // (see writeInFull), in nested type arguments, array dimensions and wildcard
 // bounds alike.
 //
-// Left as written are what ResolveFrom answers for by the spelling alone,
-// before it consults a scope (scalars, collections, maps), the types of the
-// JDK and the Kotlin standard library, which the resolver knows by their simple
-// names, a name that is already qualified, and a name nothing in scope
-// declares.
+// What ResolveFrom answers for by the spelling alone, before it consults a
+// scope, keeps that meaning wherever the argument is read: the classes of
+// primitiveTypes are written as `java.lang.String`, which no class of the
+// generic class's package can stand in for, and collections, maps and the
+// primitive types stay as written. A name that is already qualified, and a name
+// nothing in scope declares, stay as written too.
 func (r *TypeResolver) qualifyTypeName(source parser.Class, bindings map[string]string, typeName string) string {
 	typeName = strings.TrimSpace(typeName)
 	if typeName == "" {
@@ -1108,8 +1130,10 @@ func (r *TypeResolver) qualifyTypeName(source parser.Class, bindings map[string]
 			return base + suffix
 		}
 	}
-	if !strings.Contains(base, ".") && !answeredByName(base) {
-		if key := r.resolveSimpleName(source, base); key != base && !isPlatformName(key) && r.writeInFull(key, base) {
+	if !strings.Contains(base, ".") {
+		if spelled, ok := scopeFreeName(base); ok {
+			base = spelled
+		} else if key := r.resolveSimpleName(source, base); key != base && r.writeInFull(key, base) {
 			base = key
 		}
 	}
@@ -1124,11 +1148,12 @@ func (r *TypeResolver) qualifyTypeName(source parser.Class, bindings map[string]
 //
 // A class the current view sees is that class wherever it is read, so it is.
 // For anything else no body is read: an import of a class that a dependency
-// declares or that nothing declares, and an enum, which the JSON view does not
-// see. Such a name is shown as written, and reported when it cannot be
-// resolved, so it is left alone unless that would let it mean another class: a
-// dependency resolver asks for a class by its qualified name only, and another
-// class that shares the simple name could take its place in another scope.
+// declares or that nothing declares, a type of the JDK, and an enum, which the
+// JSON view does not see. Such a name is shown as written, and reported when
+// it cannot be resolved, so it is left alone unless that would let it mean
+// another class: a dependency resolver asks for a class by its qualified name
+// only, and another class that shares the simple name could take its place in
+// another scope.
 func (r *TypeResolver) writeInFull(key, name string) bool {
 	if r.isRegistered(key) || r.dependencyResolver != nil {
 		return true
@@ -1141,14 +1166,19 @@ func (r *TypeResolver) writeInFull(key, name string) bool {
 	return false
 }
 
-// answeredByName reports whether ResolveFrom answers for a name from its
+// scopeFreeName reports whether ResolveFrom answers for a bare name from its
 // spelling alone, before it consults any scope: a scalar, a collection or a
 // map. A class of the project that shares such a name does not take its place.
-func answeredByName(name string) bool {
+// It returns the spelling that keeps that meaning wherever it is read: the
+// name itself, or for a class of java.lang its qualified name.
+func scopeFreeName(name string) (string, bool) {
 	if _, ok := primitiveTypes[name]; ok {
-		return true
+		if qualified := "java.lang." + name; javaLangBuiltIns[qualified] != "" {
+			return qualified, true
+		}
+		return name, true
 	}
-	return collectionTypes[name] || mapTypes[name]
+	return name, collectionTypes[name] || mapTypes[name]
 }
 
 // isPlatformName reports whether a qualified name belongs to the JDK or the

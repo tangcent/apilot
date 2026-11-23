@@ -9,6 +9,16 @@ class Item(
     val code: String?,
 )
 
+/** A class of the library named like a type of the JDK. */
+class Period(
+    val libPeriod: String?,
+)
+
+/** A class of the library named like a type of the JDK. */
+class Date(
+    val libDate: String?,
+)
+
 class Box<T>(
     val data: T?,
     val list: List<T>?,

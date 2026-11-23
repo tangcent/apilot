@@ -4,6 +4,8 @@ import com.example.typearg.dto.Item;
 import com.example.typearg.lib.Box;
 import com.example.typearg.lib.Holder;
 import com.example.typearg.lib.Outer;
+import java.time.Period;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -48,6 +50,26 @@ public class TypeArgumentController {
 
     @GetMapping("/box-bounded")
     public Box<? extends Item> boxBounded() {
+        return null;
+    }
+
+    @GetMapping("/box-period")
+    public Box<Period> boxPeriod() {
+        return null;
+    }
+
+    @GetMapping("/box-date")
+    public Box<Date> boxDate() {
+        return null;
+    }
+
+    @GetMapping("/box-date-list")
+    public Box<List<Date>> boxDateList() {
+        return null;
+    }
+
+    @GetMapping("/box-string")
+    public Box<String> boxString() {
         return null;
     }
 
