@@ -2011,7 +2011,9 @@ func isMapSubclass(class parser.Class) bool {
 		return false
 	}
 	baseName, _ := parseGenericType(class.SuperClass)
-	return mapTypes[baseName]
+	// A map written in full is a class of java.util: another package's HashMap is a
+	// class of its own.
+	return mapTypes[strings.TrimPrefix(baseName, "java.util.")]
 }
 
 // findImplementation returns the class in the scanned sources that implements
