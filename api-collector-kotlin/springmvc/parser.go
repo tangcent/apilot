@@ -479,7 +479,7 @@ func (p *Parser) implicitParameters(param *ktparser.Parameter, in, methodName st
 		return boundParameters(javaspringmvc.SortFields(), in)
 	case javaspringmvc.ImplicitModel:
 		resolved := p.typeResolver.ResolveForBinding(source, param.Type, bindings)
-		return boundParameters(javaspringmvc.ResolvedModelFields(param.Name, resolved), in)
+		return boundParameters(javaspringmvc.ResolvedModelFields(param.Name, resolved, p.typeResolver.IsUpload), in)
 	}
 	return nil
 }

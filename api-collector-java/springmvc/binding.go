@@ -267,9 +267,9 @@ type BoundField struct {
 // attribute from: one per property, in declaration order. A nested object's
 // properties are bound with a dotted path (address.city), which is how Spring's
 // data binder addresses them.
-func ModelAttributeFields(m *model.ObjectModel) []BoundField {
+func ModelAttributeFields(m *model.ObjectModel, isUpload func(*model.ObjectModel) bool) []BoundField {
 	var out []BoundField
-	appendModelFields(&out, "", m, 0)
+	appendModelFields(&out, "", m, 0, isUpload)
 	return out
 }
 
@@ -279,12 +279,12 @@ func ModelAttributeFields(m *model.ObjectModel) []BoundField {
 // one parameter named after the handler parameter. A type left unresolved
 // yields nothing here: the resolver has recorded it, and the unresolved-types
 // report names it, which is better than inventing a parameter for it.
-func ResolvedModelFields(paramName string, resolved *model.ObjectModel) []BoundField {
+func ResolvedModelFields(paramName string, resolved *model.ObjectModel, isUpload func(*model.ObjectModel) bool) []BoundField {
 	if resolved == nil {
 		return nil
 	}
 	if resolved.Kind == model.KindObject {
-		return ModelAttributeFields(resolved)
+		return ModelAttributeFields(resolved, isUpload)
 	}
 	if resolved.Kind == model.KindSingle && jsonPrimitive[resolved.TypeName] {
 		return []BoundField{{Name: paramName, TypeName: resolved.TypeName}}
@@ -327,21 +327,21 @@ func SortFields() []BoundField {
 }
 
 // isFile reports whether a resolved property is a multipart file, or a
-// collection or an array of them. The resolver answers Spring's MultipartFile
-// with a single value that carries its identity, which neither a class of the
-// project that is called MultipartFile nor a name that cannot be resolved does.
-func isFile(m *model.ObjectModel) bool {
+// collection or an array of them. isUpload is the resolver's answer to whether a
+// model is the one it gave Spring's MultipartFile: neither a class of the
+// project that is called MultipartFile nor a name that cannot be resolved is.
+func isFile(m *model.ObjectModel, isUpload func(*model.ObjectModel) bool) bool {
 	if m.IsArray() {
 		m = m.Items
 	}
-	return m.IsSingle() && m.TypeName == resolver.MultipartFileClass
+	return isUpload != nil && isUpload(m)
 }
 
 // maxModelDepth bounds how deep nested objects are flattened; a type that
 // refers back to itself would otherwise expand forever.
 const maxModelDepth = 3
 
-func appendModelFields(out *[]BoundField, prefix string, m *model.ObjectModel, depth int) {
+func appendModelFields(out *[]BoundField, prefix string, m *model.ObjectModel, depth int, isUpload func(*model.ObjectModel) bool) {
 	if m == nil || m.Kind != model.KindObject {
 		return
 	}
@@ -352,7 +352,7 @@ func appendModelFields(out *[]BoundField, prefix string, m *model.ObjectModel, d
 		}
 		path := prefix + name
 		if field.Model.Kind == model.KindObject && len(field.Model.Fields) > 0 && depth < maxModelDepth {
-			appendModelFields(out, path+".", field.Model, depth+1)
+			appendModelFields(out, path+".", field.Model, depth+1, isUpload)
 			continue
 		}
 		var enum []string
@@ -362,7 +362,7 @@ func appendModelFields(out *[]BoundField, prefix string, m *model.ObjectModel, d
 			}
 		}
 		typeName := field.Model.TypeName
-		file := isFile(field.Model)
+		file := isFile(field.Model, isUpload)
 		if file {
 			// A file is shown by its simple name, a collection or an array of
 			// them as the array of that: `array` would hide what they hold.

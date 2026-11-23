@@ -268,6 +268,17 @@ func (r *Resolver) IsMultipartFile(source *ktparser.Class, rawType string) bool 
 	return r.tr.IsMultipartFile(r.javaClass(source), r.scope.normalize(source, rawType))
 }
 
+// IsUpload reports whether m is a model the resolver answered Spring's
+// MultipartFile with, in the JSON view or the binding view. The model is shown
+// as MultipartFile, as a class of the project that is called so is, so the
+// model itself is what tells them apart.
+func (r *Resolver) IsUpload(m *model.ObjectModel) bool {
+	if r == nil {
+		return false
+	}
+	return r.tr.IsUpload(m) || (r.bindingTR != nil && r.bindingTR.IsUpload(m))
+}
+
 // IsEnumIn reports whether a class name written in source denotes an enum of the
 // project, by the scope of its file.
 func (r *Resolver) IsEnumIn(source *ktparser.Class, name string) bool {

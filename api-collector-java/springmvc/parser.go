@@ -509,7 +509,7 @@ func (p *Parser) implicitParameters(param parser.Parameter, in string, method pa
 		return boundParameters(SortFields(), in)
 	case ImplicitModel:
 		resolved := typeResolver.ResolveForBinding(source, param.Type, typeBindings)
-		return boundParameters(ResolvedModelFields(param.Name, resolved), in)
+		return boundParameters(ResolvedModelFields(param.Name, resolved, typeResolver.IsUpload), in)
 	}
 	return nil
 }

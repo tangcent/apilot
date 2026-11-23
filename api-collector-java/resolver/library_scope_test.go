@@ -31,7 +31,7 @@ var libraryNames = map[string]libraryName{
 	"JsonNode":       {"JsonNode", "com.fasterxml.jackson.databind", "object:object"},
 	"ObjectNode":     {"ObjectNode", "com.fasterxml.jackson.databind.node", "object:object"},
 	"ArrayNode":      {"ArrayNode", "com.fasterxml.jackson.databind.node", "array<object:object>"},
-	"MultipartFile":  {"MultipartFile", "org.springframework.web.multipart", MultipartFileClass},
+	"MultipartFile":  {"MultipartFile", "org.springframework.web.multipart", "MultipartFile"},
 	"List":           {"List<String>", "java.util", "array<string>"},
 	"Set":            {"Set<String>", "java.util", "array<string>"},
 	"Collection":     {"Collection<String>", "java.util", "array<string>"},
@@ -90,8 +90,12 @@ func TestResolve_UnrelatedProjectClassDoesNotHideLibraryName(t *testing.T) {
 
 			r := NewTypeResolver([]parser.Class{unrelated, source})
 			r.SetUnresolved(collector.NewUnresolvedSet())
-			if got := arrayShape(r.ResolveFrom(source, library.spelling, nil)); got != library.want {
+			resolved := r.ResolveFrom(source, library.spelling, nil)
+			if got := arrayShape(resolved); got != library.want {
 				t.Errorf("%s = %s, want %s", library.spelling, got, library.want)
+			}
+			if upload := r.IsUpload(resolved); upload != (name == "MultipartFile") {
+				t.Errorf("%s: IsUpload = %v", library.spelling, upload)
 			}
 			if unresolved := r.Unresolved(); len(unresolved) != 0 {
 				t.Errorf("unresolved = %v, want none", unresolved)

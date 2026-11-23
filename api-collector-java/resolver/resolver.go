@@ -121,8 +121,9 @@ var platformEnums = map[string][]string{
 // A Jackson tree is free-form: `JsonNode` and `ObjectNode` hold any object,
 // `ArrayNode` an array of them. A `MultipartFile` is not JSON at all: Spring
 // binds it from a part of a multipart request, never from a body, so nothing
-// but its name says what it is. It keeps that name as its type, which is how a
-// handler parameter or a bound property of this type is told to be a file.
+// but its name says what it is. It is shown by its simple name, and the
+// resolver remembers the model it answered it with (see IsUpload), which is how
+// a bound property of this type is told to be a file.
 var platformModels = map[string]func() *model.ObjectModel{
 	"com.fasterxml.jackson.databind.JsonNode":        model.EmptyObject,
 	"com.fasterxml.jackson.databind.node.ObjectNode": model.EmptyObject,
@@ -130,7 +131,7 @@ var platformModels = map[string]func() *model.ObjectModel{
 		return model.ArrayModel(model.EmptyObject())
 	},
 	MultipartFileClass: func() *model.ObjectModel {
-		return model.SingleModel(MultipartFileClass)
+		return model.SingleModel("MultipartFile")
 	},
 }
 
@@ -339,6 +340,10 @@ type TypeResolver struct {
 	// source wrote for it, so that a type that is displayed or reported reads as
 	// the source wrote it (see shortForm).
 	shown map[string]string
+	// uploads holds the models the resolver answered Spring's MultipartFile with:
+	// a single value named MultipartFile, which a class of the project or a name
+	// nothing binds that is called the same is not (see IsUpload).
+	uploads map[*model.ObjectModel]bool
 }
 
 // SetRequiredFields selects how resolved fields are marked required: one of
@@ -1646,7 +1651,14 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 		return model.SingleModel(model.JsonTypeString)
 	}
 	if build, ok := platformModels[platform]; ok {
-		return build()
+		resolved := build()
+		if platform == MultipartFileClass {
+			if r.uploads == nil {
+				r.uploads = make(map[*model.ObjectModel]bool)
+			}
+			r.uploads[resolved] = true
+		}
+		return resolved
 	}
 
 	// An enum of the scanned sources is already known; the JSON view just

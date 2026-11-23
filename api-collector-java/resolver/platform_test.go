@@ -490,7 +490,7 @@ func TestResolve_LibraryTypes(t *testing.T) {
 			"com.fasterxml.jackson.databind.JsonNode":         "object:object",
 			"com.fasterxml.jackson.databind.node.ObjectNode":  "object:object",
 			"com.fasterxml.jackson.databind.node.ArrayNode":   "array<object:object>",
-			"org.springframework.web.multipart.MultipartFile": MultipartFileClass,
+			"org.springframework.web.multipart.MultipartFile": "MultipartFile",
 		} {
 			if got := arrayShape(r.ResolveFrom(source, typeName, nil)); got != want {
 				t.Errorf("%s = %s, want %s", typeName, got, want)
@@ -502,9 +502,9 @@ func TestResolve_LibraryTypes(t *testing.T) {
 			"JsonNode":              "object:object",
 			"ObjectNode":            "object:object",
 			"ArrayNode":             "array<object:object>",
-			"MultipartFile":         MultipartFileClass,
-			"List<MultipartFile>":   "array<" + MultipartFileClass + ">",
-			"MultipartFile[]":       "array<" + MultipartFileClass + ">",
+			"MultipartFile":         "MultipartFile",
+			"List<MultipartFile>":   "array<MultipartFile>",
+			"MultipartFile[]":       "array<MultipartFile>",
 			"Map<String, JsonNode>": "map<object:object>",
 		} {
 			if got := arrayShape(r.ResolveFrom(source, typeName, nil)); got != want {
@@ -516,10 +516,24 @@ func TestResolve_LibraryTypes(t *testing.T) {
 		t.Errorf("unresolved = %v, want none", unresolved)
 	}
 
+	// The file is the model the resolver remembers, whatever the name.
+	for _, source := range []parser.Class{named, onDemand} {
+		if file := r.ResolveFrom(source, "MultipartFile", nil); !r.IsUpload(file) {
+			t.Errorf("MultipartFile = %+v, want the model of an upload", file)
+		}
+		if files := r.ResolveFrom(source, "List<MultipartFile>", nil); !r.IsUpload(files.Items) {
+			t.Errorf("List<MultipartFile> = %+v, want an array of uploads", files)
+		}
+	}
+
 	// Without an import the bare name is not known to be Jackson's or Spring's.
 	for _, typeName := range []string{"JsonNode", "MultipartFile"} {
-		if got := arrayShape(r.ResolveFrom(importing("com.example"), typeName, nil)); got != typeName {
+		unimported := r.ResolveFrom(importing("com.example"), typeName, nil)
+		if got := arrayShape(unimported); got != typeName {
 			t.Errorf("unimported %s = %s, want the opaque name", typeName, got)
+		}
+		if r.IsUpload(unimported) {
+			t.Errorf("unimported %s is an upload: nothing says it is Spring's", typeName)
 		}
 	}
 }

@@ -293,23 +293,36 @@ func TestElementType_ReadsTheTypeAsWritten(t *testing.T) {
 // that reaches the parameter must still say it is a file, for one file and for
 // a collection or an array of them.
 func TestModelAttributeFields_FilesKeepTheirType(t *testing.T) {
-	file := model.SingleModel(resolver.MultipartFileClass)
+	file := model.SingleModel("MultipartFile")
+	// A property whose type is some other class called MultipartFile has the
+	// same name and is no file.
+	other := model.SingleModel("MultipartFile")
+	isUpload := func(m *model.ObjectModel) bool { return m == file }
 	upload := model.NewObjectModelBuilder().
 		StringField("title").
 		Field("cover", file).
 		ArrayField("attachments", file).
+		Field("lookalike", other).
 		ArrayField("tags", model.SingleModel(model.JsonTypeString)).
 		Build()
 
 	got := map[string]string{}
-	for _, field := range ModelAttributeFields(upload) {
+	files := map[string]bool{}
+	for _, field := range ModelAttributeFields(upload, isUpload) {
 		got[field.Name] = field.TypeName
+		if field.File {
+			files[field.Name] = true
+		}
 	}
 	want := map[string]string{
 		"title":       "string",
 		"cover":       "MultipartFile",
 		"attachments": "MultipartFile[]",
+		"lookalike":   "MultipartFile",
 		"tags":        "array",
+	}
+	if wantFiles := map[string]bool{"cover": true, "attachments": true}; !reflect.DeepEqual(files, wantFiles) {
+		t.Errorf("file properties = %v, want %v", files, wantFiles)
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("types of the bound properties = %v, want %v", got, want)

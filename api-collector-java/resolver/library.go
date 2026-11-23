@@ -5,12 +5,14 @@ import (
 	"strings"
 
 	"github.com/tangcent/apilot/api-collector-java/parser"
+	model "github.com/tangcent/apilot/api-model"
 )
 
-// MultipartFileClass is the identity of Spring's uploaded file. The resolver
-// answers it with a single value that carries this name, which is how a handler
-// parameter or a property of a bound object is told to be a file: a class of the
-// project, or one an import names, that is also called MultipartFile is a class.
+// MultipartFileClass is the identity of Spring's uploaded file. A handler
+// parameter is an upload when the class its type names has this identity, and
+// the resolver answers the class with a single value it remembers (see
+// IsUpload): a class of the project, or one an import names, that is also called
+// MultipartFile is a class.
 const MultipartFileClass = "org.springframework.web.multipart.MultipartFile"
 
 // libraryPackages lists, by simple name, the packages that declare a class of the
@@ -195,6 +197,14 @@ func unscoped(source parser.Class) bool {
 func (r *TypeResolver) IsOptionalType(source parser.Class, typeName string) bool {
 	base, _ := parseGenericType(strings.TrimSpace(typeName))
 	return isOptionalType(r.Identity(source, base))
+}
+
+// IsUpload reports whether m is a model this resolver answered Spring's
+// MultipartFile with. The model is shown as MultipartFile, as a class of the
+// project or a name that cannot be resolved that is called so is, so the model
+// itself is what tells them apart, not its name.
+func (r *TypeResolver) IsUpload(m *model.ObjectModel) bool {
+	return m != nil && r.uploads[m]
 }
 
 // IsMultipartFile reports whether a handler parameter of the given type is

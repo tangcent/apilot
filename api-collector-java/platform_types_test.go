@@ -53,7 +53,7 @@ var platformTypesExpectation = map[string]string{
 	"jsonNode":            "object{}",
 	"objectNode":          "object{}",
 	"arrayNode":           "array<object{}>",
-	"file":                "org.springframework.web.multipart.MultipartFile",
+	"file":                "MultipartFile",
 }
 
 // platformWildcardExpectation is the export of the form whose every type is
@@ -70,7 +70,7 @@ var platformWildcardExpectation = map[string]string{
 	"currency": "string",
 	"locale":   "string",
 	"node":     "object{}",
-	"file":     "org.springframework.web.multipart.MultipartFile",
+	"file":     "MultipartFile",
 }
 
 // platformOptional lists the properties that hold a value or nothing: the
