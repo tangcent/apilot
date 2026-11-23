@@ -147,22 +147,22 @@ func (r *Resolver) ResolveForBinding(source *ktparser.Class, rawType string, bin
 			r.bindingTR.SetRequiredFields(r.requiredFields)
 		}
 	}
-	resolved := r.bindingTR.ResolveForBinding(toJavaClass(*source), NormalizeModelType(rawType), normalizeBindings(bindings))
+	resolved := r.bindingTR.ResolveForBinding(toJavaClass(*source), NormalizeModelType(rawType), bindingsOrNil(bindings))
 	r.applyEnums(resolved)
 	return resolved
 }
 
-// normalizeBindings spells the bindings of type parameters the way the shared
-// resolver reads them. It returns nil when there is nothing to bind.
-func normalizeBindings(bindings map[string]string) map[string]string {
+// bindingsOrNil returns the bindings of type parameters, or nil when there is
+// nothing to bind. They come from SuperClassBindings, which spells each
+// argument in the Java names the shared resolver knows and writes it in full
+// where it must (`java.lang.String`, `com.example.Item`), so they are passed on
+// as they are: spelled again by NormalizeModelType, a qualified name would be
+// reduced to its last segment.
+func bindingsOrNil(bindings map[string]string) map[string]string {
 	if len(bindings) == 0 {
 		return nil
 	}
-	normalized := make(map[string]string, len(bindings))
-	for name, value := range bindings {
-		normalized[name] = NormalizeModelType(value)
-	}
-	return normalized
+	return bindings
 }
 
 // SuperClassBindings binds each type parameter of super to the argument that
@@ -172,7 +172,7 @@ func normalizeBindings(bindings map[string]string) map[string]string {
 // bindings binds the type parameters of sub itself, for an argument that
 // mentions them.
 func (r *Resolver) SuperClassBindings(sub, super *ktparser.Class, bindings map[string]string) map[string]string {
-	return r.tr.SuperClassBindings(toJavaClass(*sub), toJavaClass(*super), normalizeBindings(bindings))
+	return r.tr.SuperClassBindings(toJavaClass(*sub), toJavaClass(*super), bindingsOrNil(bindings))
 }
 
 // SetRequiredFields selects how resolved fields are marked required: one of
@@ -215,7 +215,7 @@ func (r *Resolver) ResolveFrom(source *ktparser.Class, rawType string, bindings 
 	if rawType == "" {
 		return model.NullModel()
 	}
-	resolved := r.tr.ResolveFrom(toJavaClass(*source), NormalizeModelType(rawType), normalizeBindings(bindings))
+	resolved := r.tr.ResolveFrom(toJavaClass(*source), NormalizeModelType(rawType), bindingsOrNil(bindings))
 	r.applyEnums(resolved)
 	return resolved
 }

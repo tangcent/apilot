@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/tangcent/apilot/api-collector-java/parser"
@@ -80,7 +81,7 @@ func TestQualifyTypeArgs(t *testing.T) {
 	want := []string{
 		"com.example.lib.PageData<Unknown>",
 		"List<com.example.lib.PageData>",
-		"Map<String, com.example.lib.PageData[]>",
+		"Map<java.lang.String, com.example.lib.PageData[]>",
 		"?",
 		"T",
 		"? extends com.example.lib.PageData",
@@ -147,20 +148,99 @@ func TestQualifyTypeName_Shapes(t *testing.T) {
 		"Item[][]":                  "com.example.app.dto.Item[][]",
 		"List<Item>":                "List<com.example.app.dto.Item>",
 		"List<Item>[]":              "List<com.example.app.dto.Item>[]",
-		"Map<String,Item>":          "Map<String, com.example.app.dto.Item>",
-		"Map<String, List<Item[]>>": "Map<String, List<com.example.app.dto.Item[]>>",
+		"Map<String,Item>":          "Map<java.lang.String, com.example.app.dto.Item>",
+		"Map<String, List<Item[]>>": "Map<java.lang.String, List<com.example.app.dto.Item[]>>",
 		"? extends Item":            "? extends com.example.app.dto.Item",
 		"? super Item":              "? super com.example.app.dto.Item",
 		"?":                         "?",
 		"com.example.lib.Item":      "com.example.lib.Item",
-		"Integer":                   "Integer",
+		"Integer":                   "java.lang.Integer",
+		"String":                    "java.lang.String",
+		"Void":                      "java.lang.Void",
+		"String[]":                  "java.lang.String[]",
+		"List<String>":              "List<java.lang.String>",
 		"int[]":                     "int[]",
+		"boolean":                   "boolean",
 		"Unknown":                   "Unknown",
 		"Unknown<Item>":             "Unknown<com.example.app.dto.Item>",
 	} {
 		if got := r.qualifyTypeName(source, nil, typeName); got != want {
 			t.Errorf("qualifyTypeName(%q) = %q, want %q", typeName, got, want)
 		}
+	}
+}
+
+// Every class the resolver answers for by its simple name before it consults a
+// scope is answered the same when it is written in full, without a scope or the
+// dependencies being consulted: that is how a type argument passes it on.
+func TestResolve_AJavaLangBuiltInWrittenInFullIsTheBareOne(t *testing.T) {
+	library := &libraryClasses{}
+	r := NewTypeResolver(nil)
+	r.SetDependencyResolver(library)
+	checked := 0
+	for name := range primitiveTypes {
+		qualified, ok := scopeFreeName(name)
+		if !ok {
+			t.Fatalf("scopeFreeName(%q) = false", name)
+		}
+		if qualified == name {
+			continue // a primitive type has no qualified name
+		}
+		checked++
+		if !strings.HasPrefix(qualified, "java.lang.") {
+			t.Errorf("scopeFreeName(%q) = %q", name, qualified)
+		}
+		bare, full := r.Resolve(name, nil), r.Resolve(qualified, nil)
+		if bare.Kind != model.KindSingle || bare.TypeName != full.TypeName || full.Kind != model.KindSingle {
+			t.Errorf("%s = %+v, but %s = %+v", name, bare, qualified, full)
+		}
+		if array := r.Resolve(qualified+"[]", nil); !array.IsArray() || array.Items.TypeName != bare.TypeName {
+			t.Errorf("%s[] = %+v", qualified, array)
+		}
+	}
+	if checked != 7 {
+		t.Errorf("checked %d classes, want the seven of java.lang in primitiveTypes", checked)
+	}
+	if len(library.asked) != 0 {
+		t.Errorf("the dependencies were asked for %v", library.asked)
+	}
+}
+
+// A type of the JDK that the caller imports is written in full where another
+// class could take its simple name: with a dependency resolver, or when a class
+// of the project carries the name. The qualified name answers like the bare one.
+func TestQualifyTypeName_ATypeOfTheJdkIsWrittenInFullWhereItNeedsToBe(t *testing.T) {
+	source := parser.Class{
+		Name: "Holder", Package: "com.example.app",
+		Imports: []parser.Import{{Path: "java.time.Period"}, {Path: "java.util.Date"}, {Path: "java.util.List"}},
+	}
+	classes := []parser.Class{{Name: "Period", Package: "com.example.other"}}
+	for name, tc := range map[string]struct {
+		dependencies bool
+		want         map[string]string
+	}{
+		"without a dependency resolver": {false, map[string]string{
+			"Period":       "java.time.Period", // a class of the project is called Period too
+			"Date":         "Date",             // nothing else is called Date
+			"List<Period>": "List<java.time.Period>",
+			"Period[]":     "java.time.Period[]",
+		}},
+		"with a dependency resolver": {true, map[string]string{
+			"Period": "java.time.Period",
+			"Date":   "java.util.Date",
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := NewTypeResolver(classes)
+			if tc.dependencies {
+				r.SetDependencyResolver(&libraryClasses{})
+			}
+			for typeName, want := range tc.want {
+				if got := r.qualifyTypeName(source, nil, typeName); got != want {
+					t.Errorf("qualifyTypeName(%q) = %q, want %q", typeName, got, want)
+				}
+			}
+		})
 	}
 }
 
@@ -171,7 +251,7 @@ func TestQualifyTypeName_TypeVariablesOfTheCaller(t *testing.T) {
 	r := NewTypeResolver([]parser.Class{typeArgItem(typeArgDtoPackage, "name")})
 	caller := parser.Class{Name: "Result", Package: typeArgAppPackage, TypeParameters: []string{"T", "Item"}}
 	got := r.qualifyTypeArgs(caller, map[string]string{"T": "com.example.app.dto.Item[]"}, []string{"T", "List<T>", "Item", "Map<String, T[]>"})
-	want := []string{"com.example.app.dto.Item[]", "List<com.example.app.dto.Item[]>", "Item", "Map<String, com.example.app.dto.Item[][]>"}
+	want := []string{"com.example.app.dto.Item[]", "List<com.example.app.dto.Item[]>", "Item", "Map<java.lang.String, com.example.app.dto.Item[][]>"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("qualifyTypeArgs:\n got  %q\n want %q", got, want)
 	}
@@ -192,7 +272,7 @@ func TestSuperClassBindings(t *testing.T) {
 		{"SubQualified", nil, map[string]string{"B": "com.example.app.dto.Item"}},
 		{"SubArray", nil, map[string]string{"B": "com.example.app.dto.Item[]"}},
 		{"SubList", nil, map[string]string{"B": "List<com.example.app.dto.Item>"}},
-		{"SubInt", nil, map[string]string{"B": "Integer"}},
+		{"SubInt", nil, map[string]string{"B": "java.lang.Integer"}},
 		{"SubGeneric", map[string]string{"S": "com.example.lib.Item"}, map[string]string{"B": "List<com.example.lib.Item>"}},
 		// A parameter nobody bound stays a name.
 		{"SubGeneric", nil, map[string]string{"B": "List<S>"}},

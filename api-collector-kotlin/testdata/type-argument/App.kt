@@ -6,6 +6,8 @@ import com.example.typearg.lib.Box
 import com.example.typearg.lib.Holder
 import com.example.typearg.lib.MidController
 import com.example.typearg.lib.Outer
+import java.time.Period
+import java.util.Date
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
@@ -33,6 +35,18 @@ class TypeArgumentController {
 
     @GetMapping("/box-map")
     fun boxMap(): Box<Map<String, Item>> = TODO()
+
+    @GetMapping("/box-period")
+    fun boxPeriod(): Box<Period> = TODO()
+
+    @GetMapping("/box-date")
+    fun boxDate(): Box<Date> = TODO()
+
+    @GetMapping("/box-date-list")
+    fun boxDateList(): Box<List<Date>> = TODO()
+
+    @GetMapping("/box-string")
+    fun boxString(): Box<String> = TODO()
 
     @GetMapping("/holder")
     fun holder(): Holder = TODO()

@@ -63,6 +63,9 @@ func typeArgLibrary() []parser.Class {
 	f := typeArgField
 	return []parser.Class{
 		typeArgItem(typeArgLibPackage, "code"),
+		// Classes of the library named like types of the JDK.
+		typeArgLibraryClass("Period", nil, "", nil, f("libPeriod", "String")),
+		typeArgLibraryClass("Date", nil, "", nil, f("libDate", "String")),
 		typeArgLibraryClass("Box", []string{"T"}, "", nil,
 			f("data", "T"), f("list", "List<T>"), f("array", "T[]"),
 			f("byKey", "Map<String, T>"), f("bounded", "List<? extends T>")),
@@ -95,7 +98,7 @@ func typeArgSubclass(name, superClass string, params []string, superArgs ...stri
 		TypeParameters: params, SuperClass: superClass, SuperClassTypeArgs: superArgs,
 		Imports: []parser.Import{
 			{Path: typeArgDtoPackage + ".Item"}, {Path: typeArgLibPackage + ".Base"}, {Path: typeArgLibPackage + ".Mid"},
-			{Path: typeArgLibPackage + ".Listed"},
+			{Path: typeArgLibPackage + ".Listed"}, {Path: "java.util.Date"},
 		},
 	}
 }
@@ -113,6 +116,7 @@ func typeArgApplication() []parser.Class {
 				{Path: typeArgLibPackage + ".Box"}, {Path: typeArgLibPackage + ".Outer"}, {Path: typeArgLibPackage + ".Same"},
 				{Path: typeArgLibPackage + ".Pair"}, {Path: typeArgLibPackage + ".Holder"}, {Path: typeArgLibPackage + ".Wrapper"},
 				{Path: "java.util.List"}, {Path: "java.util.Map"},
+				{Path: "java.time.Period"}, {Path: "java.util.Date"}, {Path: "java.math.BigDecimal"},
 			},
 		},
 		typeArgSubclass("Sub", "Base", nil, "Item"),
@@ -121,6 +125,7 @@ func typeArgApplication() []parser.Class {
 		typeArgSubclass("SubList", "Base", nil, "List<Item>"),
 		typeArgSubclass("SubInt", "Base", nil, "Integer"),
 		typeArgSubclass("SubString", "Base", nil, "String"),
+		typeArgSubclass("SubDate", "Base", nil, "Date"),
 		typeArgSubclass("SubGeneric", "Base", []string{"S"}, "List<S>"),
 		typeArgSubclass("Leaf", "Mid", nil, "Item"),
 		typeArgSubclass("LeafListed", "Listed", nil, "Item"),
@@ -278,6 +283,23 @@ func TestResolve_ATypeArgumentIsTheClassTheCallerNames(t *testing.T) {
 		{"Long[]", "[long]"},
 		{"int[]", "[int]"},
 		{"List<Integer>", "[int]"},
+		// What the resolver answers for by the spelling alone, whichever class
+		// the generic class's package declares under that name.
+		{"Long", "long"},
+		{"Boolean", "boolean"},
+		{"Double", "double"},
+		{"Float", "float"},
+		{"Void", "null"},
+		// Types of the JDK the caller imports, while the library's package
+		// declares a class of the same name.
+		{"Period", "string"},
+		{"Date", "string"},
+		{"Date[]", "[string]"},
+		{"List<Date>", "[string]"},
+		{"Map<String, Period>", "{string}"},
+		{"BigDecimal", "double"},
+		{"java.util.Date", "string"},
+		{"java.time.Period", "string"},
 	}
 	forEachTypeArgCase(t, func(t *testing.T, w typeArgWorld, view string, r *TypeResolver, library *libraryClasses) {
 		caller := typeArgController()
@@ -348,6 +370,15 @@ func TestResolve_ATypeArgumentIsTheClassTheCallerNames(t *testing.T) {
 		if unresolved := r.Unresolved(); len(unresolved) != 0 {
 			t.Errorf("unresolved = %v, want none", unresolved)
 		}
+		// No type of the JDK is asked of the dependencies, however the caller
+		// writes it.
+		if library != nil {
+			for _, name := range library.asked {
+				if strings.HasPrefix(name, "java.") {
+					t.Errorf("the dependencies were asked for %s; asked %v", name, library.asked)
+				}
+			}
+		}
 	})
 }
 
@@ -381,6 +412,7 @@ func TestResolve_ASuperclassArgumentIsTheClassTheSubclassNames(t *testing.T) {
 		{"SubList", "SubList", "[Item(name)]"},
 		{"SubInt", "SubInt", "int"},
 		{"SubString", "SubString", "string"},
+		{"SubDate", "SubDate", "string"},
 		{"SubGeneric", "SubGeneric<Item>", "[Item(name)]"},
 		{"SubGeneric", "SubGeneric<com.example.lib.Item>", "[Item(code)]"},
 		{"SubGeneric", "SubGeneric<Item[]>", "[[Item(name)]]"},
