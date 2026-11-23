@@ -627,9 +627,9 @@ func (r *TypeResolver) isRegistered(key string) bool {
 //
 // A type variable is in scope in the class that declares it, not in the project:
 // a class that declares `<Item>` does not make `Item` any less a class
-// elsewhere. The type variables of a method are not recorded, so a name that is
-// spelled like one by convention (a capital letter, perhaps followed by a digit)
-// is not asked for either.
+// elsewhere. The type variables of a method are not recorded, so one of them is
+// asked for like a class, as a name no class of the project declares, and
+// answers nothing.
 func (r *TypeResolver) mayBeDependencyClass(source parser.Class, name string) bool {
 	if name == "" || strings.Contains(name, ".") || r.isTypeVariable(source, name) {
 		return false
@@ -640,18 +640,10 @@ func (r *TypeResolver) mayBeDependencyClass(source parser.Class, name string) bo
 	return true
 }
 
-// isTypeVariable reports whether name is a type variable in scope in source: a
-// type parameter of the class, or one that a method of it declares and the parser
-// does not keep, which by convention is a single capital letter and perhaps a
-// digit.
+// isTypeVariable reports whether name is a type parameter of the class source,
+// the type variables in scope in its body.
 func (r *TypeResolver) isTypeVariable(source parser.Class, name string) bool {
-	if slices.Contains(source.TypeParameters, name) {
-		return true
-	}
-	if len(name) == 1 || len(name) == 2 && name[1] >= '0' && name[1] <= '9' {
-		return name[0] >= 'A' && name[0] <= 'Z'
-	}
-	return false
+	return slices.Contains(source.TypeParameters, name)
 }
 
 // isJdkValueName reports whether a simple name is one that ResolveFrom answers

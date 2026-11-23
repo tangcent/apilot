@@ -171,3 +171,27 @@ func TestResolve_AClassOfTheDependenciesIsAskedOnceWhicheverPathAsks(t *testing.
 		t.Errorf("lib.consts.Paths was asked %d times: %v", count, library.asked)
 	}
 }
+
+// A class can be named by one letter, and a type variable of a method is not
+// recorded: such a name is asked for like any other, and a type parameter of the
+// class is still not.
+func TestResolve_AClassNamedByOneLetterIsFoundThroughTheScope(t *testing.T) {
+	library := &libraryClasses{classes: map[string]parser.Class{
+		"lib.a.A": marked("lib.a", "A", "fromA"),
+		"lib.a.H": {Name: "H", Package: "lib.a", Fields: []parser.Field{{Name: "a", Type: "A"}}},
+	}}
+	r := NewTypeResolver(nil)
+	r.SetDependencyResolver(library)
+
+	if got := fieldsOf(r.ResolveFrom(parser.Class{}, "lib.a.H", nil).Fields["a"].Model); !reflect.DeepEqual(got, []string{"fromA"}) {
+		t.Errorf("H.a has %v, want the class A of the package of H", got)
+	}
+	generic := parser.Class{Name: "Box", Package: "lib.a", TypeParameters: []string{"A"}, Fields: []parser.Field{{Name: "a", Type: "A"}}}
+	library.asked = nil
+	r.ResolveFrom(generic, "A", nil)
+	for _, name := range library.asked {
+		if name == "lib.a.A" {
+			t.Errorf("%s was asked for, though A is a type parameter of Box", name)
+		}
+	}
+}
