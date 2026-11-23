@@ -95,3 +95,31 @@ func TestResolve_AMapSubclassAsTheArgumentOfAGenericClass(t *testing.T) {
 		t.Errorf("Box<Bag<Item>>.data = %s, want {[Item(name)]}", got)
 	}
 }
+
+// The superclass that a class writes in full is a map as well: `extends
+// java.util.HashMap<String, Item>` is the map `extends HashMap<String, Item>` is,
+// and a class of another package that shares the simple name is not.
+func TestResolve_AMapSubclassMayWriteItsSuperclassInFull(t *testing.T) {
+	dtoItem := parser.Import{Path: typeArgDtoPackage + ".Item"}
+	full := func(name, super string) parser.Class {
+		return parser.Class{
+			Name: name, Package: typeArgLibPackage, FilePath: "com/example/lib/" + name + ".java",
+			SuperClass: super, SuperClassTypeArgs: []string{"String", "Item"}, Imports: []parser.Import{dtoItem},
+		}
+	}
+	r := NewTypeResolver(append(mapSubclasses(),
+		full("FullHash", "java.util.HashMap"),
+		full("FullLinked", "java.util.LinkedHashMap"),
+		full("Foreign", "com.example.other.HashMap"),
+	))
+	caller := recursionCaller()
+
+	for _, name := range []string{"FullHash", "FullLinked"} {
+		if got := typeArgShape(r.ResolveFrom(caller, name, nil)); got != "{Item(name)}" {
+			t.Errorf("%s = %s, want a map of Item", name, got)
+		}
+	}
+	if got := r.ResolveFrom(caller, "Foreign", nil); got.Kind == model.KindMap {
+		t.Errorf("Foreign = %+v, want a class: com.example.other.HashMap is not java.util.HashMap", got)
+	}
+}
