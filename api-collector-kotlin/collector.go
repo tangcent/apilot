@@ -168,6 +168,7 @@ func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 	}
 
 	classes := flattenClasses(results)
+	aliases := flattenAliases(results)
 	warnings = append(warnings, collectWarnings(results, classes, selection)...)
 
 	// One dependency resolution serves both halves of a mixed tree.
@@ -194,7 +195,9 @@ func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 		if selection != nil {
 			javaCtx.SourceFiles = javaSelected
 		}
-		javaEndpoints, javaTypes, err = java.CollectWithTypes(javaCtx, resolver.ToJavaClasses(classes))
+		javaEndpoints, javaTypes, err = java.CollectWithTypes(javaCtx, func(parsed []javaparser.Class) []javaparser.Class {
+			return resolver.ToJavaClasses(classes, parsed, aliases)
+		})
 		if err != nil {
 			return nil, fmt.Errorf("collecting the Java sources of %s: %w", ctx.SourceDir, err)
 		}
@@ -211,7 +214,7 @@ func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 		endpoints = nil
 		unresolved = map[string]int{}
 	} else {
-		typeResolver := resolver.NewWithJavaTypes(classes, javaTypes)
+		typeResolver := resolver.NewWithAliases(classes, javaTypes, aliases)
 		if dr := deps.Resolver(); dr != nil {
 			typeResolver.SetDependencyResolver(dr)
 		}
@@ -296,6 +299,17 @@ func containsString(values []string, value string) bool {
 		}
 	}
 	return false
+}
+
+func flattenAliases(results []ktparser.ParseResult) []ktparser.TypeAlias {
+	var aliases []ktparser.TypeAlias
+	for _, result := range results {
+		if result.Error != nil {
+			continue
+		}
+		aliases = append(aliases, result.TypeAliases...)
+	}
+	return aliases
 }
 
 func flattenClasses(results []ktparser.ParseResult) []ktparser.Class {

@@ -121,7 +121,7 @@ func TestToJavaClasses_CarryTheClassesADeclarationIsNestedIn(t *testing.T) {
 		{Name: "Deep", Package: "com.example", Outer: "Outer.Info"},
 	}
 	var got []string
-	for _, c := range ToJavaClasses(classes) {
+	for _, c := range ToJavaClasses(classes, nil, nil) {
 		got = append(got, c.QualifiedName())
 	}
 	want := []string{"com.example.Outer", "com.example.Outer.Info", "com.example.Outer.State", "com.example.Outer.Info.Deep"}

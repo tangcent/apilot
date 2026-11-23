@@ -44,13 +44,22 @@ type Resolver struct {
 
 // New builds a resolver over all Kotlin declarations in the project.
 func New(classes []ktparser.Class) *Resolver {
-	return NewWithJavaTypes(classes, nil)
+	return NewWithAliases(classes, nil, nil)
 }
 
 // NewWithJavaTypes builds a resolver over the Kotlin declarations of a project
 // that also holds Java sources. javaTypes are the Java declarations of the same
 // tree: a Kotlin endpoint may take or return a class written in Java.
 func NewWithJavaTypes(classes []ktparser.Class, javaTypes []javaparser.Class) *Resolver {
+	return NewWithAliases(classes, javaTypes, nil)
+}
+
+// NewWithAliases builds a resolver over the declarations of a project, Kotlin
+// classes and typealiases and, in a mixed tree, the Java classes. A name that
+// reaches a typealias stands for the type the alias names.
+func NewWithAliases(classes []ktparser.Class, javaTypes []javaparser.Class, aliases []ktparser.TypeAlias) *Resolver {
+	scope := newTypeScope(classes, javaTypes)
+	scope.addAliases(aliases)
 	r := &Resolver{
 		classes:    classes,
 		byKey:      make(map[string]*ktparser.Class, len(classes)),
@@ -59,7 +68,7 @@ func NewWithJavaTypes(classes []ktparser.Class, javaTypes []javaparser.Class) *R
 		enumValues: make(map[string][]string),
 		unresolved: collector.NewUnresolvedSet(),
 		javaTypes:  javaTypes,
-		scope:      newTypeScope(classes, javaTypes),
+		scope:      scope,
 
 		fileConstants: make(map[string]*ktparser.Class),
 	}
@@ -93,7 +102,20 @@ func NewWithJavaTypes(classes []ktparser.Class, javaTypes []javaparser.Class) *R
 
 	r.tr = javaresolver.NewTypeResolver(javaClasses)
 	r.tr.SetUnresolved(r.unresolved)
+	showStandardTypes(r.tr)
 	return r
+}
+
+// showStandardTypes tells a resolver how to display the classes of the JDK that
+// the adapter writes in full for the standard types of Kotlin: by their simple
+// names, as a type that is shown or reported has always read.
+func showStandardTypes(tr *javaresolver.TypeResolver) {
+	for _, b := range builtinTypes {
+		tr.ShowAs(b.name, lastSegment(b.name))
+		if b.element != "" {
+			tr.ShowAs(b.element, lastSegment(b.element))
+		}
+	}
 }
 
 // SetDependencyResolver lets the resolver expand types declared in the
@@ -156,6 +178,7 @@ func (r *Resolver) ResolveForBinding(source *ktparser.Class, rawType string, bin
 		javaClasses = append(javaClasses, r.javaTypes...)
 		r.bindingTR = javaresolver.NewTypeResolver(javaClasses)
 		r.bindingTR.SetUnresolved(r.unresolved)
+		showStandardTypes(r.bindingTR)
 		if r.dependencyResolver != nil {
 			r.bindingTR.SetDependencyResolver(r.dependencyResolver)
 		}
@@ -482,8 +505,13 @@ func (r *Resolver) enumOptions(name string) []model.FieldOption {
 // ToJavaClasses converts Kotlin declarations to the Java model, so a Java
 // endpoint in the same tree can resolve them. An enum keeps its constants for
 // the binding view; the Java resolver's JSON view does not see enums.
-func ToJavaClasses(classes []ktparser.Class) []javaparser.Class {
-	scope := newTypeScope(classes, nil)
+//
+// javaTypes are the Java declarations of the same tree and aliases the Kotlin
+// typealiases: a name in a Kotlin file binds to them as it does in the resolver
+// built over the same declarations.
+func ToJavaClasses(classes []ktparser.Class, javaTypes []javaparser.Class, aliases []ktparser.TypeAlias) []javaparser.Class {
+	scope := newTypeScope(classes, javaTypes)
+	scope.addAliases(aliases)
 	out := make([]javaparser.Class, 0, len(classes))
 	for _, class := range classes {
 		if class.IsEnum {

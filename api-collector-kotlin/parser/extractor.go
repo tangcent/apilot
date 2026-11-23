@@ -71,13 +71,53 @@ func extractFile(root *tree_sitter.Node, source []byte, filePath string, result 
 				// A declaration can be wrapped in annotation expressions at
 				// file scope. Descend so the class is not missed.
 				visit(child)
-			case "typealias":
-				result.Warnings = append(result.Warnings,
-					filePath+": typealias declarations are not expanded; references to the alias stay unresolved")
+			case "type_alias":
+				if skipDamaged && declarationDamaged(child, source) {
+					skip(child)
+					continue
+				}
+				if alias, ok := extractTypeAlias(child, source, packageName, filePath, imports); ok {
+					result.TypeAliases = append(result.TypeAliases, alias)
+				}
 			}
 		}
 	}
 	visit(root)
+}
+
+// extractTypeAlias reads `typealias Name<T> = Target`. An alias whose name or
+// target cannot be read is left out.
+func extractTypeAlias(node *tree_sitter.Node, source []byte, packageName, filePath string, imports []Import) (TypeAlias, bool) {
+	nameNode := node.ChildByFieldName("type")
+	if nameNode == nil {
+		return TypeAlias{}, false
+	}
+	var target *tree_sitter.Node
+	sawEquals := false
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "=" {
+			sawEquals = true
+			continue
+		}
+		if sawEquals && isTypeNode(child.Kind()) {
+			target = child
+			break
+		}
+	}
+	spelling := extractTypeNode(target, source)
+	if spelling == "" {
+		return TypeAlias{}, false
+	}
+	return TypeAlias{
+		Name:           nameNode.Utf8Text(source),
+		Package:        packageName,
+		FilePath:       filePath,
+		Target:         spelling,
+		TypeParameters: extractTypeParameters(node, source),
+		Imports:        imports,
+		IsPrivate:      hasModifier(node, "private"),
+	}, true
 }
 
 // addFileConstant records a top-level const val in the file facade of its
@@ -189,6 +229,7 @@ func extractClass(node *tree_sitter.Node, source []byte, packageName, filePath s
 		Name:           nameNode.Utf8Text(source),
 		Package:        packageName,
 		Outer:          outer,
+		IsPrivate:      flags["private"],
 		FilePath:       filePath,
 		KDoc:           kdoc,
 		Annotations:    anns,
@@ -539,10 +580,10 @@ func extractFunction(node *tree_sitter.Node, source []byte, filePath string) (*F
 			// source-only collector must not guess.
 			fn.ReturnType = ""
 		} else {
-			fn.ReturnType = "Unit"
+			fn.ReturnType = inferredUnit
 		}
 	} else {
-		fn.ReturnType = "Unit"
+		fn.ReturnType = inferredUnit
 	}
 
 	if body := firstChildOfKind(node, "function_body"); body != nil {
@@ -550,6 +591,12 @@ func extractFunction(node *tree_sitter.Node, source []byte, filePath string) (*F
 	}
 	return fn, nil
 }
+
+// inferredUnit is the return type of a function written without one and with a
+// block body: Unit, by the language. It is the class of the standard library
+// itself, written in full, since it was not written in the file and a class of
+// the project that is called Unit has no part in it.
+const inferredUnit = "kotlin.Unit"
 
 func extractParameter(node *tree_sitter.Node, source []byte, annotations []Annotation) (Parameter, error) {
 	nameNode := firstChildOfKind(node, "identifier")

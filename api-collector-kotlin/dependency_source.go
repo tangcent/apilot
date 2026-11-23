@@ -31,5 +31,5 @@ func parseDependencySource(name string, source []byte) ([]javaparser.Class, erro
 	if result.Error != nil {
 		return nil, result.Error
 	}
-	return resolver.ToJavaClasses(result.Classes), nil
+	return resolver.ToJavaClasses(result.Classes, nil, result.TypeAliases), nil
 }

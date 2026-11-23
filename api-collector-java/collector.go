@@ -98,14 +98,17 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 // sources of another JVM language, such as a Kotlin service with a few Java
 // classes left in it.
 //
-// types holds the other language's declarations converted to the Java model.
-// They join the type table of every framework parser, so a Java controller can
-// resolve a request or response class written in that language; they never
-// contribute endpoints of their own. The Java declarations parsed from the tree
-// are returned alongside the endpoints, so the caller can resolve its own
-// endpoints against them without parsing the tree a second time.
-func (c *JavaCollector) CollectWithTypes(ctx collector.CollectContext, types []parser.Class) ([]collector.ApiEndpoint, []parser.Class, error) {
-	return c.collect(ctx, types)
+// convert is given the Java declarations parsed from the tree and returns the
+// other language's declarations converted to the Java model. They join the type
+// table of every framework parser, so a Java controller can resolve a request or
+// response class written in that language; they never contribute endpoints of
+// their own. The conversion takes the Java declarations because the names the
+// other language writes bind to them: a class of the package that is called
+// Number hides the standard Number there, as it does in Java. The Java
+// declarations are returned alongside the endpoints too, so the caller can
+// resolve its own endpoints against them without parsing the tree a second time.
+func (c *JavaCollector) CollectWithTypes(ctx collector.CollectContext, convert func(javaTypes []parser.Class) []parser.Class) ([]collector.ApiEndpoint, []parser.Class, error) {
+	return c.collect(ctx, convert)
 }
 
 // ShareDependencies makes the next Collect call resolve dependency types
@@ -116,7 +119,7 @@ func (c *JavaCollector) ShareDependencies(deps *Dependencies) {
 	c.shared = deps
 }
 
-func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Class) ([]collector.ApiEndpoint, []parser.Class, error) {
+func (c *JavaCollector) collect(ctx collector.CollectContext, convert func(javaTypes []parser.Class) []parser.Class) ([]collector.ApiEndpoint, []parser.Class, error) {
 	requiredFields, err := ctx.RequiredFields()
 	if err != nil {
 		return nil, nil, err
@@ -174,8 +177,10 @@ func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Cla
 			parsed = append(parsed, r.Classes...)
 		}
 	}
-	if len(types) > 0 {
-		results = append(results, parser.ParseResult{Classes: types})
+	if convert != nil {
+		if types := convert(parsed); len(types) > 0 {
+			results = append(results, parser.ParseResult{Classes: types})
+		}
 	}
 
 	frameworks := resolveFrameworks(ctx)

@@ -109,6 +109,9 @@ type Class struct {
 	// belongs. A companion object is not one: its constants are read onto the
 	// class it belongs to.
 	Outer string
+	// IsPrivate marks a declaration written private. At the top level that makes
+	// it visible in its file only.
+	IsPrivate bool
 	// IsFileFacade marks the class the JVM holds a file's top-level
 	// declarations in, named after the file (Headers.kt declares HeadersKt).
 	// Only top-level const vals are read into it, as its fields: Kotlin code
@@ -116,12 +119,29 @@ type Class struct {
 	IsFileFacade bool
 }
 
+// TypeAlias is a top-level typealias declaration. It names a type of its own
+// rather than declaring one, so a name that reaches it stands for Target.
+type TypeAlias struct {
+	Name     string
+	Package  string
+	FilePath string
+	// Target is the aliased type as written in the file that declares the alias:
+	// it is read in that file's scope, not in the scope of the code that uses the
+	// alias.
+	Target         string
+	TypeParameters []string
+	Imports        []Import
+	// IsPrivate marks an alias written private: visible in its file only.
+	IsPrivate bool
+}
+
 // ParseResult is the outcome of parsing one file.
 type ParseResult struct {
-	FilePath string
-	Classes  []Class
-	Warnings []string
-	Error    error
+	FilePath    string
+	Classes     []Class
+	TypeAliases []TypeAlias
+	Warnings    []string
+	Error       error
 }
 
 // UnsupportedConstructError reports a Kotlin construct whose meaning the
