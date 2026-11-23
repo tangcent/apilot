@@ -24,7 +24,6 @@ type Resolver struct {
 	byKey      map[string]*ktparser.Class
 	bySimple   map[string][]string
 	byFile     map[string][]string
-	enumValues map[string][]string
 	tr         *javaresolver.TypeResolver
 	unresolved *collector.UnresolvedSet
 	javaTypes  []javaparser.Class
@@ -64,7 +63,6 @@ func NewWithAliases(classes []ktparser.Class, javaTypes []javaparser.Class, alia
 		byKey:      make(map[string]*ktparser.Class, len(classes)),
 		bySimple:   make(map[string][]string),
 		byFile:     make(map[string][]string),
-		enumValues: make(map[string][]string),
 		unresolved: collector.NewUnresolvedSet(),
 		javaTypes:  javaTypes,
 		scope:      scope,
@@ -87,8 +85,6 @@ func NewWithAliases(classes []ktparser.Class, javaTypes []javaparser.Class, alia
 			r.byFile[class.FilePath] = appendUnique(r.byFile[class.FilePath], key)
 		}
 		if class.IsEnum {
-			r.enumValues[class.Name] = class.EnumValues
-			r.enumValues[key] = class.EnumValues
 			// The type table holds the enum as the Java resolver reads one, so
 			// that a field typed with it is a string of its entries.
 			javaClasses = append(javaClasses, toJavaEnum(*class))
@@ -312,20 +308,6 @@ func (r *Resolver) SetRequiredFields(mode string) {
 // an enum whose JSON form is not the name of its constant.
 func (r *Resolver) Unresolved() map[string]int {
 	return r.unresolved.Counts()
-}
-
-// IsEnum reports whether name denotes an enum class. It goes by the simple
-// name, with no scope to tell two enums of that name apart; EnumValuesFrom
-// resolves the name as source sees it.
-func (r *Resolver) IsEnum(name string) bool {
-	_, ok := r.enumValues[lastSegment(name)]
-	return ok
-}
-
-// EnumValues returns the entries of an enum class by its simple name (see
-// IsEnum).
-func (r *Resolver) EnumValues(name string) []string {
-	return r.enumValues[lastSegment(name)]
 }
 
 // EnumValuesFrom returns the entries of the enum a type name denotes as seen

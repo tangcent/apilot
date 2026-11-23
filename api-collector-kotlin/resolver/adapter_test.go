@@ -301,8 +301,8 @@ func TestResolveFromKotlinTypes(t *testing.T) {
 		if _, ok := r.Unresolved()["Status"]; ok {
 			t.Fatalf("Status reported unresolved: %v", r.Unresolved())
 		}
-		if values := r.EnumValues("com.example.model.Status"); len(values) != 2 {
-			t.Fatalf("EnumValues = %v", values)
+		if values, ok := r.EnumValuesFrom(&source, "Status"); !ok || len(values) != 2 {
+			t.Fatalf("EnumValuesFrom = %v, %v", values, ok)
 		}
 	})
 }
