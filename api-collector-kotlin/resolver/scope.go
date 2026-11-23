@@ -44,14 +44,15 @@ var builtinTypes = func() map[string]builtinType {
 	add("kotlin", "java.lang.Void", "", "Unit", "Nothing")
 	add("kotlin", "java.util.List", "", "Array")
 	add("kotlin", "java.util.List", "java.lang.Integer", "IntArray", "ShortArray", "UByteArray", "UShortArray", "UIntArray")
-	// A ByteArray is a JVM byte[], which Jackson writes as one Base64 string;
-	// the other primitive arrays are arrays of numbers.
+	// A ByteArray is a JVM byte[], which Jackson writes as one Base64 string, and
+	// a CharArray a char[], which it writes as one string of its characters; the
+	// other primitive arrays are arrays.
 	add("kotlin", "byte[]", "", "ByteArray")
+	add("kotlin", "char[]", "", "CharArray")
 	add("kotlin", "java.util.List", "java.lang.Long", "LongArray", "ULongArray")
 	add("kotlin", "java.util.List", "java.lang.Float", "FloatArray")
 	add("kotlin", "java.util.List", "java.lang.Double", "DoubleArray")
 	add("kotlin", "java.util.List", "java.lang.Boolean", "BooleanArray")
-	add("kotlin", "java.util.List", "java.lang.String", "CharArray")
 
 	// kotlin.collections.*, kotlin.sequences.*
 	add("kotlin.collections", "java.util.List", "", "List", "MutableList", "MutableCollection", "Iterable")

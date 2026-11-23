@@ -9,10 +9,18 @@ import (
 	model "github.com/tangcent/apilot/api-model"
 )
 
-// Jackson writes a byte[] as one Base64 string. `Byte[]` and `List<Byte>` are
-// arrays of numbers, as are the other primitive arrays; before, a byte[] was
-// exported as an array of integers, which is not what a client reads.
-func TestResolve_ByteArrayIsAString(t *testing.T) {
+// Jackson writes a byte[] as one Base64 string and a char[] as one string of
+// its characters. `Byte[]`, `Character[]` and `List<Byte>` are arrays, of
+// numbers and of one-character strings, as are the other primitive arrays;
+// before, a byte[] was exported as an array of integers and a char[] as an
+// array of strings, which is not what a client reads.
+//
+// A byte[] that stands alone as a request or response body (`byte[]`,
+// `ResponseEntity<byte[]>`, `Mono<byte[]>`) is not written by Jackson: Spring's
+// ByteArrayHttpMessageConverter reads and writes the raw bytes. The string is
+// still the closest schema of an opaque payload, so those entries read the
+// same as the nested ones.
+func TestResolve_ByteAndCharArraysAreStrings(t *testing.T) {
 	r := NewTypeResolver([]parser.Class{
 		{Name: "Order", Package: "com.example", Fields: []parser.Field{{Name: "id", Type: "long"}}},
 	})
@@ -34,7 +42,20 @@ func TestResolve_ByteArrayIsAString(t *testing.T) {
 		"Byte":                    "int",
 		"int[]":                   "array<int>",
 		"long[]":                  "array<long>",
-		"char[]":                  "array<string>",
+		"char[]":                  "string",
+		"char[][]":                "array<string>",
+		"List<char[]>":            "array<string>",
+		"Map<String, char[]>":     "map<string>",
+		"ResponseEntity<char[]>":  "string",
+		"Flux<char[]>":            "array<string>",
+		"? extends char[]":        "string",
+		"List<? extends char[]>":  "array<string>",
+		"Character[]":             "array<string>",
+		"java.lang.Character[]":   "array<string>",
+		"List<Character>":         "array<string>",
+		"Character[][]":           "array<array<string>>",
+		"char":                    "string",
+		"Character":               "string",
 		"Order[]":                 "array<object:Order>",
 		"Map<String, List<Byte>>": "map<array<int>>",
 		"? extends byte[]":        "string",
@@ -50,16 +71,21 @@ func TestResolve_ByteArrayIsAString(t *testing.T) {
 	}
 }
 
-// A byte[] field is a string wherever it stands: in a class, in a generic
-// class, and as a getter-only property.
-func TestResolve_ByteArrayFieldsAreStrings(t *testing.T) {
+// A byte[] or char[] field is a string wherever it stands: in a class, in a
+// generic class, and as a getter-only property.
+func TestResolve_ByteAndCharArrayFieldsAreStrings(t *testing.T) {
 	r := NewTypeResolver([]parser.Class{
 		{Name: "Blob", Package: "com.example", Fields: []parser.Field{
 			{Name: "data", Type: "byte[]"},
 			{Name: "boxed", Type: "Byte[]"},
 			{Name: "chunks", Type: "byte[][]"},
+			{Name: "letters", Type: "char[]"},
+			{Name: "boxedLetters", Type: "Character[]"},
+			{Name: "lines", Type: "char[][]"},
+			{Name: "words", Type: "List<char[]>"},
 		}, Methods: []parser.Method{
 			{Name: "getDigest", ReturnType: "byte[]"},
+			{Name: "getPassword", ReturnType: "char[]"},
 		}},
 		{Name: "Box", Package: "com.example", TypeParameters: []string{"T"}, Fields: []parser.Field{
 			{Name: "content", Type: "T"},
@@ -70,10 +96,15 @@ func TestResolve_ByteArrayFieldsAreStrings(t *testing.T) {
 
 	blob := r.Resolve("com.example.Blob", nil)
 	for name, want := range map[string]string{
-		"data":   "string",
-		"boxed":  "array<int>",
-		"chunks": "array<string>",
-		"digest": "string",
+		"data":         "string",
+		"boxed":        "array<int>",
+		"chunks":       "array<string>",
+		"digest":       "string",
+		"letters":      "string",
+		"boxedLetters": "array<string>",
+		"lines":        "array<string>",
+		"words":        "array<string>",
+		"password":     "string",
 	} {
 		field := blob.Fields[name]
 		if field == nil {
@@ -101,12 +132,15 @@ func TestResolve_ByteArrayFieldsAreStrings(t *testing.T) {
 
 // The binding view is Spring's data binder, not Jackson, and does not read a
 // byte[] as Base64 (the request value "YWJj" binds as the four bytes of that
-// text, "1,2,3" as three numbers), so a byte[] stays an array there.
-func TestResolveForBinding_ByteArrayStaysAnArray(t *testing.T) {
+// text, "1,2,3" as three numbers) or a char[] as one string, so both stay
+// arrays there.
+func TestResolveForBinding_ByteAndCharArraysStayArrays(t *testing.T) {
 	r := NewTypeResolver([]parser.Class{
 		{Name: "Upload", Package: "com.example", Fields: []parser.Field{
 			{Name: "data", Type: "byte[]"},
 			{Name: "boxed", Type: "Byte[]"},
+			{Name: "letters", Type: "char[]"},
+			{Name: "boxedLetters", Type: "Character[]"},
 		}},
 	})
 	r.SetUnresolved(collector.NewUnresolvedSet())
@@ -114,8 +148,14 @@ func TestResolveForBinding_ByteArrayStaysAnArray(t *testing.T) {
 	if got := arrayShape(r.ResolveForBinding(parser.Class{}, "byte[]", nil)); got != "array<int>" {
 		t.Errorf("byte[] for binding = %s, want array<int>", got)
 	}
+	if got := arrayShape(r.ResolveForBinding(parser.Class{}, "char[]", nil)); got != "array<string>" {
+		t.Errorf("char[] for binding = %s, want array<string>", got)
+	}
 	upload := r.ResolveForBinding(parser.Class{}, "com.example.Upload", nil)
-	for name, want := range map[string]string{"data": "array<int>", "boxed": "array<int>"} {
+	for name, want := range map[string]string{
+		"data": "array<int>", "boxed": "array<int>",
+		"letters": "array<string>", "boxedLetters": "array<string>",
+	} {
 		field := upload.Fields[name]
 		if field == nil {
 			t.Errorf("Upload has no field %s: %v", name, upload.FieldOrder)
@@ -129,6 +169,9 @@ func TestResolveForBinding_ByteArrayStaysAnArray(t *testing.T) {
 	// The same class is a string where Jackson writes it, in the same resolver.
 	if got := arrayShape(r.Resolve("com.example.Upload", nil).Fields["data"].Model); got != "string" {
 		t.Errorf("Upload.data as JSON = %s, want string", got)
+	}
+	if got := arrayShape(r.Resolve("com.example.Upload", nil).Fields["letters"].Model); got != "string" {
+		t.Errorf("Upload.letters as JSON = %s, want string", got)
 	}
 }
 
@@ -172,6 +215,8 @@ func byteArrayGenerics() []parser.Class {
 		{Name: "SubBoxed", Package: "app.dto", SuperClass: "Base", SuperClassTypeArgs: []string{"Byte[]"}},
 		{Name: "SubList", Package: "app.dto", SuperClass: "Base", SuperClassTypeArgs: []string{"List<byte[]>"}},
 		{Name: "SubOpen", Package: "app.dto", TypeParameters: []string{"X"}, SuperClass: "Base", SuperClassTypeArgs: []string{"X"}},
+		{Name: "CharSub", Package: "app.dto", SuperClass: "Base", SuperClassTypeArgs: []string{"char[]"}},
+		{Name: "CharBoxedSub", Package: "app.dto", SuperClass: "Base", SuperClassTypeArgs: []string{"Character[]"}},
 	}
 }
 
@@ -218,6 +263,29 @@ func TestResolve_ByteArrayThroughTypeVariables(t *testing.T) {
 		{"app.dto.Outer<app.dto.Holder<byte[]>>", "wrapped.data.value", "string"},
 		{"app.dto.Outer<app.dto.Holder<byte[]>>", "wrapped.items", "array<object:Holder>"},
 		{"app.dto.Deep<app.dto.Holder<byte[]>>", "outer.wrapped.data.values", "array<string>"},
+		// A char[] is a string wherever a byte[] is, and `Character[]` an array
+		// of one-character strings wherever `Byte[]` is an array of numbers.
+		{"app.dto.Wrapper<char[]>", "data", "string"},
+		{"app.dto.Wrapper<char[]>", "items", "array<string>"},
+		{"app.dto.Wrapper<char[]>", "grid", "array<string>"},
+		{"app.dto.Wrapper<char[]>", "byName", "map<string>"},
+		{"app.dto.Outer<char[]>", "wrapped.data", "string"},
+		{"app.dto.Outer<char[]>", "wrapped.items", "array<string>"},
+		{"app.dto.Outer<char[]>", "wrapped.grid", "array<string>"},
+		{"app.dto.Outer<char[]>", "wrapped.byName", "map<string>"},
+		{"app.dto.Outer<char[]>", "direct", "string"},
+		{"app.dto.Deep<char[]>", "outer.wrapped.data", "string"},
+		{"app.dto.Outer<char[][]>", "wrapped.data", "array<string>"},
+		{"app.dto.Outer<List<char[]>>", "wrapped.data", "array<string>"},
+		{"app.dto.Outer<Character[]>", "wrapped.data", "array<string>"},
+		{"app.dto.Outer<Character[]>", "wrapped.items", "array<array<string>>"},
+		{"app.dto.Outer<? extends char[]>", "wrapped.data", "string"},
+		{"app.dto.Holds<char[]>", "blobs", "map<string>"},
+		{"app.dto.CharSub", "payload", "string"},
+		{"app.dto.CharSub", "wrapped.data", "string"},
+		{"app.dto.CharSub", "wrapped.items", "array<string>"},
+		{"app.dto.CharBoxedSub", "payload", "array<string>"},
+		{"app.dto.CharBoxedSub", "wrapped.items", "array<array<string>>"},
 		// A wildcard argument is read by its bound.
 		{"app.dto.Outer<? extends byte[]>", "wrapped.data", "string"},
 		{"app.dto.Outer<? extends byte[]>", "wrapped.items", "array<string>"},
@@ -262,6 +330,9 @@ func TestResolveForBinding_ByteArrayThroughTypeVariables(t *testing.T) {
 		{"app.dto.Sub", "wrapped.data", "array<int>"},
 		{"app.dto.Holds<byte[]>", "blobs", "map<array<int>>"},
 		{"app.dto.Blobs", "", "map<array<int>>"},
+		{"app.dto.Outer<char[]>", "wrapped.data", "array<string>"},
+		{"app.dto.Outer<char[]>", "direct", "array<string>"},
+		{"app.dto.CharSub", "wrapped.data", "array<string>"},
 	} {
 		got := arrayShape(fieldAt(r.ResolveForBinding(parser.Class{}, c.typeName, nil), c.path))
 		if got != c.want {
