@@ -128,7 +128,7 @@ func (r *TypeResolver) memberConstant(class parser.Class, name string, hops int,
 func (r *TypeResolver) constantClass(source parser.Class, name string) (parser.Class, bool) {
 	key := name
 	head, rest, nested := strings.Cut(name, ".")
-	if scoped := r.resolveSimpleName(source, head); scoped != head || !nested {
+	if scoped := r.resolveName(source, head); scoped != head || !nested {
 		key = scoped
 		if nested {
 			key += "." + rest
@@ -153,8 +153,7 @@ func (r *TypeResolver) constantClass(source parser.Class, name string) (parser.C
 	if r.dependencyResolver == nil || !strings.Contains(key, ".") || isPlatformName(key) || r.isPackage(key) {
 		return parser.Class{}, false
 	}
-	if c := r.dependencyResolver.ResolveClass(key); c != nil {
-		r.registerDependency(*c, key)
+	if c := r.readDependency(key); c != nil {
 		return *c, true
 	}
 	return parser.Class{}, false

@@ -173,24 +173,42 @@ func TestResolve_NoLookupForAPlatformPackageAClassImportOrAKnownName(t *testing.
 	library := &libraryClasses{classes: map[string]parser.Class{}}
 	// Read from a library, so its own package may be asked.
 	source := parser.Class{
-		Name: "Holder", Package: "com.example.app",
-		Imports: append(onDemand("java.util", "javax.validation.constraints", "kotlin.collections", "com.example.lib.Outer"),
+		Name: "Holder", Package: "com.example.app", TypeParameters: []string{"Item"},
+		Imports: append(onDemand("java.util", "javax.money", "kotlin.collections", "com.example.lib.Outer"),
 			parser.Import{Path: "com.example.lib.Statics", OnDemand: true, Static: true}),
 	}
-	// T is a type variable of some class; every other name is one the resolver
-	// answers for itself.
-	generic := parser.Class{Name: "Box", Package: "com.example.box", FilePath: "Box.java", TypeParameters: []string{"T"}}
-	r := NewTypeResolver([]parser.Class{generic})
+	r := NewTypeResolver(nil)
 	r.SetDependencyResolver(library)
 
-	for _, name := range []string{"T", "String", "Integer", "Object", "Date", "LocalDateTime", "UUID", "List", "Map"} {
+	// A type variable of the source and the names the resolver answers for before
+	// it consults a scope are not asked for.
+	for _, name := range []string{"Item", "String", "Integer", "List", "Map"} {
 		r.ResolveFrom(source, name, nil)
 	}
-	// Only the package of the source is left to ask, and then only for a name
-	// that may be a class: the platform packages, the class import and the
-	// static import give no candidate.
+	if len(library.asked) != 0 {
+		t.Errorf("asked = %v, want nothing", library.asked)
+	}
+	// The names of JDK value types are answered for after the scope, so a class
+	// of the package of the source or of one that an import on demand brings in is
+	// what they denote: asked there, though not in a platform package, and neither
+	// as written. The platform packages, the class import and the static import
+	// give no candidate; javax.money is a library like any other.
+	for _, name := range []string{"Object", "Date", "UUID"} {
+		r.ResolveFrom(source, name, nil)
+	}
+	want := []string{
+		"com.example.app.Object", "javax.money.Object",
+		"com.example.app.Date", "javax.money.Date",
+		"com.example.app.UUID", "javax.money.UUID",
+	}
+	if !reflect.DeepEqual(library.asked, want) {
+		t.Errorf("asked = %v, want %v", library.asked, want)
+	}
+	// Any other name is asked as written too, for a resolver that knows classes
+	// by their simple names.
+	library.asked = nil
 	r.ResolveFrom(source, "Unknown", nil)
-	if want := []string{"com.example.app.Unknown", "Unknown"}; !reflect.DeepEqual(library.asked, want) {
+	if want := []string{"com.example.app.Unknown", "javax.money.Unknown", "Unknown"}; !reflect.DeepEqual(library.asked, want) {
 		t.Errorf("asked = %v, want %v", library.asked, want)
 	}
 }
