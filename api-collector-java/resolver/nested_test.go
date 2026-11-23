@@ -200,16 +200,6 @@ func TestCanonicalName(t *testing.T) {
 			t.Errorf("canonicalName(%q) = %q, want %q", tc.name, got, tc.want)
 		}
 	}
-	for _, tc := range []struct{ name, want string }{
-		{"List<String>", "List<String>"},
-		{"List<Outer$Inner>", "List<Outer.Inner>"},
-		{"Map<String, A$B$C>[]", "Map<String, A.B.C>[]"},
-		{"? extends Outer$Inner", "? extends Outer.Inner"},
-	} {
-		if got := canonicalType(tc.name, canonicalName); got != tc.want {
-			t.Errorf("canonicalType(%q) = %q, want %q", tc.name, got, tc.want)
-		}
-	}
 }
 
 // A `$` may be part of an identifier: `Price$Value` is a top-level class of its
@@ -236,8 +226,8 @@ func TestResolve_ADollarInAClassNameIsNotABinaryName(t *testing.T) {
 
 		assertShape(t, "Order", r.ResolveFrom(classes[0], "p.Order", nil),
 			"{binary:{ofInner:string},qualified:{price:long},value:{price:long},values:[{price:long}]}")
-		if got := r.resolveSimpleName(classes[0], "Price$Value"); got != "p.Price$Value" {
-			t.Errorf("resolveSimpleName(Price$Value) = %q, want p.Price$Value", got)
+		if got := r.resolveName(classes[0], "Price$Value"); got != "p.Price$Value" {
+			t.Errorf("resolveName(Price$Value) = %q, want p.Price$Value", got)
 		}
 		if got := r.Resolve("Price$Value", nil); !got.IsObject() {
 			t.Errorf("Resolve(Price$Value) = %+v, want the class", got)

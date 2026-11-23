@@ -143,7 +143,7 @@ func (r *TypeResolver) constantClass(source parser.Class, name string) (parser.C
 	if r.dependencyResolver == nil || !strings.Contains(key, ".") || isPlatformName(key) || r.isPackage(key) || r.memberOfScanned(key) {
 		return parser.Class{}, false
 	}
-	if c := r.readDependency(key); c != nil {
+	if c, _ := r.readDependency(key); c != nil {
 		return *c, true
 	}
 	return parser.Class{}, false
