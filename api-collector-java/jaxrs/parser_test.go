@@ -910,3 +910,41 @@ func TestParser_MediaTypeConstants(t *testing.T) {
 		t.Errorf("uploadPlain produces = %v, want [text/plain]", plain.Produces)
 	}
 }
+
+// A return type that is called Void is a response when the project declares a
+// class of that name; java.lang.Void, written in full or by name where nothing
+// declares one, returns nothing.
+func TestParser_AProjectClassCalledVoidIsAResponse(t *testing.T) {
+	resource := func(pkg, returnType string) parser.Class {
+		return parser.Class{
+			Name: "TestResource", Package: pkg, FilePath: pkg + "/TestResource.java",
+			Annotations: []parser.Annotation{{Name: "Path", Params: map[string]string{"value": "/test"}}},
+			Methods: []parser.Method{{
+				Name:        "get",
+				Annotations: []parser.Annotation{{Name: "GET"}},
+				ReturnType:  returnType,
+			}},
+		}
+	}
+	void := parser.Class{
+		Name: "Void", Package: "com.example.model", FilePath: "com.example.model/Void.java",
+		Fields: []parser.Field{{Name: "code", Type: "int"}},
+	}
+	for name, tc := range map[string]struct {
+		class parser.Class
+		want  bool
+	}{
+		"declared in the package": {resource("com.example.model", "Void"), true},
+		"declared elsewhere":      {resource("com.example.api", "Void"), false},
+		"written in full":         {resource("com.example.model", "java.lang.Void"), false},
+	} {
+		results := []parser.ParseResult{{Classes: []parser.Class{void, tc.class}}}
+		resources := NewParser().ExtractResources(results)
+		if len(resources) != 1 || len(resources[0].Endpoints) != 1 {
+			t.Fatalf("%s: want 1 resource with 1 endpoint, got %+v", name, resources)
+		}
+		if got := resources[0].Endpoints[0].ResponseSchema != nil; got != tc.want {
+			t.Errorf("%s: response exported = %v, want %v", name, got, tc.want)
+		}
+	}
+}

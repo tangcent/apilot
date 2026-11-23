@@ -50,20 +50,6 @@ var javaLangScalars = map[string]string{
 	"Character": model.JsonTypeString,
 }
 
-// javaLangBuiltIns maps the qualified name of each class of primitiveTypes
-// (`java.lang.Integer`) to the scalar its simple name gives, so that a type
-// argument can be passed on in full and still be answered for by its spelling,
-// without a scope or the dependencies being consulted.
-var javaLangBuiltIns = func() map[string]string {
-	out := make(map[string]string)
-	for name, jsonType := range primitiveTypes {
-		if name[0] >= 'A' && name[0] <= 'Z' {
-			out["java.lang."+name] = jsonType
-		}
-	}
-	return out
-}()
-
 // jdkQualifiedScalars maps a fully qualified JDK value type to the JSON scalar
 // it serialises to.
 //
@@ -119,6 +105,31 @@ var jdkScalarTypes = map[string]string{
 	"atomiclong":    model.JsonTypeLong,
 }
 
+// jdkValueTypes lists, by their qualified names, the classes of the JDK that
+// jdkScalarTypes answers for by their simple names and jdkQualifiedScalars does
+// not name. With the classes of jdkQualifiedScalars they are the JDK value types
+// an import of their package supplies (see declaredInScope).
+var jdkValueTypes = map[string]bool{
+	"java.time.Instant":                         true,
+	"java.time.LocalDate":                       true,
+	"java.time.LocalTime":                       true,
+	"java.time.LocalDateTime":                   true,
+	"java.time.OffsetTime":                      true,
+	"java.time.OffsetDateTime":                  true,
+	"java.time.ZonedDateTime":                   true,
+	"java.time.Duration":                        true,
+	"java.time.Period":                          true,
+	"java.time.Year":                            true,
+	"java.time.YearMonth":                       true,
+	"java.time.MonthDay":                        true,
+	"java.time.ZoneId":                          true,
+	"java.time.ZoneOffset":                      true,
+	"java.util.GregorianCalendar":               true,
+	"java.util.concurrent.atomic.AtomicBoolean": true,
+	"java.util.concurrent.atomic.AtomicInteger": true,
+	"java.util.concurrent.atomic.AtomicLong":    true,
+}
+
 // simpleTypeName reduces a type spelling to its lower-cased simple name:
 // `java.time.LocalDateTime` and `LocalDateTime` both become `localdatetime`,
 // and the head of `List<Order>` becomes `list`.
@@ -134,12 +145,16 @@ func simpleTypeName(rawType string) string {
 }
 
 var collectionTypes = map[string]bool{
-	"List":       true,
-	"ArrayList":  true,
-	"Collection": true,
-	"Set":        true,
-	"HashSet":    true,
-	"LinkedList": true,
+	"List":          true,
+	"ArrayList":     true,
+	"Collection":    true,
+	"Set":           true,
+	"HashSet":       true,
+	"LinkedList":    true,
+	"Iterable":      true,
+	"LinkedHashSet": true,
+	"SortedSet":     true,
+	"TreeSet":       true,
 }
 
 var mapTypes = map[string]bool{
@@ -147,6 +162,32 @@ var mapTypes = map[string]bool{
 	"HashMap":       true,
 	"LinkedHashMap": true,
 	"TreeMap":       true,
+	"SortedMap":     true,
+}
+
+// unqualifiedJdkName strips the package from a name of java.util or java.lang
+// (`java.util.List` is `List`, `java.lang.Iterable` is `Iterable`). A name of
+// any other package, or of a nested class (`java.util.Map.Entry`), is returned
+// as written.
+func unqualifiedJdkName(name string) string {
+	for _, prefix := range []string{"java.util.", "java.lang."} {
+		if rest, ok := strings.CutPrefix(name, prefix); ok && !strings.Contains(rest, ".") {
+			return rest
+		}
+	}
+	return name
+}
+
+// isCollectionType reports whether a type name, spelled with or without its
+// package, is a collection serialised as an array.
+func isCollectionType(name string) bool {
+	return collectionTypes[unqualifiedJdkName(name)]
+}
+
+// isMapType reports whether a type name, spelled with or without its package,
+// is a map serialised as an object.
+func isMapType(name string) bool {
+	return mapTypes[unqualifiedJdkName(name)]
 }
 
 // reactiveWrappers maps a reactor publisher's simple name to whether its
@@ -644,7 +685,7 @@ func (r *TypeResolver) scopedPlain(source parser.Class, name string, ask bool) s
 	// declares is declared in scope: the fallback below, which exists for a name
 	// that nothing declares, must not offer a project class instead.
 	if isJavaLangType(name) {
-		return name
+		return "java.lang." + name
 	}
 	if r.isDependencySource(source) || r.mayComeFromAnUnscannedPackage(source) {
 		return name
@@ -998,6 +1039,18 @@ func (r *TypeResolver) inScope(source parser.Class, name string, ask bool) (stri
 		}
 	}
 
+	// An import on demand of a package of the JDK supplies the JDK types the
+	// resolver answers for itself, as it supplies a class of the project, once no
+	// declaration of the project has.
+	for _, imp := range source.Imports {
+		if imp.Static || !imp.OnDemand {
+			continue
+		}
+		if key := imp.Path + "." + name; isPlatformType(key) {
+			return key, true
+		}
+	}
+
 	return "", false
 }
 
@@ -1146,6 +1199,31 @@ func (r *TypeResolver) isRegistered(key string) bool {
 	return found
 }
 
+// IsVoid reports whether a declared return type, as written in source, says the
+// method returns nothing: the keyword `void`, or java.lang.Void. A class of the
+// project that is called Void is a class like any other.
+func (r *TypeResolver) IsVoid(source parser.Class, typeName string) bool {
+	typeName = strings.TrimSpace(typeName)
+	if typeName == "void" {
+		return true
+	}
+	simple, ok := r.javaLangType(source, typeName)
+	return ok && simple == "Void"
+}
+
+// isPlatformType reports whether the resolver answers for a qualified name of
+// the JDK without reading a declaration of it.
+func isPlatformType(qualified string) bool {
+	if _, ok := jdkQualifiedScalars[qualified]; ok {
+		return true
+	}
+	if jdkValueTypes[qualified] {
+		return true
+	}
+	simple, ok := strings.CutPrefix(qualified, "java.lang.")
+	return ok && isJavaLangType(simple)
+}
+
 // isJavaLangType reports whether a simple name is one of the java.lang classes
 // the resolver answers for itself.
 func isJavaLangType(name string) bool {
@@ -1170,7 +1248,7 @@ func (r *TypeResolver) javaLangType(source parser.Class, typeName string) (strin
 	if !isJavaLangType(typeName) {
 		return "", false
 	}
-	if key, declared := r.inScope(source, typeName, false); declared && key != "java.lang."+typeName {
+	if key, declared := r.inScope(source, typeName, true); declared && key != "java.lang."+typeName {
 		return "", false
 	}
 	return typeName, true
@@ -1334,11 +1412,6 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	if jsonType, ok := primitiveTypes[rawType]; ok {
 		return model.SingleModel(jsonType)
 	}
-	// The same, written in full: a type argument passes `String` on as
-	// `java.lang.String` (see qualifyTypeName).
-	if jsonType, ok := javaLangBuiltIns[rawType]; ok {
-		return model.SingleModel(jsonType)
-	}
 
 	// Every compilation unit imports java.lang, so `java.lang.Short` is the
 	// type `Short` names, however the source spells it. The simple name is
@@ -1375,7 +1448,7 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 
 		// A collection or a map holds its arguments' models, which resolve where
 		// they are written.
-		if collectionTypes[baseName] {
+		if isCollectionType(baseName) {
 			if len(typeArgs) > 0 {
 				itemModel := r.ResolveFrom(source, typeArgs[0], typeBindings)
 				return model.ArrayModel(itemModel)
@@ -1383,7 +1456,7 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 			return model.ArrayModel(model.NullModel())
 		}
 
-		if mapTypes[baseName] {
+		if isMapType(baseName) {
 			keyModel := model.SingleModel(model.JsonTypeString)
 			valueModel := model.NullModel()
 			if len(typeArgs) >= 2 {
@@ -1431,7 +1504,10 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	if jsonType, ok := jdkQualifiedScalars[name]; ok {
 		return model.SingleModel(jsonType)
 	}
-	if jsonType, ok := jdkScalarTypes[simpleTypeName(name)]; ok {
+	// A declaration of the project is the class its name says, not a JDK type
+	// that shares its simple name: an enum of the JSON view is declared, though
+	// not read.
+	if jsonType, ok := jdkScalarTypes[simpleTypeName(name)]; ok && !r.isDeclared(name) {
 		return model.SingleModel(jsonType)
 	}
 	// An open object names itself `object` (see model.EmptyObject), and a type
@@ -1945,11 +2021,13 @@ func (r *TypeResolver) qualifyTypeArgs(source parser.Class, bindings map[string]
 // is itself.
 //
 // What ResolveFrom answers for by the spelling alone, before it consults a
-// scope, keeps that meaning wherever the argument is read: the classes of
-// primitiveTypes are written as `java.lang.String`, which no class of the
-// generic class's package can stand in for, and collections, maps and the
-// primitive types stay as written. A name that is already qualified, and a name
-// nothing in scope declares, stay as written too.
+// scope, keeps that meaning wherever the argument is read: collections, maps and
+// the primitive types stay as written. A class of java.lang is the JDK's where
+// no declaration closer than java.lang binds the name (see resolveSimpleName),
+// and is then written as `java.lang.String`, which no class of the generic
+// class's package can stand in for; where one does, the name is that class. A
+// name that is already qualified, and a name nothing in scope declares, stay as
+// written.
 func (r *TypeResolver) qualifyTypeName(source parser.Class, bindings map[string]string, typeName string) string {
 	typeName = strings.TrimSpace(typeName)
 	if typeName == "" {
@@ -2005,6 +2083,16 @@ func (r *TypeResolver) writeInFull(key, name string) bool {
 	if r.isRegistered(key) || r.dependencyResolver != nil || r.allTypeParams[name] {
 		return true
 	}
+	// A class of java.lang is the JDK's in any scope that declares nothing of that
+	// name, and is passed on as such.
+	if isJavaLangType(name) {
+		return true
+	}
+	// An enum of the project that bears the name of a JDK value type: written
+	// simply, it would be read as the JDK class where nothing declares it.
+	if _, ok := jdkScalarTypes[strings.ToLower(name)]; ok && r.isDeclared(key) {
+		return true
+	}
 	// A class nested in another is read by the simple name it ends in.
 	for _, other := range r.bySimpleName[lastSegment(canonicalName(name))] {
 		if other != key {
@@ -2015,15 +2103,12 @@ func (r *TypeResolver) writeInFull(key, name string) bool {
 }
 
 // scopeFreeName reports whether ResolveFrom answers for a bare name from its
-// spelling alone, before it consults any scope: a scalar, a collection or a
-// map. A class of the project that shares such a name does not take its place.
-// It returns the spelling that keeps that meaning wherever it is read: the
-// name itself, or for a class of java.lang its qualified name.
+// spelling alone, before it consults any scope: the keyword of a primitive type,
+// a collection or a map. A class of the project that shares such a name does not
+// take its place. It returns the spelling that keeps that meaning wherever it is
+// read, the name itself.
 func scopeFreeName(name string) (string, bool) {
 	if _, ok := primitiveTypes[name]; ok {
-		if qualified := "java.lang." + name; javaLangBuiltIns[qualified] != "" {
-			return qualified, true
-		}
 		return name, true
 	}
 	return name, collectionTypes[name] || mapTypes[name]
@@ -2099,7 +2184,7 @@ func isMapSubclass(class parser.Class) bool {
 	baseName, _ := parseGenericType(class.SuperClass)
 	// A map written in full is a class of java.util: another package's HashMap is a
 	// class of its own.
-	return mapTypes[strings.TrimPrefix(baseName, "java.util.")]
+	return isMapType(baseName)
 }
 
 // findImplementation returns the class in the scanned sources that implements

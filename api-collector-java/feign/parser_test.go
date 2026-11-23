@@ -1104,3 +1104,41 @@ func TestParser_SpringStyleUnannotatedParameterIsBody(t *testing.T) {
 		t.Errorf("Expected body parameter 'callbackData', got '%s'", ep.Parameters[0].Name)
 	}
 }
+
+// A return type that is called Void is a response when the project declares a
+// class of that name; java.lang.Void, written in full or by name where nothing
+// declares one, returns nothing.
+func TestParser_AProjectClassCalledVoidIsAResponse(t *testing.T) {
+	client := func(pkg, returnType string) parser.Class {
+		return parser.Class{
+			Name: "TestClient", Package: pkg, FilePath: pkg + "/TestClient.java", IsInterface: true,
+			Annotations: []parser.Annotation{{Name: "FeignClient", Params: map[string]string{"name": "test-service"}}},
+			Methods: []parser.Method{{
+				Name:        "get",
+				Annotations: []parser.Annotation{{Name: "GetMapping", Params: map[string]string{"value": "/test"}}},
+				ReturnType:  returnType,
+			}},
+		}
+	}
+	void := parser.Class{
+		Name: "Void", Package: "com.example.model", FilePath: "com.example.model/Void.java",
+		Fields: []parser.Field{{Name: "code", Type: "int"}},
+	}
+	for name, tc := range map[string]struct {
+		class parser.Class
+		want  bool
+	}{
+		"declared in the package": {client("com.example.model", "Void"), true},
+		"declared elsewhere":      {client("com.example.client", "Void"), false},
+		"written in full":         {client("com.example.model", "java.lang.Void"), false},
+	} {
+		results := []parser.ParseResult{{Classes: []parser.Class{void, tc.class}}}
+		clients := NewParser().ExtractClients(results)
+		if len(clients) != 1 || len(clients[0].Endpoints) != 1 {
+			t.Fatalf("%s: want 1 client with 1 endpoint, got %+v", name, clients)
+		}
+		if got := clients[0].Endpoints[0].ResponseSchema != nil; got != tc.want {
+			t.Errorf("%s: response exported = %v, want %v", name, got, tc.want)
+		}
+	}
+}

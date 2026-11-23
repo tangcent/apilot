@@ -107,22 +107,23 @@ func TestTypeArgumentsAreTheClassesTheApplicationNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
-	checkTypeArgumentExport(t, endpoints)
+	checkTypeArgumentExport(t, endpoints, typeArgumentExpectation, typeArgumentParameters)
 	if unresolved := c.Unresolved(); len(unresolved) != 0 {
 		t.Errorf("unresolved = %v, want none", unresolved)
 	}
 }
 
-// checkTypeArgumentExport asserts typeArgumentExpectation and
-// typeArgumentParameters against what a collector exported.
-func checkTypeArgumentExport(t *testing.T, endpoints []collector.ApiEndpoint) {
+// checkTypeArgumentExport asserts an expectation of what sits at the paths of an
+// endpoint's request and response, and of the parameters it binds, against what a
+// collector exported.
+func checkTypeArgumentExport(t *testing.T, endpoints []collector.ApiEndpoint, expectation map[string]map[string]string, parameters map[string][]string) {
 	t.Helper()
 	byPath := map[string]*collector.ApiEndpoint{}
 	for i := range endpoints {
 		byPath[endpoints[i].Path] = &endpoints[i]
 	}
-	paths := make([]string, 0, len(typeArgumentExpectation))
-	for path := range typeArgumentExpectation {
+	paths := make([]string, 0, len(expectation))
+	for path := range expectation {
 		paths = append(paths, path)
 	}
 	sort.Strings(paths)
@@ -132,7 +133,7 @@ func checkTypeArgumentExport(t *testing.T, endpoints []collector.ApiEndpoint) {
 			t.Errorf("endpoint %s was not exported; exported %v", path, typeArgumentPaths(endpoints))
 			continue
 		}
-		wants := typeArgumentExpectation[path]
+		wants := expectation[path]
 		keys := make([]string, 0, len(wants))
 		for key := range wants {
 			keys = append(keys, key)
@@ -144,7 +145,7 @@ func checkTypeArgumentExport(t *testing.T, endpoints []collector.ApiEndpoint) {
 			}
 		}
 	}
-	for path, want := range typeArgumentParameters {
+	for path, want := range parameters {
 		ep := byPath[path]
 		if ep == nil {
 			t.Errorf("endpoint %s was not exported", path)

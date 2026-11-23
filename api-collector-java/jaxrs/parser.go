@@ -444,7 +444,7 @@ func (p *Parser) extractMediaTypes(annotations []parser.Annotation, annName stri
 // declares no response at all. source is the class that declares the method,
 // which supplies the scope its type names resolve in.
 func (p *Parser) responseSchema(method parser.Method, class, source parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string) *model.ObjectModel {
-	if method.ReturnType == "" || method.ReturnType == "void" || method.ReturnType == "Void" {
+	if method.ReturnType == "" || typeResolver.IsVoid(source, method.ReturnType) {
 		return nil
 	}
 

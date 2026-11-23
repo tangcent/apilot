@@ -2,7 +2,6 @@ package resolver
 
 import (
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/tangcent/apilot/api-collector-java/parser"
@@ -134,8 +133,9 @@ func TestQualifyTypeName_ANameWithoutABodyIsWrittenInFullWhereItNeedsToBe(t *tes
 }
 
 // An argument is spelled so that it means the same wherever it is read: the
-// classes it names are written in full, and what the resolver answers for by
-// the spelling alone (scalars, collections, maps) is left as written.
+// classes it names are written in full, those of java.lang and the rest of the
+// JDK among them, and what the resolver answers for by the spelling alone (the
+// primitive keywords, collections, maps) is left as written.
 func TestQualifyTypeName_Shapes(t *testing.T) {
 	source := parser.Class{
 		Name: "Holder", Package: typeArgAppPackage,
@@ -159,6 +159,8 @@ func TestQualifyTypeName_Shapes(t *testing.T) {
 		"Void":                      "java.lang.Void",
 		"String[]":                  "java.lang.String[]",
 		"List<String>":              "List<java.lang.String>",
+		"Object[]":                  "java.lang.Object[]",
+		"Date":                      "Date", // nothing in scope names it
 		"int[]":                     "int[]",
 		"boolean":                   "boolean",
 		"Unknown":                   "Unknown",
@@ -170,26 +172,15 @@ func TestQualifyTypeName_Shapes(t *testing.T) {
 	}
 }
 
-// Every class the resolver answers for by its simple name before it consults a
-// scope is answered the same when it is written in full, without a scope or the
-// dependencies being consulted: that is how a type argument passes it on.
-func TestResolve_AJavaLangBuiltInWrittenInFullIsTheBareOne(t *testing.T) {
+// Every class of java.lang that the resolver answers for by itself is answered
+// the same when it is written in full, without a scope or the dependencies being
+// consulted: that is how a type argument passes it on.
+func TestResolve_AJavaLangClassWrittenInFullIsTheBareOne(t *testing.T) {
 	library := &libraryClasses{}
 	r := NewTypeResolver(nil)
 	r.SetDependencyResolver(library)
-	checked := 0
-	for name := range primitiveTypes {
-		qualified, ok := scopeFreeName(name)
-		if !ok {
-			t.Fatalf("scopeFreeName(%q) = false", name)
-		}
-		if qualified == name {
-			continue // a primitive type has no qualified name
-		}
-		checked++
-		if !strings.HasPrefix(qualified, "java.lang.") {
-			t.Errorf("scopeFreeName(%q) = %q", name, qualified)
-		}
+	for name := range javaLangScalars {
+		qualified := "java.lang." + name
 		bare, full := r.Resolve(name, nil), r.Resolve(qualified, nil)
 		if bare.Kind != model.KindSingle || bare.TypeName != full.TypeName || full.Kind != model.KindSingle {
 			t.Errorf("%s = %+v, but %s = %+v", name, bare, qualified, full)
@@ -197,9 +188,14 @@ func TestResolve_AJavaLangBuiltInWrittenInFullIsTheBareOne(t *testing.T) {
 		if array := r.Resolve(qualified+"[]", nil); !array.IsArray() || array.Items.TypeName != bare.TypeName {
 			t.Errorf("%s[] = %+v", qualified, array)
 		}
-	}
-	if checked != 7 {
-		t.Errorf("checked %d classes, want the seven of java.lang in primitiveTypes", checked)
+		// A scope that declares a class of that name does not change what the
+		// qualified spelling means.
+		own := parser.Class{Name: name, Package: "com.example.app", FilePath: "app/" + name + ".java", Fields: []parser.Field{{Name: "own", Type: "int"}}}
+		scoped := NewTypeResolver([]parser.Class{own})
+		source := parser.Class{Name: "Caller", Package: "com.example.app", FilePath: "app/Caller.java"}
+		if got := scoped.ResolveFrom(source, qualified, nil); got.Kind != model.KindSingle || got.TypeName != bare.TypeName {
+			t.Errorf("%s beside a class of that name = %+v, want %s", qualified, got, bare.TypeName)
+		}
 	}
 	if len(library.asked) != 0 {
 		t.Errorf("the dependencies were asked for %v", library.asked)

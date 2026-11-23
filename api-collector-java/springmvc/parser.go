@@ -288,7 +288,7 @@ func (p *Parser) extractEndpoint(method parser.Method, basePath string, class, s
 		endpoint.RequestBodySchema = typeResolver.ResolveFrom(source, requestBodyType, typeBindings)
 	}
 
-	if method.ReturnType != "" && method.ReturnType != "void" && method.ReturnType != "Void" {
+	if method.ReturnType != "" && !typeResolver.IsVoid(source, method.ReturnType) {
 		// A ResponseEntity<T> wrapper is unwrapped by the type resolver, the
 		// same way it handles a reactor publisher. A wildcard argument
 		// (`Result<?>`) is filled from the type the body returns; when the body
