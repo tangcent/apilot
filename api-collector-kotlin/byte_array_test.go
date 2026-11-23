@@ -12,13 +12,15 @@ import (
 
 // byteArrayExpectation is the export of testdata/byte-array: the fields of the
 // request body and of the response, each as its kind. Jackson writes a
-// ByteArray, the JVM's byte[], as one Base64 string; `Array<Byte>` and
-// `List<Byte>` are arrays of numbers, as are the other primitive arrays.
+// ByteArray, the JVM's byte[], as one Base64 string and a CharArray, the JVM's
+// char[], as one string of its characters; `Array<Byte>` and `List<Byte>` are
+// arrays of numbers and `Array<Char>` and `List<Char>` arrays of one-character
+// strings, as are the other primitive arrays.
 //
 // The Java collector asserts the same table for the same declarations written
-// in Java (api-collector-java/byte_array_test.go), where `legacy` and
-// `signature` are also declared, which only Java can spell: keep the two in
-// sync.
+// in Java (api-collector-java/byte_array_test.go), where `legacy`,
+// `legacyLetters`, `signature`, `password` and the `spaced` and `annotated`
+// fields are also declared, which only Java can spell: keep the two in sync.
 var byteArrayExpectation = map[string]string{
 	"data":    "string",
 	"chunks":  "array<string>",
@@ -27,14 +29,24 @@ var byteArrayExpectation = map[string]string{
 	"numbers": "array<int>",
 	"single":  "int",
 	"ints":    "array<int>",
+
+	"letters":       "string",
+	"lines":         "array<string>",
+	"words":         "array<string>",
+	"lettersByName": "map<string,string>",
+	"boxedLetters":  "array<string>",
+	"letterList":    "array<string>",
+	"letter":        "string",
 }
 
 // How Spring binds a request value is not how Jackson writes one: the data
-// binder reads a byte array from the text of the value, so the binding view
-// keeps it as an array and the parameters are listed as before.
+// binder reads a byte or char array from the text of the value, so the binding
+// view keeps them as arrays and the parameters are listed as before.
 var byteArrayBindingExpectation = map[string]string{
-	"data":  "array",
-	"boxed": "array",
+	"data":         "array",
+	"boxed":        "array",
+	"letters":      "array",
+	"boxedLetters": "array",
 }
 
 func collectByteArrays(t *testing.T) (*KotlinCollector, map[string]*collector.ApiEndpoint) {
@@ -71,16 +83,23 @@ func TestByteArraysAreExportedAsStrings(t *testing.T) {
 		}
 	}
 
-	// A ByteArray taken or returned by a handler as a whole is the same scalar.
-	blob := byPath["/byte-arrays/blob"]
-	if blob == nil || blob.RequestBody == nil || blob.Response == nil {
-		t.Fatalf("blob endpoint = %+v, want a request body and a response", blob)
-	}
-	if got := arrayFieldKind(blob.RequestBody.Body); got != "string" {
-		t.Errorf("blob request body = %s, want string", got)
-	}
-	if got := arrayFieldKind(blob.Response.Body); got != "string" {
-		t.Errorf("blob response = %s, want string", got)
+	// A ByteArray taken or returned by a handler as a whole is not Jackson's:
+	// Spring's ByteArrayHttpMessageConverter reads and writes the raw bytes.
+	// It is exported as a string all the same, the closest schema of an opaque
+	// body, where it used to be an array of integers. A CharArray as a whole is
+	// Jackson's, one string of its characters.
+	for path, what := range map[string]string{"/byte-arrays/blob": "blob", "/byte-arrays/text": "text"} {
+		whole := byPath[path]
+		if whole == nil || whole.RequestBody == nil || whole.Response == nil {
+			t.Errorf("%s endpoint = %+v, want a request body and a response", what, whole)
+			continue
+		}
+		if got := arrayFieldKind(whole.RequestBody.Body); got != "string" {
+			t.Errorf("%s request body = %s, want string", what, got)
+		}
+		if got := arrayFieldKind(whole.Response.Body); got != "string" {
+			t.Errorf("%s response = %s, want string", what, got)
+		}
 	}
 
 	if unresolved := c.Unresolved(); len(unresolved) != 0 {
@@ -103,6 +122,8 @@ func TestByteArrayRequestParametersAreListedAsDeclared(t *testing.T) {
 	want := []param{
 		{"data", "query", "text", "ByteArray"},
 		{"boxed", "query", "text", "Array<Byte>"},
+		{"letters", "query", "text", "CharArray"},
+		{"boxedLetters", "query", "text", "Array<Char>"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("query parameters:\n got  %v\n want %v", got, want)
@@ -125,14 +146,38 @@ func TestByteArrayRequestParametersAreListedAsDeclared(t *testing.T) {
 // byteArrayGenericExpectation is, per endpoint of testdata/byte-array, the kind
 // of the fields at a path of the request body and of the response. A path
 // follows field names, `[]` for the elements of an array and `*` for the value
-// of a map. The type argument that reaches each of them is a ByteArray, handed
-// on through one or two generic classes, a superclass or the handler's own base
-// class: where it is a ByteArray the field is the Base64 string, and where it
-// is `Array<Byte>` an array of numbers.
+// of a map. The type argument that reaches each of them is a ByteArray or a
+// CharArray, handed on through one or two generic classes, a superclass or the
+// handler's own base class: where it is a ByteArray or a CharArray the field is
+// a string, and where it is `Array<Byte>` an array of numbers or `Array<Char>`
+// an array of one-character strings.
 //
 // The Java collector asserts the same table for the same declarations written
 // in Java (api-collector-java/byte_array_test.go): keep the two in sync.
 var byteArrayGenericExpectation = map[string]map[string]string{
+	"/byte-arrays/outer-chars": {
+		"wrapped.data":         "string",
+		"wrapped.items":        "array<string>",
+		"wrapped.grid":         "array<string>",
+		"wrapped.byName":       "map<string,string>",
+		"wrappedItems.[].data": "string",
+		"direct":               "string",
+	},
+	"/byte-arrays/outer-boxed-chars": {
+		"wrapped.data":         "array<string>",
+		"wrapped.items":        "array<array<string>>",
+		"wrapped.grid":         "array<array<string>>",
+		"wrapped.byName":       "map<string,array<string>>",
+		"wrappedItems.[].data": "array<string>",
+		"direct":               "array<string>",
+	},
+	"/byte-arrays/char-sub": {
+		"payload":        "string",
+		"wrapped.data":   "string",
+		"wrapped.items":  "array<string>",
+		"wrapped.grid":   "array<string>",
+		"wrapped.byName": "map<string,string>",
+	},
 	"/byte-arrays/outer": {
 		"wrapped.data":         "string",
 		"wrapped.items":        "array<string>",
@@ -212,16 +257,20 @@ func TestByteArraysThroughGenericClasses(t *testing.T) {
 	}
 
 	// A handler that inherits `echo(body: T)` from a base class of `T`,
-	// extending it with ByteArray, takes and returns the byte array as a string.
-	echo := byPath["/byte-arrays/typed/echo"]
-	if echo == nil || echo.RequestBody == nil || echo.Response == nil {
-		t.Fatalf("echo endpoint = %+v, want a request body and a response", echo)
-	}
-	if got := arrayFieldKind(echo.RequestBody.Body); got != "string" {
-		t.Errorf("echo request body = %s, want string", got)
-	}
-	if got := arrayFieldKind(byteArrayModelAt(echo.Response.Body, "data")); got != "string" {
-		t.Errorf("echo response data = %s, want string", got)
+	// extending it with ByteArray or CharArray, takes and returns the array as
+	// a string.
+	for _, path := range []string{"/byte-arrays/typed/echo", "/byte-arrays/typed-chars/echo"} {
+		echo := byPath[path]
+		if echo == nil || echo.RequestBody == nil || echo.Response == nil {
+			t.Errorf("%s = %+v, want a request body and a response", path, echo)
+			continue
+		}
+		if got := arrayFieldKind(echo.RequestBody.Body); got != "string" {
+			t.Errorf("%s request body = %s, want string", path, got)
+		}
+		if got := arrayFieldKind(byteArrayModelAt(echo.Response.Body, "data")); got != "string" {
+			t.Errorf("%s response data = %s, want string", path, got)
+		}
 	}
 
 	if unresolved := c.Unresolved(); len(unresolved) != 0 {
@@ -229,19 +278,11 @@ func TestByteArraysThroughGenericClasses(t *testing.T) {
 	}
 }
 
-// The binding view reads the same bindings and keeps a byte array an array,
-// down to the field two generic classes deep.
+// The binding view reads the same bindings and keeps a byte or char array an
+// array, down to the field two generic classes deep.
 func TestByteArraysThroughGenericClassesWhenBound(t *testing.T) {
 	c, byPath := collectByteArrays(t)
 
-	bound := byPath["/byte-arrays/bound-outer"]
-	if bound == nil {
-		t.Fatalf("bound-outer endpoint missing: %v", byPath)
-	}
-	got := map[string]string{}
-	for _, p := range bound.Parameters {
-		got[p.Name] = p.TypeName
-	}
 	want := map[string]string{
 		"wrapped.data":   "array",
 		"wrapped.items":  "array",
@@ -250,8 +291,19 @@ func TestByteArraysThroughGenericClassesWhenBound(t *testing.T) {
 		"wrappedItems":   "array",
 		"direct":         "array",
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("bound-outer parameters:\n got  %v\n want %v", got, want)
+	for _, path := range []string{"/byte-arrays/bound-outer", "/byte-arrays/bound-outer-chars"} {
+		bound := byPath[path]
+		if bound == nil {
+			t.Errorf("%s endpoint missing: %v", path, byPath)
+			continue
+		}
+		got := map[string]string{}
+		for _, p := range bound.Parameters {
+			got[p.Name] = p.TypeName
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s parameters:\n got  %v\n want %v", path, got, want)
+		}
 	}
 
 	if unresolved := c.Unresolved(); len(unresolved) != 0 {

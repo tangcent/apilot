@@ -31,6 +31,9 @@ class ByteArraySub : ByteArrayBase<ByteArray>(null, null)
 /** Boxed bytes are numbers, whichever class passes them on. */
 class ByteArrayBoxedSub : ByteArrayBase<Array<Byte>>(null, null)
 
+/** The superclass argument is a char array. */
+class ByteArrayCharSub : ByteArrayBase<CharArray>(null, null)
+
 /** Passes its own type argument to the superclass. */
 class ByteArrayOpenSub<X> : ByteArrayBase<X>(null, null)
 
@@ -48,3 +51,7 @@ abstract class ByteArrayBaseController<T> {
 @RestController
 @RequestMapping("/byte-arrays/typed")
 class ByteArrayTypedController : ByteArrayBaseController<ByteArray>()
+
+@RestController
+@RequestMapping("/byte-arrays/typed-chars")
+class ByteArrayCharController : ByteArrayBaseController<CharArray>()

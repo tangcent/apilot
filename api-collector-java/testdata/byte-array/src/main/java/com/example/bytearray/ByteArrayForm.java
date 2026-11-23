@@ -27,7 +27,25 @@ public class ByteArrayForm {
     private byte single;
     private int[] ints;
 
+    /** A char[] is written as one string of its characters. */
+    private char[] letters;
+    private char legacyLetters[];
+    private char[][] lines;
+    private List<char[]> words;
+    private char [ ] spacedLetters;
+    private List<char @NotNull []> annotatedWords;
+    private Map<String, char [ ]> lettersByName;
+
+    /** Boxed characters are strings, one by one. */
+    private Character[] boxedLetters;
+    private List<Character> letterList;
+    private char letter;
+
     public byte[] getSignature() {
+        return null;
+    }
+
+    public char[] getPassword() {
         return null;
     }
 }

@@ -25,9 +25,34 @@ public class ByteArrayController {
         return blob;
     }
 
+    @PostMapping("/text")
+    public char[] text(@RequestBody char[] text) {
+        return text;
+    }
+
     @PostMapping("/spaced")
     public Map<String, byte [ ]> spaced(@RequestBody List<byte []> blobs) {
         return null;
+    }
+
+    @PostMapping("/spaced-chars")
+    public Map<String, char [ ]> spacedChars(@RequestBody List<char []> words) {
+        return null;
+    }
+
+    @PostMapping("/outer-chars")
+    public ByteArrayOuter<char [ ]> outerChars(@RequestBody ByteArrayOuter<char @NotNull [ ]> body) {
+        return body;
+    }
+
+    @PostMapping("/outer-boxed-chars")
+    public ByteArrayOuter<Character[]> outerBoxedChars(@RequestBody ByteArrayOuter<Character[]> body) {
+        return body;
+    }
+
+    @PostMapping("/char-sub")
+    public ByteArrayCharSub charSub(@RequestBody ByteArrayCharSub body) {
+        return body;
     }
 
     @PostMapping("/outer")
@@ -76,12 +101,18 @@ public class ByteArrayController {
     }
 
     @GetMapping("/query")
-    public String query(@RequestParam byte[] data, @RequestParam Byte[] boxed) {
+    public String query(@RequestParam byte[] data, @RequestParam Byte[] boxed,
+            @RequestParam char[] letters, @RequestParam Character[] boxedLetters) {
         return "";
     }
 
     @GetMapping("/bound-outer")
     public String boundOuter(ByteArrayOuter<byte [ ]> query) {
+        return "";
+    }
+
+    @GetMapping("/bound-outer-chars")
+    public String boundOuterChars(ByteArrayOuter<char [ ]> query) {
         return "";
     }
 
