@@ -244,6 +244,10 @@ type TypeResolver struct {
 	// dependencyAnswers holds what dependencyResolver answered for each name,
 	// a miss as nil, so that no name is asked for twice.
 	dependencyAnswers map[string]*parser.Class
+	// shown holds, for a class that a type argument names in full, the name the
+	// source wrote for it, so that a type that is displayed or reported reads as
+	// the source wrote it (see shortForm).
+	shown map[string]string
 }
 
 // SetRequiredFields selects how resolved fields are marked required: one of
@@ -1507,7 +1511,7 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	// A declaration of the project is the class its name says, not a JDK type
 	// that shares its simple name: an enum of the JSON view is declared, though
 	// not read.
-	if jsonType, ok := jdkScalarTypes[simpleTypeName(name)]; ok && !r.isDeclared(name) {
+	if jsonType, ok := jdkScalarTypes[simpleTypeName(name)]; ok && r.denotesJdkClass(source, name) {
 		return model.SingleModel(jsonType)
 	}
 	// An open object names itself `object` (see model.EmptyObject), and a type
@@ -1516,8 +1520,29 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 		return model.EmptyObject()
 	}
 
-	r.recordUnresolved(rawType)
-	return model.SingleModel(rawType)
+	shown := r.shortForm(rawType)
+	r.recordUnresolved(shown)
+	return model.SingleModel(shown)
+}
+
+// denotesJdkClass reports whether name, as resolveName answered it for a type
+// written in source, is a class of the JDK. The scalar a JDK value type
+// serialises to belongs to that class: a `LocalDate` of another library, or of
+// the project, is no such value, whatever its simple name says.
+//
+// A qualified name is the JDK's when it is in a package of java, and no
+// declaration of the project is under it. A simple name that nothing declared
+// or imported is the JDK's only in a source that tells nothing of its scope: in
+// a compilation unit that has a package or imports, every simple name it could
+// mean has been tried, and one that none supplied is no class of the JDK.
+func (r *TypeResolver) denotesJdkClass(source parser.Class, name string) bool {
+	if r.isDeclared(name) {
+		return false
+	}
+	if strings.Contains(name, ".") {
+		return strings.HasPrefix(name, "java.")
+	}
+	return source.Package == "" && len(source.Imports) == 0
 }
 
 // ResolveReturn resolves the declared return type of method as written in
@@ -1782,8 +1807,16 @@ func (r *TypeResolver) resolveField(source parser.Class, f parser.Field, localBi
 	}
 	if r.isUnboundTypeParam(f.Type, localBindings, typeParamSet) {
 		fm.Generic = true
-	} else if fieldModel != nil && fieldModel.Kind == model.KindSingle && r.isOpenTypeVariable(source, fieldModel.TypeName) {
-		fm.Generic = true
+	} else if fieldModel != nil && fieldModel.Kind == model.KindSingle {
+		// The name on the model is the one the source wrote; whether it is a
+		// variable is a matter of what it denotes, which the binding spells.
+		name := fieldModel.TypeName
+		if bound, ok := localBindings[f.Type]; ok && r.shortForm(bound) == name {
+			name = bound
+		}
+		if r.isOpenTypeVariable(source, name) {
+			fm.Generic = true
+		}
 	}
 	return fm
 }
@@ -2014,20 +2047,22 @@ func (r *TypeResolver) qualifyTypeArgs(source parser.Class, bindings map[string]
 // A type variable of source that bindings binds is replaced by its binding,
 // which is already spelled this way; one that nothing binds stays as written.
 // Every other class name goes through the same scope order as a direct
-// reference (see resolveName) and is written in full when it needs to be (see
-// writeInFull), in nested type arguments, array dimensions and wildcard bounds
-// alike. A dotted name goes through it too: `Outer.Inner` is the member type of
+// reference (see resolveName) and is written as the class it denotes, in full, in
+// nested type arguments, array dimensions and wildcard bounds alike: whatever the
+// class is, of the project, of a library or of the JDK, the spelling names it by
+// identity, and no class of the generic class's package or import can stand in
+// for it. A dotted name goes through it too: `Outer.Inner` is the member type of
 // the class Outer stands for in source, and `lib.Outer.Inner` or `lib.Outer$Inner`
 // is itself.
 //
 // What ResolveFrom answers for by the spelling alone, before it consults a
 // scope, keeps that meaning wherever the argument is read: collections, maps and
-// the primitive types stay as written. A class of java.lang is the JDK's where
-// no declaration closer than java.lang binds the name (see resolveSimpleName),
-// and is then written as `java.lang.String`, which no class of the generic
-// class's package can stand in for; where one does, the name is that class. A
-// name that is already qualified, and a name nothing in scope declares, stay as
-// written.
+// the primitive types stay as written. A name that is already qualified, and a
+// name nothing in scope declares, stay as written too.
+//
+// The written form is remembered (see shortForm), because the type is still the
+// one the source wrote when it is displayed or reported, unless it is shown by
+// its full name (see shownInFull).
 func (r *TypeResolver) qualifyTypeName(source parser.Class, bindings map[string]string, typeName string) string {
 	typeName = strings.TrimSpace(typeName)
 	if typeName == "" {
@@ -2058,39 +2093,31 @@ func (r *TypeResolver) qualifyTypeName(source parser.Class, bindings map[string]
 	}
 	if spelled, ok := scopeFreeName(base); ok {
 		base = spelled
-	} else if key := r.resolveName(source, base); key != base && r.writeInFull(key, base) {
+	} else if key := r.resolveName(source, base); key != base {
+		if !r.shownInFull(key, base) {
+			r.showAs(key, base)
+		}
 		base = key
 	}
 	if len(args) > 0 {
-		base += "<" + strings.Join(r.qualifyTypeArgs(source, bindings, args), ", ") + ">"
+		// The arguments are separated as the source wrote them, so a type that is
+		// shown reads the same.
+		separator := ","
+		if strings.Contains(typeName, ", ") {
+			separator = ", "
+		}
+		base += "<" + strings.Join(r.qualifyTypeArgs(source, bindings, args), separator) + ">"
 	}
 	return base + suffix
 }
 
-// writeInFull reports whether the name that resolveName gave key must be
-// written as key to keep its meaning.
-//
-// A class the current view sees is that class wherever it is read, so it is.
-// For anything else no body is read: an import of a class that a dependency
-// declares or that nothing declares, a type of the JDK, and an enum, which the
-// JSON view does not see. Such a name is shown as written, and reported when
-// it cannot be resolved, so it is left alone unless that would let it mean
-// another class: a dependency resolver asks for a class by its qualified name
-// only, another class that shares the simple name could take its place in
-// another scope, and the name of a type parameter of some class would make it
-// an open type variable where it is read (see isOpenTypeVariable).
-func (r *TypeResolver) writeInFull(key, name string) bool {
-	if r.isRegistered(key) || r.dependencyResolver != nil || r.allTypeParams[name] {
-		return true
-	}
-	// A class of java.lang is the JDK's in any scope that declares nothing of that
-	// name, and is passed on as such.
-	if isJavaLangType(name) {
-		return true
-	}
-	// An enum of the project that bears the name of a JDK value type: written
-	// simply, it would be read as the JDK class where nothing declares it.
-	if _, ok := jdkScalarTypes[strings.ToLower(name)]; ok && r.isDeclared(key) {
+// shownInFull reports whether a type argument that resolveName gave key is
+// displayed and reported by that name, and not as the source wrote it: any name
+// when a dependency resolver is asked for classes (the package is what a missing
+// dependency is looked up by), and a name that another class shares, which the
+// full name tells apart.
+func (r *TypeResolver) shownInFull(key, name string) bool {
+	if r.dependencyResolver != nil {
 		return true
 	}
 	// A class nested in another is read by the simple name it ends in.
@@ -2100,6 +2127,56 @@ func (r *TypeResolver) writeInFull(key, name string) bool {
 		}
 	}
 	return false
+}
+
+// showAs records that a class written in full was written as name in source.
+// The first spelling stays: the class is one, and the forms differ only in the
+// scope that wrote them.
+func (r *TypeResolver) showAs(identity, name string) {
+	if r.shown == nil {
+		r.shown = make(map[string]string)
+	}
+	if _, ok := r.shown[identity]; !ok {
+		r.shown[identity] = name
+	}
+}
+
+// ShowAs tells the resolver how a class is to be displayed when a type that
+// names it in full is shown or reported: the name its sources write.
+func (r *TypeResolver) ShowAs(identity, name string) {
+	r.showAs(identity, name)
+}
+
+// shortForm returns a spelled type with each class that was written in full for
+// its identity (see qualifyTypeName) back as the source wrote it. The type that
+// is shown on a model and reported as unresolved is a name for people, so
+// `Optional<com.pr.lib.Item>` reads as `Optional<Item>`, as it was written.
+func (r *TypeResolver) shortForm(spelled string) string {
+	if len(r.shown) == 0 || !strings.Contains(spelled, ".") {
+		return spelled
+	}
+	var out strings.Builder
+	for i := 0; i < len(spelled); {
+		if !isTypeNameChar(spelled[i]) {
+			out.WriteByte(spelled[i])
+			i++
+			continue
+		}
+		start := i
+		for i < len(spelled) && isTypeNameChar(spelled[i]) {
+			i++
+		}
+		word := spelled[start:i]
+		if short, ok := r.shown[word]; ok {
+			word = short
+		}
+		out.WriteString(word)
+	}
+	return out.String()
+}
+
+func isTypeNameChar(c byte) bool {
+	return c == '.' || c == '_' || c == '$' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= 0x80
 }
 
 // scopeFreeName reports whether ResolveFrom answers for a bare name from its

@@ -90,11 +90,11 @@ func TestQualifyTypeArgs(t *testing.T) {
 	}
 }
 
-// A name that no body is read for is written in full only where it needs to
-// be: with a dependency resolver, which asks for a class by its qualified name,
-// or when another class shares the simple name. Otherwise it is shown, and
-// reported when it cannot be resolved, as it is written.
-func TestQualifyTypeName_ANameWithoutABodyIsWrittenInFullWhereItNeedsToBe(t *testing.T) {
+// A name that an import gives is written as the class it denotes, in full,
+// whether or not a body is read for it and whether or not a dependency resolver
+// asks for classes by their qualified names: the spelling names the identity. A
+// name that nothing in scope declares is left as written.
+func TestQualifyTypeName_AnImportedNameIsWrittenInFull(t *testing.T) {
 	source := parser.Class{
 		Name: "Holder", Package: "com.example.app",
 		Imports: []parser.Import{{Path: "com.example.lib.Lost"}, {Path: "com.example.lib.Shared"}},
@@ -108,7 +108,7 @@ func TestQualifyTypeName_ANameWithoutABodyIsWrittenInFullWhereItNeedsToBe(t *tes
 		want         map[string]string
 	}{
 		"without a dependency resolver": {false, map[string]string{
-			"Lost":   "Lost",                   // nothing else is called Lost
+			"Lost":   "com.example.lib.Lost",   // nothing else is called Lost
 			"Shared": "com.example.lib.Shared", // the class of another package is called Shared too
 			"Status": "Status",                 // not imported: nothing in scope names it
 		}},
@@ -148,7 +148,8 @@ func TestQualifyTypeName_Shapes(t *testing.T) {
 		"Item[][]":                  "com.example.app.dto.Item[][]",
 		"List<Item>":                "List<com.example.app.dto.Item>",
 		"List<Item>[]":              "List<com.example.app.dto.Item>[]",
-		"Map<String,Item>":          "Map<java.lang.String, com.example.app.dto.Item>",
+		"Map<String,Item>":          "Map<java.lang.String,com.example.app.dto.Item>", // as written: no space
+		"Map<String, Item>":         "Map<java.lang.String, com.example.app.dto.Item>",
 		"Map<String, List<Item[]>>": "Map<java.lang.String, List<com.example.app.dto.Item[]>>",
 		"? extends Item":            "? extends com.example.app.dto.Item",
 		"? super Item":              "? super com.example.app.dto.Item",
@@ -202,10 +203,10 @@ func TestResolve_AJavaLangClassWrittenInFullIsTheBareOne(t *testing.T) {
 	}
 }
 
-// A type of the JDK that the caller imports is written in full where another
-// class could take its simple name: with a dependency resolver, or when a class
-// of the project carries the name. The qualified name answers like the bare one.
-func TestQualifyTypeName_ATypeOfTheJdkIsWrittenInFullWhereItNeedsToBe(t *testing.T) {
+// A type of the JDK that the caller imports is written in full, whether or not
+// another class could take its simple name. The qualified name answers like the
+// bare one.
+func TestQualifyTypeName_ATypeOfTheJdkIsWrittenInFull(t *testing.T) {
 	source := parser.Class{
 		Name: "Holder", Package: "com.example.app",
 		Imports: []parser.Import{{Path: "java.time.Period"}, {Path: "java.util.Date"}, {Path: "java.util.List"}},
@@ -217,7 +218,7 @@ func TestQualifyTypeName_ATypeOfTheJdkIsWrittenInFullWhereItNeedsToBe(t *testing
 	}{
 		"without a dependency resolver": {false, map[string]string{
 			"Period":       "java.time.Period", // a class of the project is called Period too
-			"Date":         "Date",             // nothing else is called Date
+			"Date":         "java.util.Date",   // nothing else is called Date
 			"List<Period>": "List<java.time.Period>",
 			"Period[]":     "java.time.Period[]",
 		}},
