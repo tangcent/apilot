@@ -950,11 +950,15 @@ func (r *TypeResolver) inScope(source parser.Class, name string, ask bool) (stri
 
 	ask = ask && r.dependencyResolver != nil && r.mayBeDependencyClass(source, name)
 
-	// 3. Same package.
+	// 3. Same package. The unnamed package is a package too (JLS 7.4.2): a class
+	// declared in it is in scope for the other classes of it. It has no name to
+	// ask the dependencies for, so only the classes held answer.
 	if source.Package != "" {
 		if key, found := r.declares(source, source.Package+"."+name, ask); found {
 			return key, true
 		}
+	} else if class, held := r.classRegistry[name]; held && class.Outer == "" {
+		return name, true
 	}
 
 	// 4. Import-on-demand. An import of a class (`import com.example.Outer.*`)
