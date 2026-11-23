@@ -593,7 +593,9 @@ func (r *TypeResolver) resolveName(source parser.Class, name string) string {
 // Only a name that no tier declares falls back to the declaration of the scanned
 // sources that carries the simple name wherever it sits (see declaredElsewhere):
 // the last resort of sources parsed without scope information, which never takes
-// the place of a class that a tier would have named. A class read from the
+// the place of a class that a tier would have named, nor answers for a source that
+// imports a package on demand which the project does not hold (see
+// mayComeFromAnUnscannedPackage). A class read from the
 // dependencies answers only through a tier, never by its simple name alone, so
 // that a source which cannot reach it does not get it because another source read
 // it first. And a class read from the dependencies is not given the fallback at
@@ -622,13 +624,28 @@ func (r *TypeResolver) scopedPlain(source parser.Class, name string, ask bool) s
 	if key, found := r.inScope(source, name, ask); found {
 		return key
 	}
-	if r.isDependencySource(source) {
+	if r.isDependencySource(source) || r.mayComeFromAnUnscannedPackage(source) {
 		return name
 	}
 	if key, found := r.declaredElsewhere(name); found {
 		return key
 	}
 	return name
+}
+
+// mayComeFromAnUnscannedPackage reports whether source imports a package on demand
+// that the scanned sources do not hold. A name that no tier declared may be the
+// name of a class of that package, one that the dependencies are not able to say:
+// the class of the project that shares the name is not the one the source means,
+// and the fallback to it is a guess that the source has no scope information, which
+// an import says it has.
+func (r *TypeResolver) mayComeFromAnUnscannedPackage(source parser.Class) bool {
+	for _, imp := range source.Imports {
+		if imp.OnDemand && !imp.Static && !r.scannedPackages[imp.Path] && !r.scannedKeys[imp.Path] {
+			return true
+		}
+	}
+	return false
 }
 
 // isDependencySource reports whether source is a class that was read from the
