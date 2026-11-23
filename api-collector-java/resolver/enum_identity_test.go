@@ -528,3 +528,38 @@ class Holder {
 		}
 	}
 }
+
+// A top-level class and an enum nested in another class carry one simple name
+// and are two declarations: the bare name is the class wherever it is written
+// outside the class that nests the enum, and Order.Status is the enum.
+func TestResolve_ANestedEnumAndATopLevelClassOfOneNameAreTold(t *testing.T) {
+	classes := parseFiles(t, map[string]string{
+		"p/Order.java": `package p;
+
+public class Order {
+    public enum Status { OPEN, CLOSED }
+}
+`,
+		"p/Status.java": `package p;
+
+public class Status { int weight; }
+`,
+		"p/Holder.java": `package p;
+
+class Holder {
+    Status plain;
+    Order.Status order;
+}
+`,
+	})
+	for order, ordered := range map[string][]parser.Class{"as declared": classes, "reversed": reversed(classes)} {
+		r := NewTypeResolver(ordered)
+		holder := r.Resolve("p.Holder", nil)
+		if plain := holder.Fields["plain"]; plain.Model.Kind != model.KindObject || plain.Model.Fields["weight"] == nil {
+			t.Errorf("%s: Holder.plain = %+v, want the class Status", order, plain.Model)
+		}
+		if got := fieldOf(ordered, "p.Holder", "order", false); !wantConstants(got, "OPEN", "CLOSED") {
+			t.Errorf("%s: Holder.order = %v, want a string of OPEN and CLOSED", order, got)
+		}
+	}
+}
