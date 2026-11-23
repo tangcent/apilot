@@ -3,6 +3,7 @@ package resolver
 import (
 	"testing"
 
+	javaparser "github.com/tangcent/apilot/api-collector-java/parser"
 	ktparser "github.com/tangcent/apilot/api-collector-kotlin/parser"
 )
 
@@ -246,6 +247,38 @@ func TestResolve_ATypeAliasThatIsPrivateFunctionalOrCircular(t *testing.T) {
 			}
 			if shape := scopeModelShape(scopeAt(got, "loop")); shape == "" {
 				t.Errorf("Form.loop = %q", shape)
+			}
+		})
+	}
+}
+
+// A Kotlin class inherits the classes nested in its Java superclass, and in the
+// Java classes that one extends, as it does those of a Kotlin one.
+func TestResolve_AClassNestedInAJavaSuperclassIsInScope(t *testing.T) {
+	javaTypes := []javaparser.Class{
+		{Name: "Base", Package: nestedPackage, FilePath: "nested/Base.java", SuperClass: "Root"},
+		{Name: "Number", Package: nestedPackage, Outer: "Root", FilePath: "nested/Root.java",
+			Fields: []javaparser.Field{{Name: "digits", Type: "String"}}},
+		{Name: "Root", Package: nestedPackage, FilePath: "nested/Root.java"},
+		{Name: "Other", Package: nestedPackage, FilePath: "nested/Other.java"},
+	}
+	child := ktparser.Class{Name: "Child", Package: nestedPackage, FilePath: "nested/Child.kt", SuperClass: "Base",
+		Fields: []ktparser.Property{scopeProp("weight", "Number"), scopeProp("count", "Int")}}
+	stranger := ktparser.Class{Name: "Stranger", Package: nestedPackage, FilePath: "nested/Stranger.kt", SuperClass: "Other",
+		Fields: []ktparser.Property{scopeProp("weight", "Number")}}
+	for view := range scopeViews {
+		t.Run(view, func(t *testing.T) {
+			r := NewWithJavaTypes([]ktparser.Class{child, stranger}, javaTypes)
+			for source, want := range map[*ktparser.Class]map[string]string{
+				&child:    {"weight": "Number(digits)", "count": "int"},
+				&stranger: {"weight": "double"},
+			} {
+				got := scopeViews[view](r, source, source.Name)
+				for path, shape := range want {
+					if actual := scopeModelShape(scopeAt(got, path)); actual != shape {
+						t.Errorf("%s.%s = %s, want %s", source.Name, path, actual, shape)
+					}
+				}
 			}
 		})
 	}

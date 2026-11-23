@@ -114,8 +114,11 @@ type typeScope struct {
 	// class of the project.
 	members map[string]bool
 	// classes holds the Kotlin classes, nested ones too, by that same name, for
-	// the supertypes a nested class is inherited through.
-	classes map[string]*ktparser.Class
+	// the supertypes a nested class is inherited through, and javaClasses the
+	// Java ones: a Kotlin class inherits the classes nested in its Java
+	// superclass as well.
+	classes     map[string]*ktparser.Class
+	javaClasses map[string]*javaparser.Class
 	// aliases holds the typealiases by qualified name.
 	aliases map[string][]*ktparser.TypeAlias
 }
@@ -133,6 +136,8 @@ func newTypeScope(classes []ktparser.Class, javaTypes []javaparser.Class) *typeS
 		members: make(map[string]bool),
 		classes: make(map[string]*ktparser.Class, len(classes)),
 		aliases: make(map[string][]*ktparser.TypeAlias),
+
+		javaClasses: make(map[string]*javaparser.Class, len(javaTypes)),
 	}
 	for i := range classes {
 		class := &classes[i]
@@ -144,12 +149,14 @@ func newTypeScope(classes []ktparser.Class, javaTypes []javaparser.Class) *typeS
 		}
 		s.top[key] = append(s.top[key], declaration{file: class.FilePath, private: class.IsPrivate})
 	}
-	for _, class := range javaTypes {
+	for i := range javaTypes {
+		class := &javaTypes[i]
 		name := class.Name
 		if class.Outer != "" {
 			name = class.Outer + "." + name
 		}
 		key := qualify(class.Package, name)
+		s.javaClasses[key] = class
 		if class.Outer != "" {
 			s.members[key] = true
 			continue
@@ -224,16 +231,15 @@ func (s *typeScope) memberType(unit *ktparser.Class, name string) bool {
 		if s.members[key+"."+name] {
 			return true
 		}
-		class := s.classes[key]
-		if class == nil {
+		scope, supers, ok := s.supertypesOf(key)
+		if !ok {
 			return false
 		}
-		supers := append([]string{class.SuperClass}, class.Interfaces...)
 		for _, super := range supers {
 			if super == "" {
 				continue
 			}
-			if superKey, ok := s.superKey(class, super); ok && visit(superKey, depth+1) {
+			if superKey, ok := s.superKey(scope, super); ok && visit(superKey, depth+1) {
 				return true
 			}
 		}
@@ -255,30 +261,74 @@ func (s *typeScope) memberType(unit *ktparser.Class, name string) bool {
 	return false
 }
 
-// superKey returns the qualified name of the Kotlin class that a supertype
-// written in class names.
-func (s *typeScope) superKey(class *ktparser.Class, raw string) (string, bool) {
+// importRef is an import of a compilation unit, of either language, as the
+// lookup of a supertype reads it.
+type importRef struct {
+	path     string
+	onDemand bool
+	// name is the simple name the import binds; a wildcard binds none.
+	name string
+}
+
+// declaringScope is the scope a class writes its supertypes in: its package, the
+// classes around it and its imports.
+type declaringScope struct {
+	pkg, outer string
+	imports    []importRef
+}
+
+// supertypesOf returns the scope and the supertypes written by the class held
+// under key, of Kotlin or of Java.
+func (s *typeScope) supertypesOf(key string) (declaringScope, []string, bool) {
+	if class := s.classes[key]; class != nil {
+		scope := declaringScope{pkg: class.Package, outer: class.Outer}
+		for _, imp := range class.Imports {
+			scope.imports = append(scope.imports, importRef{path: imp.Path, onDemand: imp.OnDemand, name: imp.Name()})
+		}
+		return scope, append([]string{class.SuperClass}, class.Interfaces...), true
+	}
+	if class := s.javaClasses[key]; class != nil {
+		scope := declaringScope{pkg: class.Package, outer: class.Outer}
+		for _, imp := range class.Imports {
+			if imp.Static {
+				continue
+			}
+			scope.imports = append(scope.imports, importRef{path: imp.Path, onDemand: imp.OnDemand, name: lastSegment(imp.Path)})
+		}
+		return scope, append([]string{class.SuperClass}, class.Interfaces...), true
+	}
+	return declaringScope{}, nil, false
+}
+
+// holds reports whether a class of the project stands under key, in either
+// language.
+func (s *typeScope) holds(key string) bool {
+	return s.classes[key] != nil || s.javaClasses[key] != nil
+}
+
+// superKey returns the qualified name of the class of the project that a
+// supertype written in scope names.
+func (s *typeScope) superKey(scope declaringScope, raw string) (string, bool) {
 	name, _ := splitGenericType(raw)
 	if name == "" {
 		return "", false
 	}
 	known := func(key string) (string, bool) {
-		_, ok := s.classes[key]
-		return key, ok
+		return key, s.holds(key)
 	}
 	if strings.Contains(name, ".") {
-		if key, ok := known(qualify(class.Package, name)); ok {
+		if key, ok := known(qualify(scope.pkg, name)); ok {
 			return key, true
 		}
 		return known(name)
 	}
-	for _, imp := range class.Imports {
-		if !imp.OnDemand && imp.Name() == name {
-			return known(imp.Path)
+	for _, imp := range scope.imports {
+		if !imp.onDemand && imp.name == name {
+			return known(imp.path)
 		}
 	}
-	for outer := class.Outer; outer != ""; {
-		if key, ok := known(qualify(class.Package, outer+"."+name)); ok {
+	for outer := scope.outer; outer != ""; {
+		if key, ok := known(qualify(scope.pkg, outer+"."+name)); ok {
 			return key, true
 		}
 		i := strings.LastIndex(outer, ".")
@@ -287,12 +337,12 @@ func (s *typeScope) superKey(class *ktparser.Class, raw string) (string, bool) {
 		}
 		outer = outer[:i]
 	}
-	if key, ok := known(qualify(class.Package, name)); ok {
+	if key, ok := known(qualify(scope.pkg, name)); ok {
 		return key, true
 	}
-	for _, imp := range class.Imports {
-		if imp.OnDemand {
-			if key, ok := known(imp.Path + "." + name); ok {
+	for _, imp := range scope.imports {
+		if imp.onDemand {
+			if key, ok := known(imp.path + "." + name); ok {
 				return key, true
 			}
 		}
