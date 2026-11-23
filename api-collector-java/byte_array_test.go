@@ -3,6 +3,7 @@ package javacollector
 import (
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	collector "github.com/tangcent/apilot/api-collector"
@@ -144,4 +145,170 @@ func TestByteArrayRequestParametersAreListedAsDeclared(t *testing.T) {
 	if !reflect.DeepEqual(gotBound, byteArrayBindingExpectation) {
 		t.Errorf("bound parameters:\n got  %v\n want %v", gotBound, byteArrayBindingExpectation)
 	}
+}
+
+// byteArrayGenericExpectation is, per endpoint of testdata/byte-array, the kind
+// of the fields at a path of the request body and of the response. A path
+// follows field names, `[]` for the elements of an array and `*` for the value
+// of a map. The type argument that reaches each of them is a byte array, spaced
+// or annotated as legal Java allows, handed on through one or two generic
+// classes, a superclass or the handler's own base class: where it is a byte[]
+// the field is the Base64 string, and where it is `Byte[]` an array of numbers.
+//
+// The JAX-RS resource and the Feign client of the same directory take and
+// return the same types, so their endpoints read the same table. The Kotlin
+// collector asserts the same table for the same declarations written in Kotlin
+// (api-collector-kotlin/byte_array_test.go), without those two: keep the two in
+// sync.
+var byteArrayOuterKinds = map[string]string{
+	"wrapped.data":         "string",
+	"wrapped.items":        "array<string>",
+	"wrapped.grid":         "array<string>",
+	"wrapped.byName":       "map<string,string>",
+	"wrappedItems.[].data": "string",
+	"direct":               "string",
+}
+
+var byteArraySubKinds = map[string]string{
+	"payload":        "string",
+	"wrapped.data":   "string",
+	"wrapped.items":  "array<string>",
+	"wrapped.grid":   "array<string>",
+	"wrapped.byName": "map<string,string>",
+}
+
+var byteArrayGenericExpectation = map[string]map[string]string{
+	"/byte-arrays/outer":       byteArrayOuterKinds,
+	"/byte-arrays/jaxrs/outer": byteArrayOuterKinds,
+	"/byte-arrays/feign/outer": byteArrayOuterKinds,
+	"/byte-arrays/sub":         byteArraySubKinds,
+	"/byte-arrays/jaxrs/sub":   byteArraySubKinds,
+	"/byte-arrays/outer-boxed": {
+		"wrapped.data":         "array<int>",
+		"wrapped.items":        "array<array<int>>",
+		"wrapped.grid":         "array<array<int>>",
+		"wrapped.byName":       "map<string,array<int>>",
+		"wrappedItems.[].data": "array<int>",
+		"direct":               "array<int>",
+	},
+	"/byte-arrays/outer-chunks": {
+		"wrapped.data":   "array<string>",
+		"wrapped.items":  "array<array<string>>",
+		"wrapped.grid":   "array<array<string>>",
+		"wrapped.byName": "map<string,array<string>>",
+		"direct":         "array<string>",
+	},
+	"/byte-arrays/outer-list": {
+		"wrapped.data":  "array<string>",
+		"wrapped.items": "array<array<string>>",
+		"direct":        "array<string>",
+	},
+	"/byte-arrays/outer-wildcard": {
+		"wrapped.data":  "string",
+		"wrapped.items": "array<string>",
+		"direct":        "string",
+	},
+	"/byte-arrays/sub-boxed": {
+		"payload":       "array<int>",
+		"wrapped.data":  "array<int>",
+		"wrapped.items": "array<array<int>>",
+	},
+	"/byte-arrays/open-sub": {
+		"payload":       "string",
+		"wrapped.data":  "string",
+		"wrapped.items": "array<string>",
+	},
+	"/byte-arrays/by-name": {
+		"*.data":   "string",
+		"*.items":  "array<string>",
+		"*.byName": "map<string,string>",
+	},
+}
+
+func TestByteArraysThroughGenericClasses(t *testing.T) {
+	c, byPath := collectByteArrays(t)
+
+	for path, want := range byteArrayGenericExpectation {
+		endpoint := byPath[path]
+		if endpoint == nil || endpoint.RequestBody == nil || endpoint.Response == nil {
+			t.Errorf("%s = %+v, want a request body and a response", path, endpoint)
+			continue
+		}
+		for what, body := range map[string]*model.ObjectModel{
+			"request body": endpoint.RequestBody.Body,
+			"response":     endpoint.Response.Body,
+		} {
+			for fieldPath, kind := range want {
+				if got := arrayFieldKind(byteArrayModelAt(body, fieldPath)); got != kind {
+					t.Errorf("%s %s %s = %s, want %s", path, what, fieldPath, got, kind)
+				}
+			}
+		}
+	}
+
+	// A handler that inherits `echo(T body)` from `Base<T>`, extending
+	// `Base<byte [ ]>`, takes and returns the byte array as a string.
+	echo := byPath["/byte-arrays/typed/echo"]
+	if echo == nil || echo.RequestBody == nil || echo.Response == nil {
+		t.Fatalf("echo endpoint = %+v, want a request body and a response", echo)
+	}
+	if got := arrayFieldKind(echo.RequestBody.Body); got != "string" {
+		t.Errorf("echo request body = %s, want string", got)
+	}
+	if got := arrayFieldKind(byteArrayModelAt(echo.Response.Body, "data")); got != "string" {
+		t.Errorf("echo response data = %s, want string", got)
+	}
+
+	if unresolved := c.Unresolved(); len(unresolved) != 0 {
+		t.Errorf("unresolved = %v, want none", unresolved)
+	}
+}
+
+// The binding view reads the same bindings and keeps a byte array an array,
+// down to the field two generic classes deep.
+func TestByteArraysThroughGenericClassesWhenBound(t *testing.T) {
+	c, byPath := collectByteArrays(t)
+
+	bound := byPath["/byte-arrays/bound-outer"]
+	if bound == nil {
+		t.Fatalf("bound-outer endpoint missing: %v", byPath)
+	}
+	got := map[string]string{}
+	for _, p := range bound.Parameters {
+		got[p.Name] = p.TypeName
+	}
+	want := map[string]string{
+		"wrapped.data":   "array",
+		"wrapped.items":  "array",
+		"wrapped.grid":   "array",
+		"wrapped.byName": "map",
+		"wrappedItems":   "array",
+		"direct":         "array",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("bound-outer parameters:\n got  %v\n want %v", got, want)
+	}
+
+	if unresolved := c.Unresolved(); len(unresolved) != 0 {
+		t.Errorf("unresolved = %v, want none", unresolved)
+	}
+}
+
+// byteArrayModelAt follows a path of field names, `[]` and `*` from a model.
+func byteArrayModelAt(m *model.ObjectModel, path string) *model.ObjectModel {
+	for _, step := range strings.Split(path, ".") {
+		switch {
+		case m == nil:
+			return nil
+		case step == "[]":
+			m = m.Items
+		case step == "*":
+			m = m.ValueModel
+		case m.Fields[step] == nil:
+			return nil
+		default:
+			m = m.Fields[step].Model
+		}
+	}
+	return m
 }
