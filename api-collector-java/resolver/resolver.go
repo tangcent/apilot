@@ -162,7 +162,7 @@ type DependencyResolver interface {
 // Classes are indexed under their package-qualified name, so two declarations
 // sharing a simple name in different packages coexist instead of overwriting
 // each other. Which one a simple name denotes is decided per compilation unit
-// by resolveSimpleName, following JLS 6.5.5.1 and 6.4.1.
+// by resolveName, following JLS 6.5.5.1 and 6.4.1.
 type TypeResolver struct {
 	classRegistry      map[string]parser.Class // qualified name -> declaration
 	bySimpleName       map[string][]string     // simple name -> qualified names, sorted
@@ -256,9 +256,47 @@ func appendKey(keys []string, key string) []string {
 }
 
 // Class returns the declaration a type name denotes as seen from source.
-// It applies the same precedence as Resolve, without expanding the fields.
+// It applies the same precedence as Resolve, without expanding the fields, and
+// reads the class from the dependencies when the resolver does not hold it yet:
+// the answer is the same whether or not something read the class before.
 func (r *TypeResolver) Class(source parser.Class, name string) (parser.Class, bool) {
-	return r.lookup(r.resolveSimpleName(source, name))
+	return r.classNamed(r.resolveName(source, name))
+}
+
+// classNamed returns the class registered under key if the current view sees it.
+// A class that only a dependency declares is read from it, once (see
+// readQualified).
+func (r *TypeResolver) classNamed(key string) (parser.Class, bool) {
+	if c, found := r.classRegistry[key]; found {
+		return c, r.sees(c)
+	}
+	if class := r.readQualified(key); class != nil {
+		return *class, r.sees(*class)
+	}
+	return parser.Class{}, false
+}
+
+// readQualified reads the class a qualified name denotes from the dependencies
+// and registers it, or returns nil. A name that no scope qualified is not asked
+// for: the index knows a class by its qualified name only. Nor is a class of the
+// JDK or of the Kotlin standard library, which are reached as scalars and
+// collections and as supertypes (Serializable) far more often than as a class
+// worth reading.
+func (r *TypeResolver) readQualified(key string) *parser.Class {
+	if r.dependencyResolver == nil || !strings.Contains(key, ".") || isPlatformName(key) {
+		return nil
+	}
+	return r.readDependency(key)
+}
+
+// readDependency asks the dependencies for the class name denotes and registers
+// it under that name, or returns nil. Each name is asked for once.
+func (r *TypeResolver) readDependency(name string) *parser.Class {
+	class := r.dependencyClass(name)
+	if class != nil {
+		r.registerDependency(*class, name)
+	}
+	return class
 }
 
 // sees reports whether the current view takes a declaration into account.
@@ -350,32 +388,10 @@ func (r *TypeResolver) seeOptions(source parser.Class, rawDoc string) []model.Fi
 // seeEnum returns the enum a `@see` reference names as seen from source. An
 // enum the scanned sources do not declare is read from the project's
 // dependencies: the enums such a reference names usually live in a shared
-// model library.
-//
-// Only a name the source qualifies, by writing it in full or importing it, is
-// looked up there: the index knows a class by its qualified name only. Names
-// of the JDK and the Kotlin standard library are skipped, as they are when
-// type arguments are qualified (see isPlatformName).
-//
-// The class read is not registered. A doc comment does not put a class in
-// scope, and once registered it would answer for its simple name wherever
-// nothing in scope declares that name (see resolveSimpleName), in place of a
-// project class of the same name.
+// model library. The reference goes through the scope like any other name (see
+// Class), in the view that sees enums.
 func (r *TypeResolver) seeEnum(source parser.Class, ref string) (parser.Class, bool) {
-	if enum, ok := r.enumClass(source, ref); ok || r.dependencyResolver == nil {
-		return enum, ok
-	}
-	// The name enumClass looked up, in the view that sees enums.
-	defer r.enterBindingView()()
-	key := r.resolveSimpleName(source, strings.TrimSpace(ref))
-	if _, known := r.classRegistry[key]; known || !strings.Contains(key, ".") || isPlatformName(key) {
-		return parser.Class{}, false
-	}
-	class := r.dependencyClass(key)
-	if class == nil || !class.IsEnum {
-		return parser.Class{}, false
-	}
-	return *class, true
+	return r.enumClass(source, ref)
 }
 
 // dependencyClass returns the class the dependency resolver reads for name,
@@ -401,31 +417,25 @@ func (r *TypeResolver) ResolveForBinding(source parser.Class, rawType string, ty
 	return r.ResolveFrom(source, rawType, typeBindings)
 }
 
-// resolveSimpleName maps a type name as written in source to the registry key
-// it denotes, following JLS 6.5.5.1 and 6.4.1 (see scopedName).
+// resolveName maps a type name as written in source to the registry key it
+// denotes, following JLS 6.5.5.1 and 6.4.1 (see scopedName). It is the one lookup
+// of a name: every path that turns a name into a class goes through it, and
+// through the one cache of what the dependencies answered, so the answer does
+// not depend on which path came first.
 //
 // The result doubles as the name to keep resolving with, so an import of a
 // type whose body is not among the scanned sources still selects the imported
 // type instead of a same-named class that happens to sit elsewhere in the
-// project.
-//
-// Only the classes the resolver already holds answer. resolveName is the same
-// lookup that reads the dependencies as well.
-func (r *TypeResolver) resolveSimpleName(source parser.Class, name string) string {
-	return r.scopedName(source, name, false)
-}
-
-// resolveName is resolveSimpleName that also reads the dependencies. A name
-// that nothing in the scope of source declares among the classes held may still
-// be a class of a library: one the package of source declares, or one that an
-// import-on-demand brings in, as in `import com.example.model.*`. Such a class
-// is asked of the dependencies by its qualified name (see declares).
+// project. A name that nothing in the scope of source declares among the classes
+// held may still be a class of a library: one the package of source declares, or
+// one that an import-on-demand brings in, as in `import com.example.model.*`.
+// Such a class is asked of the dependencies by its qualified name (see declares).
 func (r *TypeResolver) resolveName(source parser.Class, name string) string {
 	return r.scopedName(source, name, true)
 }
 
-// scopedName is the lookup behind resolveSimpleName and resolveName. It walks the
-// scope of source tier by tier, as JLS 6.4.1 orders it, and the first tier that
+// scopedName is the lookup behind resolveName. It walks the scope of source tier
+// by tier, as JLS 6.4.1 orders it, and the first tier that
 // declares the name answers:
 //
 //  1. the compilation unit of source: the classes declared in the same file,
@@ -436,7 +446,8 @@ func (r *TypeResolver) resolveName(source parser.Class, name string) string {
 //
 // Every kind of declaration takes part in a tier at the same place: a class of
 // the scanned sources, a class already read from the dependencies, and a class
-// of the dependencies not read yet, which is asked for when ask is set. What a
+// of the dependencies not read yet, which is asked for when ask is set (and a
+// resolver without dependencies has none to ask). What a
 // name denotes therefore does not depend on where its declaration comes from,
 // nor on what the resolver read before, nor on whether source is a class of the
 // project or one read from a library. The one exception is the split package
@@ -500,7 +511,7 @@ func (r *TypeResolver) inScope(source parser.Class, name string, ask bool) (stri
 		}
 	}
 
-	ask = ask && r.dependencyResolver != nil && r.mayBeDependencyClass(name)
+	ask = ask && r.dependencyResolver != nil && r.mayBeDependencyClass(source, name)
 
 	// 3. Same package.
 	if source.Package != "" {
@@ -606,21 +617,49 @@ func (r *TypeResolver) isRegistered(key string) bool {
 }
 
 // mayBeDependencyClass reports whether an unqualified name could denote a class
-// of the dependencies. A type variable and a name the resolver answers for
-// itself (a scalar, a collection, Object) are not looked up: every lookup is a
-// call to the indexer, and none of these is a class of a library.
-func (r *TypeResolver) mayBeDependencyClass(name string) bool {
-	if name == "" || strings.Contains(name, ".") || r.allTypeParams[name] {
+// of the dependencies, as seen from source. A type variable in scope in source
+// does not, and neither does a name the resolver answers for before it consults
+// any scope (a scalar, a collection, a map): every lookup is a call to the
+// indexer, and a class of a library that carries such a name does not take its
+// place. The names of JDK value types (`Date`, `Period`, `BigDecimal`) and
+// `Object` are not among them: they are answered for after the scope, and a class
+// that an import on demand brings in is what they denote.
+//
+// A type variable is in scope in the class that declares it, not in the project:
+// a class that declares `<Item>` does not make `Item` any less a class
+// elsewhere. The type variables of a method are not recorded, so a name that is
+// spelled like one by convention (a capital letter, perhaps followed by a digit)
+// is not asked for either.
+func (r *TypeResolver) mayBeDependencyClass(source parser.Class, name string) bool {
+	if name == "" || strings.Contains(name, ".") || r.isTypeVariable(source, name) {
 		return false
 	}
 	if _, ok := primitiveTypes[name]; ok || collectionTypes[name] || mapTypes[name] {
 		return false
 	}
-	simple := simpleTypeName(name)
-	if _, ok := jdkScalarTypes[simple]; ok {
-		return false
+	return true
+}
+
+// isTypeVariable reports whether name is a type variable in scope in source: a
+// type parameter of the class, or one that a method of it declares and the parser
+// does not keep, which by convention is a single capital letter and perhaps a
+// digit.
+func (r *TypeResolver) isTypeVariable(source parser.Class, name string) bool {
+	if slices.Contains(source.TypeParameters, name) {
+		return true
 	}
-	return simple != "object"
+	if len(name) == 1 || len(name) == 2 && name[1] >= '0' && name[1] <= '9' {
+		return name[0] >= 'A' && name[0] <= 'Z'
+	}
+	return false
+}
+
+// isJdkValueName reports whether a simple name is one that ResolveFrom answers
+// for from a table of JDK value types once no class is found for it.
+func isJdkValueName(name string) bool {
+	simple := simpleTypeName(name)
+	_, ok := jdkScalarTypes[simple]
+	return ok || simple == "object"
 }
 
 // lastSegment returns the last dot-separated segment of a name.
@@ -698,7 +737,7 @@ func resolvedTypeToClass(rt *collector.ResolvedType) *parser.Class {
 
 // Resolve resolves rawType without a compilation-unit context: a simple name
 // falls back to a declaration carrying it, which is all a source parsed
-// without scope information can offer (see resolveSimpleName).
+// without scope information can offer (see resolveName).
 func (r *TypeResolver) Resolve(rawType string, typeBindings map[string]string) *model.ObjectModel {
 	return r.ResolveFrom(parser.Class{}, rawType, typeBindings)
 }
@@ -807,11 +846,11 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	// A name that is still unqualified here found no class in the packages
 	// resolveName tried; it is asked as written for a resolver that knows
 	// classes by their simple names, unless it is one that cannot be a class of
-	// a library (see mayBeDependencyClass). A class of the JDK is no dependency of
+	// a library (see mayBeDependencyClass) or is the name of a JDK value type,
+	// which the table below answers for. A class of the JDK is no dependency of
 	// the project: asking for it would only cost a call to the indexer.
-	if r.dependencyResolver != nil && (strings.Contains(name, ".") || r.mayBeDependencyClass(name)) && !r.isRegisteredEnum(name) && !strings.HasPrefix(name, "java.") {
-		if depClass := r.dependencyClass(name); depClass != nil {
-			r.registerDependency(*depClass, name)
+	if r.dependencyResolver != nil && (strings.Contains(name, ".") || r.mayBeDependencyClass(source, name) && !isJdkValueName(name)) && !r.isRegisteredEnum(name) && !strings.HasPrefix(name, "java.") {
+		if depClass := r.readDependency(name); depClass != nil {
 			if r.sees(*depClass) {
 				return r.resolveClass(*depClass, name, typeArgs)
 			}
@@ -1326,7 +1365,7 @@ func (r *TypeResolver) qualifyTypeArgs(source parser.Class, bindings map[string]
 // A type variable of source that bindings binds is replaced by its binding,
 // which is already spelled this way; one that nothing binds stays as written.
 // Every other class name goes through the same scope order as a direct
-// reference (see resolveSimpleName) and is written in full when it needs to be
+// reference (see resolveName) and is written in full when it needs to be
 // (see writeInFull), in nested type arguments, array dimensions and wildcard
 // bounds alike.
 //
@@ -1377,7 +1416,7 @@ func (r *TypeResolver) qualifyTypeName(source parser.Class, bindings map[string]
 	return base + suffix
 }
 
-// writeInFull reports whether the name that resolveSimpleName gave key must be
+// writeInFull reports whether the name that resolveName gave key must be
 // written as key to keep its meaning.
 //
 // A class the current view sees is that class wherever it is read, so it is.
@@ -1417,9 +1456,11 @@ func scopeFreeName(name string) (string, bool) {
 }
 
 // isPlatformName reports whether a qualified name belongs to the JDK or the
-// Kotlin standard library.
+// Kotlin standard library. The javax packages are not all the JDK's: javax.money
+// and javax.inject, among others, are libraries, and a class of one is a
+// dependency like any other.
 func isPlatformName(name string) bool {
-	for _, prefix := range []string{"java.", "javax.", "kotlin."} {
+	for _, prefix := range []string{"java.", "kotlin."} {
 		if strings.HasPrefix(name, prefix) {
 			return true
 		}
@@ -1501,7 +1542,7 @@ func (r *TypeResolver) findImplementation(iface parser.Class, key string) (parse
 			continue
 		}
 		for _, ifaceName := range class.Interfaces {
-			if r.resolveSimpleName(class, ifaceName) == key || ifaceName == iface.Name {
+			if r.resolveName(class, ifaceName) == key || ifaceName == iface.Name {
 				return class, candidate, true
 			}
 		}
