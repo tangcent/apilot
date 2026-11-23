@@ -72,7 +72,7 @@ func (p *Parser) extractController(class *ktparser.Class) *Controller {
 		return nil
 	}
 	basePath := extractBasePath(class.Annotations)
-	bindings := p.buildTypeBindings(class)
+	bindings := p.buildTypeBindings(class, nil)
 
 	var endpoints []Endpoint
 	for i := range class.Methods {
@@ -95,7 +95,12 @@ func (p *Parser) extractController(class *ktparser.Class) *Controller {
 	}
 }
 
-func (p *Parser) buildTypeBindings(class *ktparser.Class) map[string]string {
+// buildTypeBindings binds the type parameters of class's superclass to the
+// arguments of its extends clause. bindings binds the type parameters of class
+// itself, for an argument that mentions them. Each argument is spelled so that
+// the superclass, which resolves it in its own scope, reads the type class
+// named (see Resolver.SuperClassBindings).
+func (p *Parser) buildTypeBindings(class *ktparser.Class, bindings map[string]string) map[string]string {
 	if class.SuperClass == "" {
 		return nil
 	}
@@ -103,18 +108,17 @@ func (p *Parser) buildTypeBindings(class *ktparser.Class) map[string]string {
 	if !found {
 		return nil
 	}
-	bindings := map[string]string{}
-	for i, typeParam := range superClass.TypeParameters {
-		if i < len(class.SuperClassTypeArgs) {
-			bindings[typeParam] = class.SuperClassTypeArgs[i]
-		}
-	}
-	if len(bindings) == 0 {
+	superBindings := p.typeResolver.SuperClassBindings(class, superClass, bindings)
+	if len(superBindings) == 0 {
 		return nil
 	}
-	return bindings
+	return superBindings
 }
 
+// extractInheritedEndpoints extracts the endpoints class inherits. bindings
+// binds the type parameters of class's superclass; the endpoints of that
+// superclass resolve their types with it, and its own superclass is bound in
+// turn from what the extends clause of the superclass says.
 func (p *Parser) extractInheritedEndpoints(class *ktparser.Class, basePath string, bindings map[string]string, visited map[string]bool) []Endpoint {
 	if class.SuperClass == "" {
 		return nil
@@ -129,9 +133,6 @@ func (p *Parser) extractInheritedEndpoints(class *ktparser.Class, basePath strin
 	if !found {
 		return nil
 	}
-
-	parentBindings := p.buildTypeBindings(superClass)
-	mergedBindings := mergeBindings(parentBindings, bindings)
 
 	parentBasePath := extractBasePath(superClass.Annotations)
 	effectiveBasePath := basePath
@@ -148,26 +149,13 @@ func (p *Parser) extractInheritedEndpoints(class *ktparser.Class, basePath strin
 		if isMethodOverridden(method.Name, class) {
 			continue
 		}
-		if endpoint := p.extractEndpoint(method, effectiveBasePath, class, superClass, mergedBindings); endpoint != nil {
+		if endpoint := p.extractEndpoint(method, effectiveBasePath, class, superClass, bindings); endpoint != nil {
 			inherited = append(inherited, *endpoint)
 		}
 	}
-	inherited = append(inherited, p.extractInheritedEndpoints(superClass, effectiveBasePath, mergedBindings, visited)...)
+	grandparentBindings := p.buildTypeBindings(superClass, bindings)
+	inherited = append(inherited, p.extractInheritedEndpoints(superClass, effectiveBasePath, grandparentBindings, visited)...)
 	return inherited
-}
-
-func mergeBindings(parent, child map[string]string) map[string]string {
-	if len(parent) == 0 && len(child) == 0 {
-		return nil
-	}
-	merged := map[string]string{}
-	for key, value := range parent {
-		merged[key] = value
-	}
-	for key, value := range child {
-		merged[key] = value
-	}
-	return merged
 }
 
 func isEndpointMethod(method *ktparser.Function) bool {

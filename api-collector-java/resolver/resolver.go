@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
@@ -571,45 +572,8 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 			return r.ResolveFrom(source, typeArgs[0], typeBindings)
 		}
 
-		if typeBindings != nil {
-			resolvedArgs := make([]string, len(typeArgs))
-			for i, arg := range typeArgs {
-				// A generic argument keeps its own arguments: the model of
-				// PageData<H> is named just PageData, so spelling the argument
-				// by the model's name would lose what H is bound to.
-				if strings.Contains(arg, "<") {
-					resolvedArgs[i] = bindTypeParams(arg, typeBindings)
-					continue
-				}
-				resolvedModel := r.ResolveFrom(source, arg, typeBindings)
-				if resolvedModel != nil {
-					resolvedArgs[i] = resolvedModel.TypeName
-					if resolvedModel.Kind == model.KindSingle && resolvedModel.TypeName != arg {
-						resolvedArgs[i] = arg
-					}
-					// A composite model (array/map/object) keeps its structure in
-					// the model, not in TypeName: `array` and `map` are synthetic
-					// placeholders. Binding a type parameter to one of them feeds
-					// a placeholder back into Resolve and destroys the argument.
-					//
-					// easy-yapi avoids this structurally: its generic context maps
-					// a parameter to a ResolvedType, so `List<Foo>` is bound as the
-					// structure ClassType(List, [Foo]) and never re-parsed as a
-					// name. This resolver carries type arguments as strings, so the
-					// equivalent rule is to keep the source spelling for composites
-					// and only substitute names: `T[]` under T=Order is `Order[]`,
-					// since the argument is resolved later inside the generic class,
-					// where T is no longer bound.
-					if resolvedModel.IsArray() || resolvedModel.IsMap() {
-						resolvedArgs[i] = bindTypeParams(arg, typeBindings)
-					}
-				} else {
-					resolvedArgs[i] = arg
-				}
-			}
-			typeArgs = resolvedArgs
-		}
-
+		// A collection or a map holds its arguments' models, which resolve where
+		// they are written.
 		if collectionTypes[baseName] {
 			if len(typeArgs) > 0 {
 				itemModel := r.ResolveFrom(source, typeArgs[0], typeBindings)
@@ -628,13 +592,16 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 			}
 			return model.MapModel(keyModel, valueModel)
 		}
+
+		// The arguments of a generic class are bound to its type parameters and
+		// resolved again inside it, in its scope, where none of source's names
+		// apply. They therefore travel as spellings that mean the same wherever
+		// they are read (see qualifyTypeName), and are never rebuilt from the
+		// models they resolve to, which name an object by its simple name only.
+		typeArgs = r.qualifyTypeArgs(source, typeBindings, typeArgs)
 	}
 
 	name := r.resolveSimpleName(source, baseName)
-
-	if r.dependencyResolver != nil {
-		typeArgs = r.qualifyTypeArgs(source, typeArgs)
-	}
 
 	if class, found := r.lookup(name); found {
 		return r.resolveClass(class, name, typeArgs, typeBindings)
@@ -1031,15 +998,7 @@ func (r *TypeResolver) resolveInheritedFields(class parser.Class, localBindings 
 		return
 	}
 
-	superBindings := make(map[string]string)
-	for i, tp := range superClass.TypeParameters {
-		if i < len(class.SuperClassTypeArgs) {
-			// The argument is resolved later inside the superclass, where the
-			// subclass's parameters are not bound: `Base<T[]>` under T=Order
-			// binds the superclass's parameter to `Order[]`.
-			superBindings[tp] = bindTypeParams(class.SuperClassTypeArgs[i], localBindings)
-		}
-	}
+	superBindings := r.SuperClassBindings(class, superClass, localBindings)
 	for k, v := range localBindings {
 		if _, exists := superBindings[k]; !exists {
 			superBindings[k] = v
@@ -1073,50 +1032,123 @@ func (r *TypeResolver) resolveInheritedFields(class parser.Class, localBindings 
 	r.resolveInheritedFields(superClass, superBindings, obj)
 }
 
-// qualifyTypeArgs spells each type argument by the qualified name it denotes
-// in source. An argument is bound to a type parameter and resolved later,
-// inside the generic class, where source's imports no longer apply: for
-// `Wrapper<PageData<Order>>` written in a controller, PageData would be looked
-// up among Wrapper's imports, and a dependency class could only be asked for by
-// its simple name. Only a declaration of the scanned sources or a single-type
-// import qualifies a name; JDK and Kotlin types stay as written, since the
-// resolver knows collections and scalars by their simple names.
-func (r *TypeResolver) qualifyTypeArgs(source parser.Class, args []string) []string {
+// SuperClassBindings binds each type parameter of super to the argument that
+// sub's extends clause gives it, spelled so that it means the same in the scope
+// of super: `Sub extends Base<Item>` binds Base's parameter to the class Item
+// names where Sub is written, not to whichever class Item names beside Base.
+// bindings binds the type parameters of sub itself, for an argument that
+// mentions them: `Sub<S> extends Base<S[]>` under S=Order binds `Order[]`.
+func (r *TypeResolver) SuperClassBindings(sub, super parser.Class, bindings map[string]string) map[string]string {
+	out := make(map[string]string, len(super.TypeParameters))
+	for i, tp := range super.TypeParameters {
+		if i < len(sub.SuperClassTypeArgs) {
+			out[tp] = r.qualifyTypeName(sub, bindings, sub.SuperClassTypeArgs[i])
+		}
+	}
+	return out
+}
+
+// qualifyTypeArgs spells each type argument so that it means the same wherever
+// it is read (see qualifyTypeName).
+func (r *TypeResolver) qualifyTypeArgs(source parser.Class, bindings map[string]string, args []string) []string {
 	if len(args) == 0 {
 		return args
 	}
 	out := make([]string, len(args))
 	for i, arg := range args {
-		out[i] = r.qualifyTypeName(source, strings.TrimSpace(arg))
+		out[i] = r.qualifyTypeName(source, bindings, arg)
 	}
 	return out
 }
 
-func (r *TypeResolver) qualifyTypeName(source parser.Class, typeName string) string {
+// qualifyTypeName spells a type as written in source so that it denotes the same
+// type wherever it is resolved. An argument is bound to a type parameter and
+// resolved later inside the generic class, whose imports and package are not
+// source's: a name that a class of that package shares would otherwise stand in
+// for the one source meant, and a dependency class could only be asked for by a
+// simple name.
+//
+// A type variable of source that bindings binds is replaced by its binding,
+// which is already spelled this way; one that nothing binds stays as written.
+// Every other class name goes through the same scope order as a direct
+// reference (see resolveSimpleName) and is written in full when it needs to be
+// (see writeInFull), in nested type arguments, array dimensions and wildcard
+// bounds alike.
+//
+// Left as written are what ResolveFrom answers for by the spelling alone,
+// before it consults a scope (scalars, collections, maps), the types of the
+// JDK and the Kotlin standard library, which the resolver knows by their simple
+// names, a name that is already qualified, and a name nothing in scope
+// declares.
+func (r *TypeResolver) qualifyTypeName(source parser.Class, bindings map[string]string, typeName string) string {
+	typeName = strings.TrimSpace(typeName)
 	if typeName == "" {
 		return typeName
 	}
 	if isWildcard(typeName) {
-		if bound, ok := wildcardUpperBound(typeName); ok {
-			return "? extends " + r.qualifyTypeName(source, bound)
+		rest := strings.TrimSpace(strings.TrimPrefix(typeName, "?"))
+		for _, bound := range []string{"extends ", "super "} {
+			if strings.HasPrefix(rest, bound) {
+				return "? " + bound + r.qualifyTypeName(source, bindings, strings.TrimPrefix(rest, bound))
+			}
 		}
 		return typeName
 	}
 	suffix := ""
 	for strings.HasSuffix(typeName, "[]") {
-		typeName = strings.TrimSuffix(typeName, "[]")
+		typeName = strings.TrimSpace(strings.TrimSuffix(typeName, "[]"))
 		suffix += "[]"
 	}
 	base, args := parseGenericType(typeName)
-	if !strings.Contains(base, ".") {
-		if key := r.resolveSimpleName(source, base); key != base && !isPlatformName(key) {
+	if len(args) == 0 {
+		if bound, ok := bindings[base]; ok {
+			return bound + suffix
+		}
+		if slices.Contains(source.TypeParameters, base) {
+			return base + suffix
+		}
+	}
+	if !strings.Contains(base, ".") && !answeredByName(base) {
+		if key := r.resolveSimpleName(source, base); key != base && !isPlatformName(key) && r.writeInFull(key, base) {
 			base = key
 		}
 	}
 	if len(args) > 0 {
-		base += "<" + strings.Join(r.qualifyTypeArgs(source, args), ", ") + ">"
+		base += "<" + strings.Join(r.qualifyTypeArgs(source, bindings, args), ", ") + ">"
 	}
 	return base + suffix
+}
+
+// writeInFull reports whether the name that resolveSimpleName gave key must be
+// written as key to keep its meaning.
+//
+// A class the current view sees is that class wherever it is read, so it is.
+// For anything else no body is read: an import of a class that a dependency
+// declares or that nothing declares, and an enum, which the JSON view does not
+// see. Such a name is shown as written, and reported when it cannot be
+// resolved, so it is left alone unless that would let it mean another class: a
+// dependency resolver asks for a class by its qualified name only, and another
+// class that shares the simple name could take its place in another scope.
+func (r *TypeResolver) writeInFull(key, name string) bool {
+	if r.isRegistered(key) || r.dependencyResolver != nil {
+		return true
+	}
+	for _, other := range r.bySimpleName[name] {
+		if other != key {
+			return true
+		}
+	}
+	return false
+}
+
+// answeredByName reports whether ResolveFrom answers for a name from its
+// spelling alone, before it consults any scope: a scalar, a collection or a
+// map. A class of the project that shares such a name does not take its place.
+func answeredByName(name string) bool {
+	if _, ok := primitiveTypes[name]; ok {
+		return true
+	}
+	return collectionTypes[name] || mapTypes[name]
 }
 
 // isPlatformName reports whether a qualified name belongs to the JDK or the
@@ -1180,40 +1212,6 @@ func splitTypeArgs(s string) []string {
 	return args
 }
 
-// bindTypeParams spells a type with the type parameters it mentions replaced
-// by their bindings: under H=Order, `PageData<H>` is `PageData<Order>` and
-// `Map<String, H[]>` is `Map<String, Order[]>`. Only names are substituted;
-// the structure of the spelling is kept.
-func bindTypeParams(typeName string, bindings map[string]string) string {
-	typeName = strings.TrimSpace(typeName)
-	if isWildcard(typeName) {
-		rest := strings.TrimSpace(strings.TrimPrefix(typeName, "?"))
-		for _, bound := range []string{"extends ", "super "} {
-			if strings.HasPrefix(rest, bound) {
-				return "? " + bound + bindTypeParams(strings.TrimPrefix(rest, bound), bindings)
-			}
-		}
-		return typeName
-	}
-	suffix := ""
-	for strings.HasSuffix(typeName, "[]") {
-		typeName = strings.TrimSpace(strings.TrimSuffix(typeName, "[]"))
-		suffix += "[]"
-	}
-	base, args := parseGenericType(typeName)
-	if len(args) == 0 {
-		if bound, ok := bindings[base]; ok {
-			return bound + suffix
-		}
-		return base + suffix
-	}
-	bound := make([]string, len(args))
-	for i, arg := range args {
-		bound[i] = bindTypeParams(arg, bindings)
-	}
-	return base + "<" + strings.Join(bound, ", ") + ">" + suffix
-}
-
 func isMapSubclass(class parser.Class) bool {
 	if class.SuperClass == "" {
 		return false
@@ -1265,7 +1263,7 @@ func (r *TypeResolver) resolveMapSubclass(class parser.Class, typeArgs []string,
 	if len(class.TypeParameters) > 0 {
 		firstTypeParam := class.TypeParameters[0]
 		if resolved, ok := localBindings[firstTypeParam]; ok {
-			valueModel = r.ResolveFrom(class, resolved, localBindings)
+			valueModel = r.ResolveFrom(class, resolved, nil)
 		} else {
 			valueModel = r.ResolveFrom(class, firstTypeParam, localBindings)
 		}
