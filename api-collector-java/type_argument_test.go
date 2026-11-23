@@ -58,6 +58,14 @@ var typeArgumentExpectation = map[string]map[string]string{
 	"/type-args/box-date":      {"response.data": "string", "response.array": "array<string>"},
 	"/type-args/box-date-list": {"response.data": "array<string>"},
 	"/type-args/box-string":    {"response.data": "string", "response.byKey": "map<string,string>"},
+	// A generic class as the argument of itself is expanded; a type that
+	// refers to itself ends at a reference.
+	"/type-args/box-box": {
+		"response.data.data": "object{name}", "response.data.list": "array<object{name}>",
+		"response.list": "array<object{array,bounded,byKey,data,list}>",
+	},
+	"/type-args/outer-outer": {"response.wrapped.data.wrapped.data": "object{name}"},
+	"/type-args/node":        {"response.value": "object{name}", "response.next": "Node"},
 	// The classes the library's Holder writes in full are the ones it names,
 	// and the one it writes simply is its own.
 	"/type-args/holder": {

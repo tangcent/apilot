@@ -167,7 +167,9 @@ type TypeResolver struct {
 	bySimpleName       map[string][]string     // simple name -> qualified names, sorted
 	byFile             map[string][]string     // compilation unit -> qualified names declared there
 	allTypeParams      map[string]bool
-	resolving          map[string]bool
+	// resolving holds, for each class being expanded, the types it is being
+	// expanded as, the innermost last (see isBeingExpanded).
+	resolving          map[string][]string
 	dependencyResolver DependencyResolver
 	unresolved         *collector.UnresolvedSet
 	// bindingView is set while ResolveForBinding expands a model attribute.
@@ -192,7 +194,7 @@ func NewTypeResolver(classes []parser.Class) *TypeResolver {
 		bySimpleName:  make(map[string][]string),
 		byFile:        make(map[string][]string),
 		allTypeParams: make(map[string]bool),
-		resolving:     make(map[string]bool),
+		resolving:     make(map[string][]string),
 	}
 	for _, c := range classes {
 		r.register(c, qualifiedName(c))
@@ -740,7 +742,8 @@ func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []s
 	if class.IsEnum {
 		return model.SingleModel(model.JsonTypeString)
 	}
-	if r.resolving[key] {
+	expansion := expansionName(key, typeArgs)
+	if r.isBeingExpanded(key, expansion) {
 		return model.RefModel(class.Name)
 	}
 
@@ -755,8 +758,14 @@ func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []s
 		return r.resolveMapSubclass(class, typeArgs, typeBindings)
 	}
 
-	r.resolving[key] = true
-	defer func() { delete(r.resolving, key) }()
+	r.resolving[key] = append(r.resolving[key], expansion)
+	defer func() {
+		if active := r.resolving[key]; len(active) > 1 {
+			r.resolving[key] = active[:len(active)-1]
+		} else {
+			delete(r.resolving, key)
+		}
+	}()
 
 	localBindings := make(map[string]string)
 	for i, tp := range class.TypeParameters {
@@ -802,6 +811,44 @@ func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []s
 	r.resolveInheritedFields(class, localBindings, obj)
 
 	return obj
+}
+
+// expansionName spells the type that a class is expanded as: the class with the
+// arguments it is bound to, which are spelled in full (see qualifyTypeName).
+func expansionName(key string, typeArgs []string) string {
+	if len(typeArgs) == 0 {
+		return key
+	}
+	return key + "<" + strings.Join(typeArgs, ", ") + ">"
+}
+
+// isBeingExpanded reports whether expanding the type named expansion, of the
+// class registered under key, would come back to a type that is being expanded
+// already. A type that refers to itself would otherwise never end.
+//
+// A class may be expanded again while it is being expanded when the type it is
+// expanded as is not the same as one under way and no larger than any of them:
+// `Box<Item>` inside `Box<Box<Item>>`, or `Wrapper<Wrapper<Item>>` reached from
+// `Outer<Item>` inside `Wrapper<Outer<Item>>`. The same type again (`Node<T>`
+// inside `Node<Item>`), and a type whose arguments grow (`Node<List<T>>` inside
+// `Node<T>`), are not expanded. Along any path the types a class is expanded as
+// get no larger and never repeat, and there are finitely many of each size, so
+// every class is expanded a finite number of times however the classes refer to
+// one another.
+func (r *TypeResolver) isBeingExpanded(key, expansion string) bool {
+	size := typeSize(expansion)
+	for _, active := range r.resolving[key] {
+		if expansion == active || size > typeSize(active) {
+			return true
+		}
+	}
+	return false
+}
+
+// typeSize measures a spelled type by what a type can grow by: each argument,
+// array dimension and wildcard adds one.
+func typeSize(typeName string) int {
+	return 1 + strings.Count(typeName, "<") + strings.Count(typeName, ",") + strings.Count(typeName, "[]") + strings.Count(typeName, "?")
 }
 
 // fieldRequired decides whether a field is required from its annotations.

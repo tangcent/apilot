@@ -5,6 +5,7 @@ import com.example.typearg.lib.BaseController
 import com.example.typearg.lib.Box
 import com.example.typearg.lib.Holder
 import com.example.typearg.lib.MidController
+import com.example.typearg.lib.Node
 import com.example.typearg.lib.Outer
 import java.time.Period
 import java.util.Date
@@ -47,6 +48,15 @@ class TypeArgumentController {
 
     @GetMapping("/box-string")
     fun boxString(): Box<String> = TODO()
+
+    @GetMapping("/box-box")
+    fun boxBox(): Box<Box<Item>> = TODO()
+
+    @GetMapping("/outer-outer")
+    fun outerOuter(): Outer<Outer<Item>> = TODO()
+
+    @GetMapping("/node")
+    fun node(): Node<Item> = TODO()
 
     @GetMapping("/holder")
     fun holder(): Holder = TODO()

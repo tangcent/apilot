@@ -26,6 +26,12 @@ class Box<T>(
     val byKey: Map<String, T>?,
 )
 
+/** A type that refers to itself. */
+class Node<T>(
+    val value: T?,
+    val next: Node<T>?,
+)
+
 class Wrapper<U>(
     val data: U?,
 )
