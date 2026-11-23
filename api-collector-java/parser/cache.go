@@ -28,7 +28,8 @@ import (
 // read instead of skipped, and `String tags[]` is the type `String[]`.
 // Version 9: every declarator of a field declaration is a field, and a varargs
 // parameter is read as an array.
-const cacheSchemaVersion = "9"
+// Version 10: Class carries Outer, the classes it is nested in.
+const cacheSchemaVersion = "10"
 
 // Cache provides file-level caching based on content hash.
 type Cache struct {

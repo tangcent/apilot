@@ -169,7 +169,7 @@ func TestResolve_ImportsOnDemandAreTriedInTheOrderTheyAreWritten(t *testing.T) {
 	}
 }
 
-func TestResolve_NoLookupForAPlatformPackageAClassImportOrAKnownName(t *testing.T) {
+func TestResolve_NoLookupForAPlatformPackageAStaticImportOrAKnownName(t *testing.T) {
 	library := &libraryClasses{classes: map[string]parser.Class{}}
 	// Read from a library, so its own package may be asked.
 	source := parser.Class{
@@ -191,15 +191,16 @@ func TestResolve_NoLookupForAPlatformPackageAClassImportOrAKnownName(t *testing.
 	// The names of JDK value types are answered for after the scope, so a class
 	// of the package of the source or of one that an import on demand brings in is
 	// what they denote: asked there, though not in a platform package, and neither
-	// as written. The platform packages, the class import and the static import
-	// give no candidate; javax.money is a library like any other.
+	// as written. The platform packages and the static import give no candidate;
+	// javax.money is a library like any other. The class import names the types
+	// nested in Outer, so its candidate is a nested one.
 	for _, name := range []string{"Object", "Date", "UUID"} {
 		r.ResolveFrom(source, name, nil)
 	}
 	want := []string{
-		"com.example.app.Object", "javax.money.Object",
-		"com.example.app.Date", "javax.money.Date",
-		"com.example.app.UUID", "javax.money.UUID",
+		"com.example.app.Object", "javax.money.Object", "com.example.lib.Outer.Object",
+		"com.example.app.Date", "javax.money.Date", "com.example.lib.Outer.Date",
+		"com.example.app.UUID", "javax.money.UUID", "com.example.lib.Outer.UUID",
 	}
 	if !reflect.DeepEqual(library.asked, want) {
 		t.Errorf("asked = %v, want %v", library.asked, want)
@@ -208,7 +209,7 @@ func TestResolve_NoLookupForAPlatformPackageAClassImportOrAKnownName(t *testing.
 	// by their simple names.
 	library.asked = nil
 	r.ResolveFrom(source, "Unknown", nil)
-	if want := []string{"com.example.app.Unknown", "javax.money.Unknown", "Unknown"}; !reflect.DeepEqual(library.asked, want) {
+	if want := []string{"com.example.app.Unknown", "javax.money.Unknown", "com.example.lib.Outer.Unknown", "Unknown"}; !reflect.DeepEqual(library.asked, want) {
 		t.Errorf("asked = %v, want %v", library.asked, want)
 	}
 }

@@ -56,8 +56,8 @@ func TestConstantValue(t *testing.T) {
 		{Name: "Tenants", Package: "com.example.shared", Fields: []parser.Field{constant("TENANT", `"X-Tenant"`)}},
 		{Name: "Regions", Package: "com.example.shared", Fields: []parser.Field{constant("REGION", `"X-Region"`)}},
 		{Name: "Outer", Package: "com.example.app"},
-		// A nested class is registered under its package and simple name.
-		{Name: "Inner", Package: "com.example.app", Fields: []parser.Field{constant("NESTED", `"X-Nested"`)}},
+		// A nested class is registered under the classes it is nested in.
+		{Name: "Inner", Package: "com.example.app", Outer: "Outer", Fields: []parser.Field{constant("NESTED", `"X-Nested"`)}},
 	}
 	library := &constantLibrary{classes: map[string]parser.Class{
 		"com.example.lib.LibHeaders": {Name: "LibHeaders", Package: "com.example.lib", Fields: []parser.Field{constant("CHANNEL", `"X-Channel"`)}},

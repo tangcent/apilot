@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	collector "github.com/tangcent/apilot/api-collector"
 	javadoc "github.com/tangcent/apilot/api-collector-java/doc"
@@ -118,6 +119,18 @@ func (p projectEnumsFirst) ResolveClass(className string) *javaparser.Class {
 		return nil
 	}
 	return p.dr.ResolveClass(className)
+}
+
+// Siblings passes on what the dependency resolver kept of the source it read a
+// class from, for a resolver that keeps it: the classes nested in a class are
+// read with it.
+func (p projectEnumsFirst) Siblings(className string) []javaparser.Class {
+	if reader, ok := p.dr.(interface {
+		Siblings(className string) []javaparser.Class
+	}); ok {
+		return reader.Siblings(className)
+	}
+	return nil
 }
 
 // ResolveForBinding expands a type the way Spring's data binder sees it when
@@ -294,17 +307,20 @@ func qualify(pkg, name string) string {
 }
 
 // FindClass resolves a Kotlin class in the same precedence order the Java
-// resolver uses for simple names.
+// resolver uses for simple names. A class nested in another is found from
+// inside the class that declares it, or through it as Outer.Inner.
 func (r *Resolver) FindClass(source *ktparser.Class, name string) (*ktparser.Class, bool) {
 	if name == "" {
 		return nil, false
 	}
 	if strings.Contains(name, ".") {
-		c, ok := r.byKey[name]
-		return c, ok
+		return r.findQualified(source, name)
+	}
+	if c, ok := r.findMember(source, name); ok {
+		return c, true
 	}
 	for _, key := range r.byFile[source.FilePath] {
-		if c := r.byKey[key]; c != nil && c.Name == name {
+		if c := r.byKey[key]; c != nil && c.Name == name && c.Outer == "" {
 			return c, true
 		}
 	}
@@ -327,14 +343,61 @@ func (r *Resolver) FindClass(source *ktparser.Class, name string) (*ktparser.Cla
 			}
 		}
 	}
-	if keys := r.bySimple[name]; len(keys) == 1 {
-		return r.byKey[keys[0]], true
+	// A name nothing in scope declares falls back to a class that carries it, a
+	// top-level one before any other. A class nested in another is named from
+	// inside it or through it, so one of them answers only when it is the only
+	// candidate: with two there is nothing to say which is meant.
+	keys := append([]string(nil), r.bySimple[name]...)
+	sort.Strings(keys)
+	var nested *ktparser.Class
+	candidates := 0
+	for _, key := range keys {
+		c := r.byKey[key]
+		if c == nil {
+			continue
+		}
+		if c.Outer == "" {
+			return c, true
+		}
+		nested, candidates = c, candidates+1
 	}
-	if keys := r.bySimple[name]; len(keys) > 1 {
-		sort.Strings(keys)
-		return r.byKey[keys[0]], true
+	return nested, candidates == 1
+}
+
+// findMember returns the class named name that is nested in source or in a
+// class around it, the innermost first.
+func (r *Resolver) findMember(source *ktparser.Class, name string) (*ktparser.Class, bool) {
+	for c := source; c != nil; {
+		if member, ok := r.byKey[qualifiedName(*c)+"."+name]; ok {
+			return member, true
+		}
+		if c.Outer == "" {
+			return nil, false
+		}
+		c = r.byKey[qualify(c.Package, c.Outer)]
 	}
 	return nil, false
+}
+
+// findQualified resolves a dotted name: a class named through the classes it is
+// nested in (Outer.Inner), or by its qualified name. The first part names a
+// class of its own or it does not; in the second case the whole name is the key
+// of a class.
+func (r *Resolver) findQualified(source *ktparser.Class, name string) (*ktparser.Class, bool) {
+	head, rest, _ := strings.Cut(name, ".")
+	if first, _ := utf8.DecodeRuneInString(head); head != "" && !unicode.IsLower(first) {
+		if class, ok := r.FindClass(source, head); ok {
+			key := qualifiedName(*class)
+			for _, segment := range strings.Split(rest, ".") {
+				key += "." + segment
+			}
+			if c, ok := r.byKey[key]; ok {
+				return c, true
+			}
+		}
+	}
+	c, ok := r.byKey[name]
+	return c, ok
 }
 
 func (r *Resolver) applyEnums(m *model.ObjectModel) {
@@ -408,6 +471,7 @@ func toJavaEnum(class ktparser.Class) javaparser.Class {
 	out := javaparser.Class{
 		Name:          class.Name,
 		Package:       class.Package,
+		Outer:         class.Outer,
 		FilePath:      class.FilePath,
 		Imports:       toJavaImports(class.Imports),
 		IsEnum:        true,
@@ -435,7 +499,7 @@ func toJavaImports(imports []ktparser.Import) []javaparser.Import {
 // Spring can set, under its Kotlin name.
 func toBindingClass(class ktparser.Class) javaparser.Class {
 	out := toJavaClass(ktparser.Class{
-		Name: class.Name, Package: class.Package, FilePath: class.FilePath, KDoc: class.KDoc,
+		Name: class.Name, Package: class.Package, Outer: class.Outer, FilePath: class.FilePath, KDoc: class.KDoc,
 		Annotations: class.Annotations, TypeParameters: class.TypeParameters,
 		SuperClass: class.SuperClass, SuperClassTypeArgs: class.SuperClassTypeArgs,
 		Interfaces: class.Interfaces, Imports: class.Imports,
@@ -464,6 +528,7 @@ func toJavaClass(class ktparser.Class) javaparser.Class {
 	out := javaparser.Class{
 		Name:           class.Name,
 		Package:        class.Package,
+		Outer:          class.Outer,
 		FilePath:       class.FilePath,
 		JavaDoc:        javadoc.CleanJavaDoc(class.KDoc),
 		Annotations:    toJavaAnnotations(class.Annotations),
@@ -753,11 +818,14 @@ func annotationValue(annotations []ktparser.Annotation, name string) string {
 	return ""
 }
 
+// qualifiedName returns the key of a declaration: its package, the classes it is
+// nested in and its name, as the Java resolver registers it.
 func qualifiedName(class ktparser.Class) string {
-	if class.Package == "" {
-		return class.Name
+	name := class.Name
+	if class.Outer != "" {
+		name = class.Outer + "." + name
 	}
-	return class.Package + "." + class.Name
+	return qualify(class.Package, name)
 }
 
 func lastSegment(name string) string {
