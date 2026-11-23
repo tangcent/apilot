@@ -144,7 +144,9 @@ func extractImports(root *tree_sitter.Node, source []byte) []Import {
 		text = strings.TrimSpace(strings.TrimPrefix(text, "import"))
 		// A semicolon may end the import, as it ends a Java one.
 		text = strings.TrimSpace(strings.TrimSuffix(text, ";"))
+		alias := ""
 		if idx := strings.Index(text, " as "); idx >= 0 {
+			alias = strings.Trim(strings.TrimSpace(text[idx+len(" as "):]), "`")
 			text = strings.TrimSpace(text[:idx])
 		}
 		if text == "" {
@@ -154,7 +156,7 @@ func extractImports(root *tree_sitter.Node, source []byte) []Import {
 			imports = append(imports, Import{Path: strings.TrimSuffix(text, ".*"), OnDemand: true})
 			continue
 		}
-		imports = append(imports, Import{Path: text})
+		imports = append(imports, Import{Path: text, Alias: alias})
 	}
 	return imports
 }

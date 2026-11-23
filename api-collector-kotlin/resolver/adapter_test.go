@@ -15,61 +15,68 @@ func testAnnotation(name string, params map[string]string) ktparser.Annotation {
 	return ktparser.Annotation{Name: name, Params: params}
 }
 
-func TestNormalizeModelType(t *testing.T) {
+func TestNormalizeType(t *testing.T) {
 	tests := []struct {
 		name string
 		raw  string
 		want string
 	}{
-		{name: "int", raw: "Int", want: "Integer"},
-		{name: "byte", raw: "Byte", want: "Integer"},
-		{name: "short", raw: "Short", want: "Integer"},
-		{name: "unsigned int", raw: "UInt", want: "Integer"},
-		{name: "unsigned short", raw: "UShort", want: "Integer"},
-		{name: "long", raw: "Long", want: "Long"},
-		{name: "unsigned long", raw: "ULong", want: "Long"},
-		{name: "float", raw: "Float", want: "Float"},
-		{name: "double", raw: "Double", want: "Double"},
-		{name: "boolean", raw: "Boolean", want: "Boolean"},
-		{name: "char becomes a string", raw: "Char", want: "String"},
-		{name: "string", raw: "String", want: "String"},
-		{name: "any becomes object", raw: "Any", want: "Object"},
-		{name: "unit becomes void", raw: "Unit", want: "Void"},
-		{name: "nothing becomes void", raw: "Nothing", want: "Void"},
-		{name: "number", raw: "Number", want: "Double"},
-		{name: "already java", raw: "int", want: "Integer"},
-		{name: "qualified int", raw: "kotlin.Int", want: "Integer"},
+		{name: "int", raw: "Int", want: "java.lang.Integer"},
+		{name: "byte", raw: "Byte", want: "java.lang.Integer"},
+		{name: "short", raw: "Short", want: "java.lang.Integer"},
+		{name: "unsigned int", raw: "UInt", want: "java.lang.Integer"},
+		{name: "unsigned short", raw: "UShort", want: "java.lang.Integer"},
+		{name: "long", raw: "Long", want: "java.lang.Long"},
+		{name: "unsigned long", raw: "ULong", want: "java.lang.Long"},
+		{name: "float", raw: "Float", want: "java.lang.Float"},
+		{name: "double", raw: "Double", want: "java.lang.Double"},
+		{name: "boolean", raw: "Boolean", want: "java.lang.Boolean"},
+		{name: "char becomes a string", raw: "Char", want: "java.lang.String"},
+		{name: "string", raw: "String", want: "java.lang.String"},
+		{name: "any becomes object", raw: "Any", want: "java.lang.Object"},
+		{name: "unit becomes void", raw: "Unit", want: "java.lang.Void"},
+		{name: "nothing becomes void", raw: "Nothing", want: "java.lang.Void"},
+		{name: "number", raw: "Number", want: "java.lang.Number"},
+		{name: "java.lang integer", raw: "Integer", want: "java.lang.Integer"},
+		{name: "java.lang object", raw: "Object", want: "java.lang.Object"},
+		{name: "java.lang character", raw: "Character", want: "java.lang.Character"},
+		{name: "qualified int", raw: "kotlin.Int", want: "java.lang.Integer"},
+		{name: "qualified java.lang", raw: "java.lang.Integer", want: "java.lang.Integer"},
 		{name: "star projection", raw: "*", want: "?"},
 		{name: "empty", raw: "  ", want: ""},
 		{name: "simple class unchanged", raw: "User", want: "User"},
 		{name: "enum unchanged", raw: "Status", want: "Status"},
-		{name: "list", raw: "List<Int>", want: "List<Integer>"},
-		{name: "qualified list", raw: "kotlin.collections.List<kotlin.String>", want: "List<String>"},
-		{name: "mutable list", raw: "MutableList<User>", want: "List<User>"},
-		{name: "iterable", raw: "Iterable<User>", want: "List<User>"},
-		{name: "sequence", raw: "Sequence<Int>", want: "List<Integer>"},
-		{name: "array", raw: "Array<String>", want: "List<String>"},
-		{name: "set", raw: "Set<Long>", want: "Set<Long>"},
-		{name: "hash set", raw: "HashSet<Int>", want: "HashSet<Integer>"},
-		{name: "mutable set", raw: "MutableSet<Int>", want: "Set<Integer>"},
-		{name: "map", raw: "Map<String, Int>", want: "Map<String,Integer>"},
-		{name: "hash map nests", raw: "HashMap<String, List<Int>>", want: "Map<String,List<Integer>>"},
-		{name: "mutable map", raw: "MutableMap<String, Boolean>", want: "Map<String,Boolean>"},
-		{name: "sorted map", raw: "SortedMap<String, User>", want: "Map<String,User>"},
-		{name: "int array", raw: "IntArray", want: "List<Integer>"},
-		{name: "long array", raw: "LongArray", want: "List<Long>"},
-		{name: "boolean array", raw: "BooleanArray", want: "List<Boolean>"},
-		{name: "char array", raw: "CharArray", want: "List<String>"},
-		{name: "double array", raw: "DoubleArray", want: "List<Double>"},
-		{name: "nested null stripped upstream already", raw: "List<Any>", want: "List<Object>"},
-		{name: "star inside a list", raw: "List<*>", want: "List<?>"},
+		{name: "qualified class unchanged", raw: "com.example.Number", want: "com.example.Number"},
+		{name: "list", raw: "List<Int>", want: "java.util.List<java.lang.Integer>"},
+		{name: "qualified list", raw: "kotlin.collections.List<kotlin.String>", want: "java.util.List<java.lang.String>"},
+		{name: "java list", raw: "java.util.List<String>", want: "java.util.List<java.lang.String>"},
+		{name: "mutable list", raw: "MutableList<User>", want: "java.util.List<User>"},
+		{name: "iterable", raw: "Iterable<User>", want: "java.util.List<User>"},
+		{name: "sequence", raw: "Sequence<Int>", want: "java.util.List<java.lang.Integer>"},
+		{name: "array", raw: "Array<String>", want: "java.util.List<java.lang.String>"},
+		{name: "set", raw: "Set<Long>", want: "java.util.Set<java.lang.Long>"},
+		{name: "hash set", raw: "HashSet<Int>", want: "java.util.HashSet<java.lang.Integer>"},
+		{name: "mutable set", raw: "MutableSet<Int>", want: "java.util.Set<java.lang.Integer>"},
+		{name: "map", raw: "Map<String, Int>", want: "java.util.Map<java.lang.String,java.lang.Integer>"},
+		{name: "hash map nests", raw: "HashMap<String, List<Int>>", want: "java.util.Map<java.lang.String,java.util.List<java.lang.Integer>>"},
+		{name: "mutable map", raw: "MutableMap<String, Boolean>", want: "java.util.Map<java.lang.String,java.lang.Boolean>"},
+		{name: "int array", raw: "IntArray", want: "java.util.List<java.lang.Integer>"},
+		{name: "byte array", raw: "ByteArray", want: "java.util.List<java.lang.Integer>"},
+		{name: "long array", raw: "LongArray", want: "java.util.List<java.lang.Long>"},
+		{name: "boolean array", raw: "BooleanArray", want: "java.util.List<java.lang.Boolean>"},
+		{name: "char array", raw: "CharArray", want: "java.util.List<java.lang.String>"},
+		{name: "double array", raw: "DoubleArray", want: "java.util.List<java.lang.Double>"},
+		{name: "nested null stripped upstream already", raw: "List<Any>", want: "java.util.List<java.lang.Object>"},
+		{name: "star inside a list", raw: "List<*>", want: "java.util.List<?>"},
 		{name: "response entity", raw: "ResponseEntity<Result<User>>", want: "ResponseEntity<Result<User>>"},
+		{name: "a name no scope binds is as written", raw: "LinkedList<Int>", want: "LinkedList<java.lang.Integer>"},
 	}
 
+	r := New(nil)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := NormalizeModelType(tt.raw); got != tt.want {
-				t.Errorf("NormalizeModelType(%q) = %q, want %q", tt.raw, got, tt.want)
+			if got := r.NormalizeType(&ktparser.Class{Name: "Source", Package: "com.example.app"}, tt.raw); got != tt.want {
+				t.Errorf("NormalizeType(%q) = %q, want %q", tt.raw, got, tt.want)
 			}
 		})
 	}
@@ -305,7 +312,7 @@ func TestToJavaClassFieldMapping(t *testing.T) {
 		Methods: []ktparser.Function{{Name: "getDisplayName"}},
 	}
 
-	got := toJavaClass(class)
+	got := newTypeScope([]ktparser.Class{class}, nil).toJavaClass(class)
 	if len(got.Methods) != 0 {
 		t.Errorf("compiler-generated methods leaked: %#v", got.Methods)
 	}

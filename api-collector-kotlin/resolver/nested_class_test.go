@@ -129,7 +129,7 @@ func TestToJavaClasses_CarryTheClassesADeclarationIsNestedIn(t *testing.T) {
 		t.Errorf("keys = %v, want %v", got, want)
 	}
 	for _, c := range []ktparser.Class{classes[1], classes[2]} {
-		if javaClass := toBindingClass(c); javaClass.Outer != "Outer" {
+		if javaClass := (*typeScope)(nil).toBindingClass(c); javaClass.Outer != "Outer" {
 			t.Errorf("toBindingClass(%s).Outer = %q, want Outer", c.Name, javaClass.Outer)
 		}
 	}

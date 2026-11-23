@@ -2,7 +2,10 @@
 // exposes the declarations a Spring MVC collector needs.
 package parser
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Annotation is a Kotlin annotation as written on a declaration.
 type Annotation struct {
@@ -16,10 +19,25 @@ type Annotation struct {
 }
 
 // Import is a Kotlin import. Path is the fully qualified name; OnDemand is true
-// for wildcard imports.
+// for wildcard imports. Alias is the name a renaming import (`import a.B as C`)
+// gives the class: only that name denotes it in the file.
 type Import struct {
 	Path     string
 	OnDemand bool
+	Alias    string
+}
+
+// Name returns the simple name the import binds in the file: the alias of a
+// renaming import, the last segment of the path otherwise. A wildcard import
+// binds no name of its own.
+func (i Import) Name() string {
+	if i.Alias != "" {
+		return i.Alias
+	}
+	if idx := strings.LastIndex(i.Path, "."); idx >= 0 {
+		return i.Path[idx+1:]
+	}
+	return i.Path
 }
 
 // Parameter is a function/constructor parameter.

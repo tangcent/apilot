@@ -114,6 +114,13 @@ func ElementType(typeName string) string {
 	return base
 }
 
+// IsFileType reports whether a handler parameter of the given type is uploaded
+// as parts of a multipart request: a MultipartFile, or a collection or array of
+// them.
+func IsFileType(typeName string) bool {
+	return simpleName(ElementType(typeName)) == "MultipartFile"
+}
+
 // ImplicitNoneWarning says why a handler parameter is not exported: it
 // carries an annotation no known Spring binding covers, which in practice is
 // a custom argument resolver's (@CurrentUser) and fills the argument from

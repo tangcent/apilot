@@ -37,7 +37,7 @@ func TestConstValsAreStaticFieldsWithTheirInitializer(t *testing.T) {
 		"BRACED":   "",
 		"LIMIT":    "",
 	}
-	for _, field := range toJavaClass(class).Fields {
+	for _, field := range newTypeScope([]ktparser.Class{class}, nil).toJavaClass(class).Fields {
 		if field.Name == "code" {
 			if field.IsStatic || field.Constant != "" {
 				t.Errorf("code = %+v, want an instance field", field)

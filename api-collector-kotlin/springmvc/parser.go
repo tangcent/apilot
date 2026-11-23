@@ -260,7 +260,7 @@ func (p *Parser) extractEndpoint(method *ktparser.Function, basePath string, cla
 		endpoint.RequestBodySchema = p.typeResolver.ResolveFrom(source, requestBodyType, bindings)
 	}
 
-	if isVoidReturn(method.ReturnType) {
+	if p.isVoidReturn(source, method.ReturnType) {
 		if !method.HasDeclaredReturn && method.ReturnType == "" {
 			p.warnings = append(p.warnings, class.FilePath+": endpoint "+class.Name+"."+method.Name+
 				" uses an expression body without a declared return type; its response schema is not exported")
@@ -272,12 +272,13 @@ func (p *Parser) extractEndpoint(method *ktparser.Function, basePath string, cla
 	return endpoint
 }
 
-func isVoidReturn(returnType string) bool {
-	switch strings.TrimSpace(returnType) {
-	case "", "Unit", "kotlin.Unit", "Void", "java.lang.Void", "Nothing", "kotlin.Nothing":
-		return true
-	}
-	return false
+// isVoidReturn reports whether a function's declared return type, as written in
+// source, says it returns nothing: Unit, Nothing or java.lang.Void, which the
+// scope of the name decides. A class of the project that is called Unit, an
+// enum for one, is a class like any other.
+func (p *Parser) isVoidReturn(source *ktparser.Class, returnType string) bool {
+	returnType = strings.TrimSpace(returnType)
+	return returnType == "" || p.typeResolver.NormalizeType(source, returnType) == "java.lang.Void"
 }
 
 func extractMethodInfo(annotations []ktparser.Annotation) (HTTPMethod, string, []string, []string) {
@@ -370,6 +371,7 @@ func (p *Parser) extractParameter(param *ktparser.Parameter, methodDocParams map
 	ep := &EndpointParameter{
 		Name:        param.Name,
 		Type:        param.Type,
+		File:        javaspringmvc.IsFileType(p.typeResolver.NormalizeType(source, param.Type)),
 		ParamType:   paramType,
 		Required:    true,
 		Description: doc.Description,
@@ -434,7 +436,7 @@ func (p *Parser) implicitParameters(param *ktparser.Parameter, in, methodName st
 	for _, ann := range param.Annotations {
 		names = append(names, ann.Name)
 	}
-	typeName := resolver.NormalizeModelType(param.Type)
+	typeName := p.typeResolver.NormalizeType(source, param.Type)
 	kind, blocker := javaspringmvc.ClassifyImplicit(typeName, names, p.typeResolver.IsEnum)
 	if blocker != "" {
 		p.warnings = append(p.warnings, javaspringmvc.ImplicitNoneWarning(source.Name, methodName, param.Name, blocker))
@@ -462,6 +464,7 @@ func (p *Parser) implicitParameters(param *ktparser.Parameter, in, methodName st
 		return []EndpointParameter{{
 			Name:        param.Name,
 			Type:        param.Type,
+			File:        true,
 			ParamType:   "form",
 			Required:    javaspringmvc.ImplicitRequired(names),
 			Description: doc.Description,

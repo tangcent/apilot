@@ -48,8 +48,12 @@ type Endpoint struct {
 
 // EndpointParameter is one bound request parameter.
 type EndpointParameter struct {
-	Name         string
-	Type         string
+	Name string
+	Type string
+	// File marks a parameter that is uploaded as file parts: a MultipartFile, or
+	// a collection or array of them. The parser decides it where the type is
+	// written, so the scope of the name is known.
+	File         bool
 	ParamType    string
 	Description  string
 	Required     bool

@@ -29,6 +29,8 @@ type Resolver struct {
 	tr         *javaresolver.TypeResolver
 	unresolved *collector.UnresolvedSet
 	javaTypes  []javaparser.Class
+	// scope binds the names the Kotlin files write (see typeScope).
+	scope *typeScope
 	// fileConstants maps the qualified name of a top-level const val
 	// (com.example.VERSION) to the file facade that holds it.
 	fileConstants map[string]*ktparser.Class
@@ -57,6 +59,7 @@ func NewWithJavaTypes(classes []ktparser.Class, javaTypes []javaparser.Class) *R
 		enumValues: make(map[string][]string),
 		unresolved: collector.NewUnresolvedSet(),
 		javaTypes:  javaTypes,
+		scope:      newTypeScope(classes, javaTypes),
 
 		fileConstants: make(map[string]*ktparser.Class),
 	}
@@ -84,7 +87,7 @@ func NewWithJavaTypes(classes []ktparser.Class, javaTypes []javaparser.Class) *R
 			javaClasses = append(javaClasses, toJavaEnum(*class))
 			continue
 		}
-		javaClasses = append(javaClasses, toJavaClass(*class))
+		javaClasses = append(javaClasses, r.scope.toJavaClass(*class))
 	}
 	javaClasses = append(javaClasses, javaTypes...)
 
@@ -147,7 +150,7 @@ func (r *Resolver) ResolveForBinding(source *ktparser.Class, rawType string, bin
 			if class.IsEnum {
 				javaClasses = append(javaClasses, toJavaEnum(class))
 			} else {
-				javaClasses = append(javaClasses, toBindingClass(class))
+				javaClasses = append(javaClasses, r.scope.toBindingClass(class))
 			}
 		}
 		javaClasses = append(javaClasses, r.javaTypes...)
@@ -160,7 +163,7 @@ func (r *Resolver) ResolveForBinding(source *ktparser.Class, rawType string, bin
 			r.bindingTR.SetRequiredFields(r.requiredFields)
 		}
 	}
-	resolved := r.bindingTR.ResolveForBinding(toJavaClass(*source), NormalizeModelType(rawType), bindingsOrNil(bindings))
+	resolved := r.bindingTR.ResolveForBinding(r.scope.toJavaClass(*source), r.scope.normalize(source, rawType), bindingsOrNil(bindings))
 	r.applyEnums(resolved)
 	return resolved
 }
@@ -169,13 +172,23 @@ func (r *Resolver) ResolveForBinding(source *ktparser.Class, rawType string, bin
 // nothing to bind. They come from SuperClassBindings, which spells each
 // argument in the Java names the shared resolver knows and writes it in full
 // where it must (`java.lang.String`, `com.example.Item`), so they are passed on
-// as they are: spelled again by NormalizeModelType, a qualified name would be
-// reduced to its last segment.
+// as they are: spelled again, a qualified name would be taken for another one.
 func bindingsOrNil(bindings map[string]string) map[string]string {
 	if len(bindings) == 0 {
 		return nil
 	}
 	return bindings
+}
+
+// NormalizeType spells a type written in source the way the shared resolver
+// reads it (see typeScope): what Kotlin binds to its standard library is the
+// class of the JDK it stands for, written in full, and every other name is as
+// written.
+func (r *Resolver) NormalizeType(source *ktparser.Class, rawType string) string {
+	if r == nil {
+		return (*typeScope)(nil).normalize(source, rawType)
+	}
+	return r.scope.normalize(source, rawType)
 }
 
 // SuperClassBindings binds each type parameter of super to the argument that
@@ -185,7 +198,7 @@ func bindingsOrNil(bindings map[string]string) map[string]string {
 // bindings binds the type parameters of sub itself, for an argument that
 // mentions them.
 func (r *Resolver) SuperClassBindings(sub, super *ktparser.Class, bindings map[string]string) map[string]string {
-	return r.tr.SuperClassBindings(toJavaClass(*sub), toJavaClass(*super), bindingsOrNil(bindings))
+	return r.tr.SuperClassBindings(r.scope.toJavaClass(*sub), r.scope.toJavaClass(*super), bindingsOrNil(bindings))
 }
 
 // SetRequiredFields selects how resolved fields are marked required: one of
@@ -228,7 +241,7 @@ func (r *Resolver) ResolveFrom(source *ktparser.Class, rawType string, bindings 
 	if rawType == "" {
 		return model.NullModel()
 	}
-	resolved := r.tr.ResolveFrom(toJavaClass(*source), NormalizeModelType(rawType), bindingsOrNil(bindings))
+	resolved := r.tr.ResolveFrom(r.scope.toJavaClass(*source), r.scope.normalize(source, rawType), bindingsOrNil(bindings))
 	r.applyEnums(resolved)
 	return resolved
 }
@@ -258,7 +271,7 @@ func (r *Resolver) constantValue(source *ktparser.Class, ref string, hops int) (
 	if ref == "" || hops > maxConstantHops {
 		return "", false
 	}
-	if value, ok := r.tr.ConstantValue(toJavaClass(*source), ref); ok {
+	if value, ok := r.tr.ConstantValue(r.scope.toJavaClass(*source), ref); ok {
 		return value, true
 	}
 
@@ -266,7 +279,7 @@ func (r *Resolver) constantValue(source *ktparser.Class, ref string, hops int) (
 	if !strings.Contains(ref, ".") {
 		candidates = nil
 		for _, imp := range source.Imports {
-			if !imp.OnDemand && lastSegment(imp.Path) == ref {
+			if !imp.OnDemand && imp.Name() == ref {
 				candidates = append(candidates, imp.Path)
 			}
 		}
@@ -287,13 +300,13 @@ func (r *Resolver) constantValue(source *ktparser.Class, ref string, hops int) (
 			if prop.Name != name {
 				continue
 			}
-			initializer := constantInitializer(prop)
+			initializer := r.scope.constantInitializer(facade, prop)
 			if initializer != "" && !strings.HasPrefix(initializer, `"`) {
 				// The initializer names another constant, as written in the
 				// file that declares this one.
 				return r.constantValue(facade, initializer, hops+1)
 			}
-			return r.tr.ConstantValue(toJavaClass(*facade), name)
+			return r.tr.ConstantValue(r.scope.toJavaClass(*facade), name)
 		}
 	}
 	return "", false
@@ -338,7 +351,7 @@ func (r *Resolver) find(source *ktparser.Class, name string, header bool) (*ktpa
 		}
 	}
 	for _, imp := range source.Imports {
-		if !imp.OnDemand && lastSegment(imp.Path) == name {
+		if !imp.OnDemand && imp.Name() == name {
 			if c, ok := r.byKey[imp.Path]; ok {
 				return c, true
 			}
@@ -470,13 +483,14 @@ func (r *Resolver) enumOptions(name string) []model.FieldOption {
 // endpoint in the same tree can resolve them. An enum keeps its constants for
 // the binding view; the Java resolver's JSON view does not see enums.
 func ToJavaClasses(classes []ktparser.Class) []javaparser.Class {
+	scope := newTypeScope(classes, nil)
 	out := make([]javaparser.Class, 0, len(classes))
 	for _, class := range classes {
 		if class.IsEnum {
 			out = append(out, toJavaEnum(class))
 			continue
 		}
-		out = append(out, toJavaClass(class))
+		out = append(out, scope.toJavaClass(class))
 	}
 	return out
 }
@@ -503,9 +517,16 @@ func toJavaEnum(class ktparser.Class) javaparser.Class {
 	return out
 }
 
+// toJavaImports converts the imports of a file. A renaming import binds a name
+// no compilation unit of the Java model knows, and its uses are written by the
+// class's own name (see typeScope), so it is left out: the class's own simple
+// name is not bound by it.
 func toJavaImports(imports []ktparser.Import) []javaparser.Import {
 	out := make([]javaparser.Import, 0, len(imports))
 	for _, imp := range imports {
+		if imp.Alias != "" {
+			continue
+		}
 		out = append(out, javaparser.Import{Path: imp.Path, OnDemand: imp.OnDemand})
 	}
 	return out
@@ -513,8 +534,8 @@ func toJavaImports(imports []ktparser.Import) []javaparser.Import {
 
 // toBindingClass converts a declaration for the binding view: every property
 // Spring can set, under its Kotlin name.
-func toBindingClass(class ktparser.Class) javaparser.Class {
-	out := toJavaClass(ktparser.Class{
+func (s *typeScope) toBindingClass(class ktparser.Class) javaparser.Class {
+	out := s.toJavaClass(ktparser.Class{
 		Name: class.Name, Package: class.Package, Outer: class.Outer, FilePath: class.FilePath, KDoc: class.KDoc,
 		Annotations: class.Annotations, TypeParameters: class.TypeParameters,
 		SuperClass: class.SuperClass, SuperClassTypeArgs: class.SuperClassTypeArgs,
@@ -527,7 +548,7 @@ func toBindingClass(class ktparser.Class) javaparser.Class {
 		}
 		out.Fields = append(out.Fields, javaparser.Field{
 			Name:        prop.Name,
-			Type:        NormalizeModelType(prop.Type),
+			Type:        s.normalize(&class, prop.Type),
 			Annotations: fieldAnnotations(prop.Annotations),
 			JavaDoc:     javadoc.CleanJavaDoc(prop.KDoc),
 			IsFinal:     !prop.IsMutable,
@@ -537,7 +558,7 @@ func toBindingClass(class ktparser.Class) javaparser.Class {
 	return out
 }
 
-func toJavaClass(class ktparser.Class) javaparser.Class {
+func (s *typeScope) toJavaClass(class ktparser.Class) javaparser.Class {
 	// The Java parser cleans a doc comment when it reads it; the Kotlin parser
 	// keeps the raw "/** ... */" text, so it is cleaned here, where the
 	// declaration enters the shared resolver.
@@ -549,19 +570,17 @@ func toJavaClass(class ktparser.Class) javaparser.Class {
 		JavaDoc:        javadoc.CleanJavaDoc(class.KDoc),
 		Annotations:    toJavaAnnotations(class.Annotations),
 		TypeParameters: append([]string(nil), class.TypeParameters...),
-		SuperClass:     normalizeClassName(class.SuperClass),
+		SuperClass:     s.normalize(&class, class.SuperClass),
 		Interfaces:     make([]string, 0, len(class.Interfaces)),
 		IsInterface:    class.IsInterface || class.IsSealed,
 	}
 	for _, arg := range class.SuperClassTypeArgs {
-		out.SuperClassTypeArgs = append(out.SuperClassTypeArgs, NormalizeModelType(arg))
+		out.SuperClassTypeArgs = append(out.SuperClassTypeArgs, s.normalize(&class, arg))
 	}
 	for _, iface := range class.Interfaces {
-		out.Interfaces = append(out.Interfaces, normalizeClassName(iface))
+		out.Interfaces = append(out.Interfaces, s.normalize(&class, iface))
 	}
-	for _, imp := range class.Imports {
-		out.Imports = append(out.Imports, javaparser.Import{Path: imp.Path, OnDemand: imp.OnDemand})
-	}
+	out.Imports = toJavaImports(class.Imports)
 	for _, prop := range class.Fields {
 		// An @JsonIgnore(false) re-enables the property; only an ignore whose
 		// value is not "false" drops the field, matching the parser's validation.
@@ -573,11 +592,11 @@ func toJavaClass(class ktparser.Class) javaparser.Class {
 			// a constant an annotation can name.
 			out.Fields = append(out.Fields, javaparser.Field{
 				Name:           prop.Name,
-				Type:           NormalizeModelType(prop.Type),
+				Type:           s.normalize(&class, prop.Type),
 				IsStatic:       true,
 				IsFinal:        true,
 				HasInitializer: prop.HasDefault,
-				Constant:       constantInitializer(prop),
+				Constant:       s.constantInitializer(&class, prop),
 			})
 			continue
 		}
@@ -587,7 +606,7 @@ func toJavaClass(class ktparser.Class) javaparser.Class {
 		}
 		out.Fields = append(out.Fields, javaparser.Field{
 			Name:        name,
-			Type:        NormalizeModelType(prop.Type),
+			Type:        s.normalize(&class, prop.Type),
 			Annotations: fieldAnnotations(prop.Annotations),
 			JavaDoc:     javadoc.CleanJavaDoc(prop.KDoc),
 			IsFinal:     !prop.IsMutable,
@@ -598,113 +617,6 @@ func toJavaClass(class ktparser.Class) javaparser.Class {
 	// componentN, copy and toString are compiler-generated. Properties are the
 	// only JSON fields.
 	return out
-}
-
-func normalizeClassName(name string) string {
-	if name == "" {
-		return ""
-	}
-	base, args := splitGenericType(name)
-	if args == nil {
-		return base
-	}
-	for i := range args {
-		args[i] = NormalizeModelType(args[i])
-	}
-	return base + "<" + strings.Join(args, ",") + ">"
-}
-
-// NormalizeModelType maps Kotlin spelling to the Java names the shared resolver
-// understands. Enum names are left untouched so enum options can be attached
-// after resolution.
-func NormalizeModelType(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return ""
-	}
-	if raw == "*" {
-		return "?"
-	}
-	base, args := splitGenericType(raw)
-	switch lastSegment(base) {
-	case "Int", "Byte", "Short", "UByte", "UShort", "UInt":
-		base = "Integer"
-	case "Long", "ULong":
-		base = "Long"
-	case "Float":
-		base = "Float"
-	case "Double":
-		base = "Double"
-	case "Boolean":
-		base = "Boolean"
-	case "Char":
-		base = "String"
-	case "String":
-		base = "String"
-	case "Any":
-		base = "Object"
-	case "Unit", "Nothing":
-		base = "Void"
-	case "Number":
-		base = "Double"
-	case "Integer", "int":
-		base = "Integer"
-	case "Void", "void":
-		base = "Void"
-	case "Object":
-		base = "Object"
-	case "List", "Set", "Collection", "ArrayList", "LinkedList", "HashSet", "LinkedHashSet":
-		base = lastSegment(base)
-	case "Map", "HashMap", "LinkedHashMap", "TreeMap", "SortedMap":
-		base = "Map"
-	case "ResponseEntity", "Mono", "Flux":
-		base = lastSegment(base)
-	case "MutableList", "MutableCollection", "Iterable", "Sequence":
-		base = "List"
-	case "Array":
-		base = "List"
-	case "IntArray", "ByteArray", "ShortArray", "UByteArray", "UShortArray", "UIntArray":
-		base = "List"
-		if args == nil {
-			args = []string{"Integer"}
-		}
-	case "LongArray", "ULongArray":
-		base = "List"
-		if args == nil {
-			args = []string{"Long"}
-		}
-	case "FloatArray":
-		base = "List"
-		if args == nil {
-			args = []string{"Float"}
-		}
-	case "DoubleArray":
-		base = "List"
-		if args == nil {
-			args = []string{"Double"}
-		}
-	case "BooleanArray":
-		base = "List"
-		if args == nil {
-			args = []string{"Boolean"}
-		}
-	case "CharArray":
-		base = "List"
-		if args == nil {
-			args = []string{"String"}
-		}
-	case "MutableSet":
-		base = "Set"
-	case "MutableMap":
-		base = "Map"
-	}
-	if args == nil {
-		return base
-	}
-	for i := range args {
-		args[i] = NormalizeModelType(args[i])
-	}
-	return base + "<" + strings.Join(args, ",") + ">"
 }
 
 func toJavaAnnotations(annotations []ktparser.Annotation) []javaparser.Annotation {
@@ -722,9 +634,9 @@ func toJavaAnnotations(annotations []ktparser.Annotation) []javaparser.Annotatio
 // the Java model keeps a constant's: a string literal, quoted, or the name of
 // another constant. A string template, a raw string spanning lines, and any
 // other expression are left out: their value cannot be read off the source.
-func constantInitializer(prop ktparser.Property) string {
-	switch NormalizeModelType(prop.Type) {
-	case "", "String":
+func (s *typeScope) constantInitializer(unit *ktparser.Class, prop ktparser.Property) string {
+	switch s.normalize(unit, prop.Type) {
+	case "", "java.lang.String":
 	default:
 		return ""
 	}

@@ -297,17 +297,57 @@ func TestPathHelpers(t *testing.T) {
 }
 
 func TestIsVoidReturn(t *testing.T) {
+	source := &ktparser.Class{Name: "Controller", Package: "com.example.app"}
+	p := NewParser(resolver.New(nil))
 	voidReturns := []string{"", "Unit", "kotlin.Unit", "Void", "java.lang.Void", "Nothing", "kotlin.Nothing", " Unit "}
 	for _, typ := range voidReturns {
-		if !isVoidReturn(typ) {
+		if !p.isVoidReturn(source, typ) {
 			t.Errorf("isVoidReturn(%q) = false, want true", typ)
 		}
 	}
 
 	nonVoid := []string{"Result<Void>", "String", "List<Unit>", "Result<Unit>"}
 	for _, typ := range nonVoid {
-		if isVoidReturn(typ) {
+		if p.isVoidReturn(source, typ) {
 			t.Errorf("isVoidReturn(%q) = true, want false", typ)
+		}
+	}
+}
+
+// A class of the project that is called Unit, Void or Nothing is a class, in the
+// package that declares it and where it is imported; elsewhere the name is the
+// type that returns nothing.
+func TestIsVoidReturn_AProjectClassOfThatNameIsNotVoid(t *testing.T) {
+	unit := ktparser.Class{Name: "Unit", Package: "com.example.model", IsEnum: true, EnumValues: []string{"PIECE"}}
+	void := ktparser.Class{Name: "Void", Package: "com.example.model"}
+	p := NewParser(resolver.New([]ktparser.Class{unit, void}))
+
+	same := &ktparser.Class{Name: "Controller", Package: "com.example.model"}
+	imported := &ktparser.Class{
+		Name: "Controller", Package: "com.example.web",
+		Imports: []ktparser.Import{{Path: "com.example.model.Unit"}, {Path: "com.example.model.Void"}},
+	}
+	starred := &ktparser.Class{
+		Name: "Controller", Package: "com.example.web",
+		Imports: []ktparser.Import{{Path: "com.example.model", OnDemand: true}},
+	}
+	other := &ktparser.Class{Name: "Controller", Package: "com.example.web"}
+	for name, source := range map[string]*ktparser.Class{"same package": same, "imported": imported, "star-imported": starred} {
+		for _, typ := range []string{"Unit", "Void"} {
+			if p.isVoidReturn(source, typ) {
+				t.Errorf("%s: isVoidReturn(%q) = true, want false: the project declares it", name, typ)
+			}
+		}
+		// The names of the standard library written in full stay what they are.
+		for _, typ := range []string{"kotlin.Unit", "java.lang.Void"} {
+			if !p.isVoidReturn(source, typ) {
+				t.Errorf("%s: isVoidReturn(%q) = false, want true", name, typ)
+			}
+		}
+	}
+	for _, typ := range []string{"Unit", "Void"} {
+		if !p.isVoidReturn(other, typ) {
+			t.Errorf("isVoidReturn(%q) = false, want true where nothing declares it", typ)
 		}
 	}
 }
@@ -488,8 +528,8 @@ func TestBuildTypeBindings_BindsEachLevelOnItsOwn(t *testing.T) {
 		t.Fatalf("bindings of Mid = %#v, want T=User", midBindings)
 	}
 	baseBindings := p.buildTypeBindings(&mid, midBindings)
-	if baseBindings["T"] != "List<User>" {
-		t.Errorf("bindings of Base = %#v, want T=List<User>", baseBindings)
+	if baseBindings["T"] != "java.util.List<User>" {
+		t.Errorf("bindings of Base = %#v, want T=java.util.List<User>", baseBindings)
 	}
 }
 
