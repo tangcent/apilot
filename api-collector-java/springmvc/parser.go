@@ -106,7 +106,7 @@ func (p *Parser) extractController(class parser.Class, typeResolver *resolver.Ty
 
 	basePath := p.extractBasePath(class.Annotations)
 
-	typeBindings := buildTypeBindings(class, typeResolver)
+	typeBindings := buildTypeBindings(class, nil, typeResolver)
 
 	var endpoints []Endpoint
 	for _, method := range class.Methods {
@@ -127,7 +127,12 @@ func (p *Parser) extractController(class parser.Class, typeResolver *resolver.Ty
 	}
 }
 
-func buildTypeBindings(class parser.Class, typeResolver *resolver.TypeResolver) map[string]string {
+// buildTypeBindings binds the type parameters of class's superclass to the
+// arguments of its extends clause. bindings binds the type parameters of class
+// itself, for an argument that mentions them. Each argument is spelled so that
+// the superclass, which resolves it in its own scope, reads the type class
+// named (see TypeResolver.SuperClassBindings).
+func buildTypeBindings(class parser.Class, bindings map[string]string, typeResolver *resolver.TypeResolver) map[string]string {
 	if class.SuperClass == "" {
 		return nil
 	}
@@ -137,16 +142,13 @@ func buildTypeBindings(class parser.Class, typeResolver *resolver.TypeResolver) 
 		return nil
 	}
 
-	bindings := make(map[string]string)
-	for i, tp := range superClass.TypeParameters {
-		if i < len(class.SuperClassTypeArgs) {
-			bindings[tp] = class.SuperClassTypeArgs[i]
-		}
-	}
-
-	return bindings
+	return typeResolver.SuperClassBindings(class, superClass, bindings)
 }
 
+// extractInheritedEndpoints extracts the endpoints class inherits. typeBindings
+// binds the type parameters of class's superclass; the endpoints of that
+// superclass resolve their types with it, and its own superclass is bound in
+// turn from what the extends clause of the superclass says.
 func (p *Parser) extractInheritedEndpoints(class parser.Class, basePath string, typeResolver *resolver.TypeResolver, typeBindings map[string]string) []Endpoint {
 	if class.SuperClass == "" {
 		return nil
@@ -156,9 +158,6 @@ func (p *Parser) extractInheritedEndpoints(class parser.Class, basePath string, 
 	if !found {
 		return nil
 	}
-
-	parentTypeBindings := buildTypeBindings(superClass, typeResolver)
-	mergedBindings := mergeBindings(parentTypeBindings, typeBindings)
 
 	var inherited []Endpoint
 
@@ -179,26 +178,16 @@ func (p *Parser) extractInheritedEndpoints(class parser.Class, basePath string, 
 
 		// The method is declared in the superclass's compilation unit, so its
 		// parameter and return types resolve in that unit's scope.
-		if endpoint := p.extractEndpoint(method, effectiveBasePath, class, superClass, typeResolver, mergedBindings); endpoint != nil {
+		if endpoint := p.extractEndpoint(method, effectiveBasePath, class, superClass, typeResolver, typeBindings); endpoint != nil {
 			inherited = append(inherited, *endpoint)
 		}
 	}
 
-	grandparentEndpoints := p.extractInheritedEndpoints(superClass, effectiveBasePath, typeResolver, mergedBindings)
+	grandparentBindings := buildTypeBindings(superClass, typeBindings, typeResolver)
+	grandparentEndpoints := p.extractInheritedEndpoints(superClass, effectiveBasePath, typeResolver, grandparentBindings)
 	inherited = append(inherited, grandparentEndpoints...)
 
 	return inherited
-}
-
-func mergeBindings(parent, child map[string]string) map[string]string {
-	merged := make(map[string]string)
-	for k, v := range parent {
-		merged[k] = v
-	}
-	for k, v := range child {
-		merged[k] = v
-	}
-	return merged
 }
 
 func (p *Parser) isEndpointMethod(method parser.Method) bool {

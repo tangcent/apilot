@@ -458,24 +458,38 @@ func TestBuildTypeBindings(t *testing.T) {
 	}
 	p := NewParser(resolver.New([]ktparser.Class{parent, child}))
 
-	bindings := p.buildTypeBindings(&child)
+	bindings := p.buildTypeBindings(&child, nil)
 	if bindings["T"] != "User" {
 		t.Fatalf("bindings = %#v", bindings)
 	}
 
-	if got := p.buildTypeBindings(&parent); got != nil {
+	if got := p.buildTypeBindings(&parent, nil); got != nil {
 		t.Errorf("class without a superclass should have no bindings: %#v", got)
 	}
 }
 
-func TestMergeBindings(t *testing.T) {
-	if got := mergeBindings(nil, nil); got != nil {
-		t.Errorf("empty merge = %#v, want nil", got)
+// Each level binds the parameters of its own superclass and nothing else: a
+// parameter that two levels name alike is bound once for each of them, and an
+// argument that mentions a parameter of its class is spelled with its binding.
+func TestBuildTypeBindings_BindsEachLevelOnItsOwn(t *testing.T) {
+	base := ktparser.Class{Name: "Base", Package: "com.example", TypeParameters: []string{"T"}}
+	mid := ktparser.Class{
+		Name: "Mid", Package: "com.example", TypeParameters: []string{"T"},
+		SuperClass: "Base", SuperClassTypeArgs: []string{"List<T>"},
 	}
+	leaf := ktparser.Class{
+		Name: "Leaf", Package: "com.example",
+		SuperClass: "Mid", SuperClassTypeArgs: []string{"User"},
+	}
+	p := NewParser(resolver.New([]ktparser.Class{base, mid, leaf}))
 
-	merged := mergeBindings(map[string]string{"T": "Parent"}, map[string]string{"T": "Child", "U": "User"})
-	if merged["T"] != "Child" || merged["U"] != "User" {
-		t.Errorf("merged = %#v", merged)
+	midBindings := p.buildTypeBindings(&leaf, nil)
+	if midBindings["T"] != "User" {
+		t.Fatalf("bindings of Mid = %#v, want T=User", midBindings)
+	}
+	baseBindings := p.buildTypeBindings(&mid, midBindings)
+	if baseBindings["T"] != "List<User>" {
+		t.Errorf("bindings of Base = %#v, want T=List<User>", baseBindings)
 	}
 }
 

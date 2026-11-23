@@ -74,7 +74,9 @@ func TestQualifyTypeArgs(t *testing.T) {
 		Imports: []parser.Import{{Path: "com.example.lib.PageData"}, {Path: "java.util.List"}, {Path: "kotlin.collections.Map"}},
 	}
 	r := NewTypeResolver(nil)
-	got := r.qualifyTypeArgs(source, []string{"PageData<Unknown>", "List<PageData>", "Map<String, PageData[]>", "?", "T", "? extends PageData"})
+	// A class of a dependency can only be asked for by its qualified name.
+	r.SetDependencyResolver(&libraryClasses{})
+	got := r.qualifyTypeArgs(source, nil, []string{"PageData<Unknown>", "List<PageData>", "Map<String, PageData[]>", "?", "T", "? extends PageData"})
 	want := []string{
 		"com.example.lib.PageData<Unknown>",
 		"List<com.example.lib.PageData>",
@@ -85,6 +87,120 @@ func TestQualifyTypeArgs(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("qualifyTypeArgs:\n got  %q\n want %q", got, want)
+	}
+}
+
+// A name that no body is read for is written in full only where it needs to
+// be: with a dependency resolver, which asks for a class by its qualified name,
+// or when another class shares the simple name. Otherwise it is shown, and
+// reported when it cannot be resolved, as it is written.
+func TestQualifyTypeName_ANameWithoutABodyIsWrittenInFullWhereItNeedsToBe(t *testing.T) {
+	source := parser.Class{
+		Name: "Holder", Package: "com.example.app",
+		Imports: []parser.Import{{Path: "com.example.lib.Lost"}, {Path: "com.example.lib.Shared"}},
+	}
+	classes := []parser.Class{
+		{Name: "Shared", Package: "com.example.other"},
+		{Name: "Status", Package: "com.example.lib", IsEnum: true, EnumConstants: []string{"OPEN"}},
+	}
+	for name, tc := range map[string]struct {
+		dependencies bool
+		want         map[string]string
+	}{
+		"without a dependency resolver": {false, map[string]string{
+			"Lost":   "Lost",                   // nothing else is called Lost
+			"Shared": "com.example.lib.Shared", // the class of another package is called Shared too
+			"Status": "Status",                 // not imported: nothing in scope names it
+		}},
+		"with a dependency resolver": {true, map[string]string{
+			"Lost":   "com.example.lib.Lost",
+			"Shared": "com.example.lib.Shared",
+			"Status": "Status",
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := NewTypeResolver(classes)
+			if tc.dependencies {
+				r.SetDependencyResolver(&libraryClasses{})
+			}
+			for typeName, want := range tc.want {
+				if got := r.qualifyTypeName(source, nil, typeName); got != want {
+					t.Errorf("qualifyTypeName(%q) = %q, want %q", typeName, got, want)
+				}
+			}
+		})
+	}
+}
+
+// An argument is spelled so that it means the same wherever it is read: the
+// classes it names are written in full, and what the resolver answers for by
+// the spelling alone (scalars, collections, maps) is left as written.
+func TestQualifyTypeName_Shapes(t *testing.T) {
+	source := parser.Class{
+		Name: "Holder", Package: typeArgAppPackage,
+		Imports: []parser.Import{{Path: typeArgDtoPackage + ".Item"}, {Path: "java.util.List"}},
+	}
+	r := NewTypeResolver([]parser.Class{typeArgItem(typeArgDtoPackage, "name")})
+	for typeName, want := range map[string]string{
+		"Item":                      "com.example.app.dto.Item",
+		"Item[]":                    "com.example.app.dto.Item[]",
+		"Item[][]":                  "com.example.app.dto.Item[][]",
+		"List<Item>":                "List<com.example.app.dto.Item>",
+		"List<Item>[]":              "List<com.example.app.dto.Item>[]",
+		"Map<String,Item>":          "Map<String, com.example.app.dto.Item>",
+		"Map<String, List<Item[]>>": "Map<String, List<com.example.app.dto.Item[]>>",
+		"? extends Item":            "? extends com.example.app.dto.Item",
+		"? super Item":              "? super com.example.app.dto.Item",
+		"?":                         "?",
+		"com.example.lib.Item":      "com.example.lib.Item",
+		"Integer":                   "Integer",
+		"int[]":                     "int[]",
+		"Unknown":                   "Unknown",
+		"Unknown<Item>":             "Unknown<com.example.app.dto.Item>",
+	} {
+		if got := r.qualifyTypeName(source, nil, typeName); got != want {
+			t.Errorf("qualifyTypeName(%q) = %q, want %q", typeName, got, want)
+		}
+	}
+}
+
+// A type variable of the caller is replaced by what it is bound to, once: the
+// binding is an argument already spelled in full. One that nothing binds is
+// left alone, whatever class shares its name.
+func TestQualifyTypeName_TypeVariablesOfTheCaller(t *testing.T) {
+	r := NewTypeResolver([]parser.Class{typeArgItem(typeArgDtoPackage, "name")})
+	caller := parser.Class{Name: "Result", Package: typeArgAppPackage, TypeParameters: []string{"T", "Item"}}
+	got := r.qualifyTypeArgs(caller, map[string]string{"T": "com.example.app.dto.Item[]"}, []string{"T", "List<T>", "Item", "Map<String, T[]>"})
+	want := []string{"com.example.app.dto.Item[]", "List<com.example.app.dto.Item[]>", "Item", "Map<String, com.example.app.dto.Item[][]>"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("qualifyTypeArgs:\n got  %q\n want %q", got, want)
+	}
+}
+
+// The bindings a controller applies to the methods it inherits are the
+// superclass's parameters bound to the arguments of the extends clause, spelled
+// so that the superclass can resolve them.
+func TestSuperClassBindings(t *testing.T) {
+	r := NewTypeResolver(append(typeArgApplication(), typeArgLibrary()...))
+	base := typeArgClass("Base")
+	for _, tc := range []struct {
+		class    string
+		bindings map[string]string
+		want     map[string]string
+	}{
+		{"Sub", nil, map[string]string{"B": "com.example.app.dto.Item"}},
+		{"SubQualified", nil, map[string]string{"B": "com.example.app.dto.Item"}},
+		{"SubArray", nil, map[string]string{"B": "com.example.app.dto.Item[]"}},
+		{"SubList", nil, map[string]string{"B": "List<com.example.app.dto.Item>"}},
+		{"SubInt", nil, map[string]string{"B": "Integer"}},
+		{"SubGeneric", map[string]string{"S": "com.example.lib.Item"}, map[string]string{"B": "List<com.example.lib.Item>"}},
+		// A parameter nobody bound stays a name.
+		{"SubGeneric", nil, map[string]string{"B": "List<S>"}},
+	} {
+		got := r.SuperClassBindings(typeArgClass(tc.class), base, tc.bindings)
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("SuperClassBindings(%s, %v) = %v, want %v", tc.class, tc.bindings, got, tc.want)
+		}
 	}
 }
 

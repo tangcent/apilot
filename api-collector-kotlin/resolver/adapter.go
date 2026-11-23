@@ -147,16 +147,32 @@ func (r *Resolver) ResolveForBinding(source *ktparser.Class, rawType string, bin
 			r.bindingTR.SetRequiredFields(r.requiredFields)
 		}
 	}
-	var normalizedBindings map[string]string
-	if len(bindings) > 0 {
-		normalizedBindings = make(map[string]string, len(bindings))
-		for name, value := range bindings {
-			normalizedBindings[name] = NormalizeModelType(value)
-		}
-	}
-	resolved := r.bindingTR.ResolveForBinding(toJavaClass(*source), NormalizeModelType(rawType), normalizedBindings)
+	resolved := r.bindingTR.ResolveForBinding(toJavaClass(*source), NormalizeModelType(rawType), normalizeBindings(bindings))
 	r.applyEnums(resolved)
 	return resolved
+}
+
+// normalizeBindings spells the bindings of type parameters the way the shared
+// resolver reads them. It returns nil when there is nothing to bind.
+func normalizeBindings(bindings map[string]string) map[string]string {
+	if len(bindings) == 0 {
+		return nil
+	}
+	normalized := make(map[string]string, len(bindings))
+	for name, value := range bindings {
+		normalized[name] = NormalizeModelType(value)
+	}
+	return normalized
+}
+
+// SuperClassBindings binds each type parameter of super to the argument that
+// sub's extends clause gives it, spelled so that it means the same in the scope
+// of super: `class Sub : Base<Item>()` binds Base's parameter to the class Item
+// names where Sub is written, not to whichever class Item names beside Base.
+// bindings binds the type parameters of sub itself, for an argument that
+// mentions them.
+func (r *Resolver) SuperClassBindings(sub, super *ktparser.Class, bindings map[string]string) map[string]string {
+	return r.tr.SuperClassBindings(toJavaClass(*sub), toJavaClass(*super), normalizeBindings(bindings))
 }
 
 // SetRequiredFields selects how resolved fields are marked required: one of
@@ -199,19 +215,7 @@ func (r *Resolver) ResolveFrom(source *ktparser.Class, rawType string, bindings 
 	if rawType == "" {
 		return model.NullModel()
 	}
-	javaSource := toJavaClass(*source)
-	// An empty but non-nil binding map makes the shared resolver rewrite type
-	// arguments from their resolved model (see resolver.ResolveFrom), which
-	// flattens a nested generic such as PageResult<User> to just "PageResult"
-	// and loses the argument. Pass nil when there is nothing to bind.
-	var normalizedBindings map[string]string
-	if len(bindings) > 0 {
-		normalizedBindings = make(map[string]string, len(bindings))
-		for name, value := range bindings {
-			normalizedBindings[name] = NormalizeModelType(value)
-		}
-	}
-	resolved := r.tr.ResolveFrom(javaSource, NormalizeModelType(rawType), normalizedBindings)
+	resolved := r.tr.ResolveFrom(toJavaClass(*source), NormalizeModelType(rawType), normalizeBindings(bindings))
 	r.applyEnums(resolved)
 	return resolved
 }
