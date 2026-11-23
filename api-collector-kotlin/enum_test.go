@@ -66,8 +66,8 @@ var enumResponseExpectation = map[string]string{
 
 // enumQueryExpectation is the same form bound from request parameters, which
 // the JSON view does not change: Spring converts a parameter to an enum by the
-// name of an entry whatever the enum's JSON form, and a collection takes no
-// options.
+// name of an entry whatever the enum's JSON form, and a collection of them takes
+// the entries of the enum it holds.
 var enumQueryExpectation = map[string][]string{
 	"state":    {"PENDING", "PAID", "CLOSED"},
 	"level":    {"LOW", "HIGH"},
@@ -78,8 +78,8 @@ var enumQueryExpectation = map[string][]string{
 	"flag":     {"ON", "OFF"},
 	"toggle":   {"YES", "NO"},
 	"declared": {"OPEN", "SHUT"},
-	"history":  nil,
-	"channels": nil,
+	"history":  {"PENDING", "PAID", "CLOSED"},
+	"channels": {"ALIPAY", "WECHAT"},
 }
 
 // enumUnresolved are the types of testdata/enum the export reports as
@@ -326,16 +326,18 @@ var enumNestedExpectation = map[string]enumField{
 
 // enumNestedBinding is the same declarations bound from request parameters: the
 // binding view reads every enum, so the entries are those of the enum each
-// parameter names, and a collection takes no options when it is a property of a
-// model attribute.
+// parameter names, a collection of them included.
 var enumNestedBinding = map[string][]string{
 	"order":    {"A", "B"},
 	"product":  {"A", "C"},
-	"orders":   nil,
-	"products": nil,
+	"orders":   {"A", "B"},
+	"products": {"A", "C"},
 	// Parameters of a handler that carries no annotation: an array and a
 	// collection of an enum list the entries of the enum they hold.
 	"orderStatus":     {"A", "B"},
+	"byParam":         {"A", "B"},
+	"byPath":          {"A", "C"},
+	"byList":          {"A", "C"},
 	"productStatus":   {"A", "C"},
 	"productStatuses": {"A", "C"},
 	"orderStatusList": {"A", "B"},
@@ -354,7 +356,7 @@ func TestJSONViewTellsEnumsNestedInDifferentClassesApart(t *testing.T) {
 	checkEnumFields(t, "request body", create.RequestBody.Body.Fields, enumNestedExpectation)
 
 	params := map[string]collector.ApiParameter{}
-	for _, name := range []string{"page", "values"} {
+	for _, name := range []string{"page", "values", "explicit"} {
 		for _, p := range byName[name].Parameters {
 			params[p.Name] = p
 		}

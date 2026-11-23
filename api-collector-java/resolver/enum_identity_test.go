@@ -225,11 +225,7 @@ public enum Status { TOP }
 				"p.Order":   {"OPEN", "CLOSED"},
 				"p.Product": {"PHYSICAL", "VIRTUAL"},
 			} {
-				names := []string{"own"}
-				if !binding {
-					names = append(names, "ownMany", "ownArray")
-				}
-				for _, name := range names {
+				for _, name := range []string{"own", "ownMany", "ownArray"} {
 					if got := fieldOf(ordered, holder, name, binding); !wantConstants(got, want...) {
 						t.Errorf("%s, %s view: %s.%s = %v, want a string of %v", order, view, holder, name, got, want)
 					}
@@ -295,9 +291,11 @@ class Holder {
 				}
 			}
 		}
-		for name, want := range map[string][]string{"tops": {"TOP"}, "orders": {"OPEN", "CLOSED"}} {
-			if got := fieldOf(ordered, "p.Holder", name, false); !wantConstants(got, want...) {
-				t.Errorf("%s: Holder.%s = %v, want a string of %v", order, name, got, want)
+		for _, binding := range []bool{false, true} {
+			for name, want := range map[string][]string{"tops": {"TOP"}, "orders": {"OPEN", "CLOSED"}} {
+				if got := fieldOf(ordered, "p.Holder", name, binding); !wantConstants(got, want...) {
+					t.Errorf("%s: Holder.%s = %v, want a string of %v", order, name, got, want)
+				}
 			}
 		}
 		// The values of a map are strings of the constants, and the map lists none.

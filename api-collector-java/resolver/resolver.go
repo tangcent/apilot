@@ -766,19 +766,13 @@ func (r *TypeResolver) readDependency(name string) (*parser.Class, string) {
 // holds, and through a type parameter to the enum it is bound to, because the
 // model of the field does: its items are strings of the constants. The values
 // of a map are strings of them as well, but the map lists none, as EasyYapi
-// does: a constraint on the map is not one on its values. A model attribute of
-// the binding view takes its options from its own type only.
+// does: a constraint on the map is not one on its values. The binding view reads
+// the same types: Spring binds each element of a collection or an array as it binds
+// a single value.
 //
 // The field type has been resolved by then, so an enum of the dependencies is
 // registered.
 func (r *TypeResolver) fieldEnum(source parser.Class, typeName string, bindings map[string]string) (parser.Class, bool) {
-	if r.bindingView {
-		// A type variable is no enum, whatever class carries its name.
-		if r.isTypeVariable(source, strings.TrimSpace(typeName)) {
-			return parser.Class{}, false
-		}
-		return r.enumClass(source, typeName)
-	}
 	return r.valueEnum(source, typeName, bindings)
 }
 

@@ -429,6 +429,13 @@ func (p *Parser) extractParameter(param parser.Parameter, method parser.Method, 
 	if doc.Required != nil {
 		ep.Required = *doc.Required
 	}
+	// The constants of an enum are the values the parameter takes, as they are for
+	// a parameter without a binding annotation (see implicitParameters); values the
+	// parameter documents itself win.
+	if len(ep.Enum) == 0 && paramType != "body" {
+		identity := func(name string) string { return typeResolver.Identity(source, name) }
+		ep.Enum, _ = typeResolver.EnumConstants(source, ElementType(typeResolver.UnwrapOptional(source, param.Type), identity))
+	}
 
 	// The name on the wire comes from the annotation, not the Java parameter
 	// name: @RequestHeader("Authorization") String auth binds the

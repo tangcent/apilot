@@ -390,10 +390,10 @@ func TestResolveForBinding_EnumIsAStringWithItsConstants(t *testing.T) {
 	if values := optionValues(status.Options); !reflect.DeepEqual(values, []any{"OPEN", "CLOSED"}) {
 		t.Fatalf("status options = %v", values)
 	}
-	// A model attribute takes the options of its own type only: a collection
-	// of enums is a list of strings, as before.
+	// A collection of enums is a list of strings whose field lists the constants,
+	// as in the JSON view.
 	history := order.Fields["history"]
-	if history.Model.Kind != model.KindArray || history.Model.Items.TypeName != model.JsonTypeString || len(history.Options) != 0 {
+	if history.Model.Kind != model.KindArray || history.Model.Items.TypeName != model.JsonTypeString || !reflect.DeepEqual(optionValues(history.Options), []any{"OPEN", "CLOSED"}) {
 		t.Fatalf("history = %+v, options %v", history.Model, history.Options)
 	}
 
