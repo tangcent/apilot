@@ -220,6 +220,9 @@ func extractInterface(node *tree_sitter.Node, source []byte) Class {
 	// Extract interface annotations
 	class.Annotations = extractAnnotations(node, source)
 
+	// An interface inherits the member types of the interfaces it extends.
+	class.Interfaces = extractInterfaces(node, source)
+
 	// Extract methods and constants from interface body
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -814,11 +817,12 @@ func extractSuperClass(node *tree_sitter.Node, source []byte) (string, []string)
 	return "", nil
 }
 
-// extractInterfaces extracts interface names from a class declaration's implements clause.
+// extractInterfaces extracts interface names from a class declaration's implements
+// clause, or from the extends clause of an interface declaration.
 func extractInterfaces(node *tree_sitter.Node, source []byte) []string {
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
-		if child.Kind() == "super_interfaces" {
+		if child.Kind() == "super_interfaces" || child.Kind() == "extends_interfaces" {
 			var ifaces []string
 			for j := uint(0); j < child.ChildCount(); j++ {
 				ifaceChild := child.Child(j)

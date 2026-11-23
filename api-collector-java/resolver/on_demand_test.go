@@ -193,12 +193,13 @@ func TestResolve_NoLookupForAPlatformPackageAStaticImportOrAKnownName(t *testing
 	// what they denote: asked there, though not in a platform package, and neither
 	// as written. The platform packages and the static import give no candidate;
 	// javax.money is a library like any other. The class import names the types
-	// nested in Outer, so its candidate is a nested one.
+	// nested in Outer, so its candidate is a nested one, and Outer itself is asked
+	// for once, for the member types it inherits.
 	for _, name := range []string{"Object", "Date", "UUID"} {
 		r.ResolveFrom(source, name, nil)
 	}
 	want := []string{
-		"com.example.app.Object", "javax.money.Object", "com.example.lib.Outer.Object",
+		"com.example.app.Object", "javax.money.Object", "com.example.lib.Outer.Object", "com.example.lib.Outer",
 		"com.example.app.Date", "javax.money.Date", "com.example.lib.Outer.Date",
 		"com.example.app.UUID", "javax.money.UUID", "com.example.lib.Outer.UUID",
 	}
