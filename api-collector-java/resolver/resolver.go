@@ -448,7 +448,10 @@ func (r *TypeResolver) resolveName(source parser.Class, name string) string {
 // the place of a class that a tier would have named. A class read from the
 // dependencies answers only through a tier, never by its simple name alone, so
 // that a source which cannot reach it does not get it because another source read
-// it first.
+// it first. And a class read from the dependencies is not given the fallback at
+// all: a library was built without the project, so no name it writes can be a
+// class of the project, and a name that no tier declares (a class nested in it,
+// say) stays unresolved rather than naming a project class that shares it.
 func (r *TypeResolver) scopedName(source parser.Class, name string, ask bool) string {
 	if name == "" || strings.Contains(name, ".") {
 		return name
@@ -456,10 +459,19 @@ func (r *TypeResolver) scopedName(source parser.Class, name string, ask bool) st
 	if key, found := r.inScope(source, name, ask); found {
 		return key
 	}
+	if r.isDependencySource(source) {
+		return name
+	}
 	if key, found := r.declaredElsewhere(name); found {
 		return key
 	}
 	return name
+}
+
+// isDependencySource reports whether source is a class that was read from the
+// dependencies, as against a class of the scanned sources or no class at all.
+func (r *TypeResolver) isDependencySource(source parser.Class) bool {
+	return source.Name != "" && r.dependencyKeys[qualifiedName(source)]
 }
 
 // inScope returns the registry key an unqualified name denotes through the

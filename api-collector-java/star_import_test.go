@@ -424,3 +424,126 @@ public class HolderController {
 		})
 	}
 }
+
+// topLevelLibrary answers dependency lookups as the index does: for the class a
+// source declares at the top level, by its qualified name, and for nothing else.
+type topLevelLibrary struct {
+	t       *testing.T
+	parser  *parser.Parser
+	sources map[string]string
+	asked   []string
+}
+
+func (l *topLevelLibrary) ResolveClass(name string) *parser.Class {
+	l.asked = append(l.asked, name)
+	source, ok := l.sources[name]
+	if !ok {
+		return nil
+	}
+	classes, err := l.parser.ParseSource([]byte(source))
+	if err != nil {
+		l.t.Fatalf("parsing %s: %v", name, err)
+	}
+	if len(classes) == 0 || classes[0].Package+"."+classes[0].Name != name {
+		return nil
+	}
+	return &classes[0]
+}
+
+// A class of a library can never name a class of the project: the library was
+// built without it. A name it writes that nothing in its own scope declares, as
+// the class nested in it that its source declares, is unresolved, and the class of
+// the project that carries the same simple name does not answer for it, whether
+// that class was read before or not.
+func TestAClassOfALibraryNeverNamesAClassOfTheProject(t *testing.T) {
+	sources := map[string]string{
+		"lib.Preview": `package lib;
+
+import java.util.List;
+
+public class Preview {
+    private SettlementSummary summary;
+    private List<SettlementSummary> summaries;
+
+    public static class SettlementSummary {
+        private String fromNested;
+    }
+}
+`,
+	}
+	for name, endpoints := range map[string]string{
+		"the project's class read first": `
+    @GetMapping("/own")
+    public SettlementSummary own() {
+        return null;
+    }
+
+    @GetMapping("/preview")
+    public Preview preview() {
+        return null;
+    }
+`,
+		"the library class read first": `
+    @GetMapping("/preview")
+    public Preview preview() {
+        return null;
+    }
+
+    @GetMapping("/own")
+    public SettlementSummary own() {
+        return null;
+    }
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeTree(t, dir, map[string]string{
+				"src/main/java/app/model/SettlementSummary.java": "package app.model;\n\npublic class SettlementSummary {\n    private String fromProject;\n}\n",
+				"src/main/java/app/web/PreviewController.java": `package app.web;
+
+import app.model.SettlementSummary;
+import lib.Preview;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+public class PreviewController {
+` + endpoints + `}
+`,
+			})
+			p, err := parser.NewParser(parser.ParserOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer p.Close()
+			results, err := p.ParseDirectory(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sm := springmvc.NewParser()
+			sm.SetDependencyResolver(&topLevelLibrary{t: t, parser: p, sources: sources})
+			unresolved := collector.NewUnresolvedSet()
+			sm.SetUnresolved(unresolved)
+			byName := map[string]collector.ApiEndpoint{}
+			for _, ctrl := range sm.ExtractControllers(results) {
+				for _, ep := range ctrl.Endpoints {
+					byName[ep.MethodName] = springmvcEndpointToAPI(ep, ctrl.Name)
+				}
+			}
+
+			own, preview := byName["own"], byName["preview"]
+			if own.Response == nil || preview.Response == nil {
+				t.Fatalf("own = %+v, preview = %+v, want responses", own, preview)
+			}
+			if got, want := starModelKind(own.Response.Body), "object{fromProject}"; got != want {
+				t.Errorf("the project's own endpoint = %s, want %s", got, want)
+			}
+			want := map[string]string{"summary": "SettlementSummary", "summaries": "array<SettlementSummary>"}
+			if got := starFieldKinds(preview.Response.Body); !reflect.DeepEqual(got, want) {
+				t.Errorf("preview:\n got  %v\n want %v", got, want)
+			}
+			if got := unresolved.Counts(); got["SettlementSummary"] == 0 {
+				t.Errorf("unresolved = %v, want the library's SettlementSummary reported", got)
+			}
+		})
+	}
+}
