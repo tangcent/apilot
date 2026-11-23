@@ -921,7 +921,7 @@ func (r *TypeResolver) resolveField(source parser.Class, f parser.Field, localBi
 	}
 	if r.isUnboundTypeParam(f.Type, localBindings, typeParamSet) {
 		fm.Generic = true
-	} else if fieldModel != nil && fieldModel.Kind == model.KindSingle && r.allTypeParams[fieldModel.TypeName] {
+	} else if fieldModel != nil && fieldModel.Kind == model.KindSingle && r.isOpenTypeVariable(source, fieldModel.TypeName) {
 		fm.Generic = true
 	}
 	return fm
@@ -1046,8 +1046,25 @@ func (r *TypeResolver) isUnboundTypeParam(typeName string, localBindings map[str
 		return false
 	}
 	if bound, exists := localBindings[typeName]; exists {
-		_, declared := r.lookup(bound)
-		return r.allTypeParams[bound] && !declared
+		// Bound to another type variable: one the caller left open.
+		return r.isOpenTypeVariable(parser.Class{}, bound)
+	}
+	return true
+}
+
+// isOpenTypeVariable reports whether name, as written in source, is read as a
+// type variable that nothing binds. The names of the type parameters of every
+// class of the project are known, and a class that carries the name of one of
+// them is that class and not a variable: a class of the scanned sources, an enum
+// the JSON view does not read, a class that source imports.
+func (r *TypeResolver) isOpenTypeVariable(source parser.Class, name string) bool {
+	if !r.allTypeParams[name] || len(r.bySimpleName[name]) > 0 {
+		return false
+	}
+	for _, imp := range source.Imports {
+		if !imp.Static && !imp.OnDemand && lastSegment(imp.Path) == name {
+			return false
+		}
 	}
 	return true
 }
@@ -1190,10 +1207,11 @@ func (r *TypeResolver) qualifyTypeName(source parser.Class, bindings map[string]
 // JSON view does not see. Such a name is shown as written, and reported when
 // it cannot be resolved, so it is left alone unless that would let it mean
 // another class: a dependency resolver asks for a class by its qualified name
-// only, and another class that shares the simple name could take its place in
-// another scope.
+// only, another class that shares the simple name could take its place in
+// another scope, and the name of a type parameter of some class would make it
+// an open type variable where it is read (see isOpenTypeVariable).
 func (r *TypeResolver) writeInFull(key, name string) bool {
-	if r.isRegistered(key) || r.dependencyResolver != nil {
+	if r.isRegistered(key) || r.dependencyResolver != nil || r.allTypeParams[name] {
 		return true
 	}
 	for _, other := range r.bySimpleName[name] {
