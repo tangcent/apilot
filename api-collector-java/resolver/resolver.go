@@ -167,7 +167,7 @@ type TypeResolver struct {
 	classRegistry      map[string]parser.Class // qualified name -> declaration
 	bySimpleName       map[string][]string     // simple name -> qualified names, sorted
 	byFile             map[string][]string     // compilation unit -> qualified names declared there
-	depBySimpleName    map[string][]string     // bySimpleName for the classes read from dependencies (see registerDependency)
+	dependencyKeys     map[string]bool         // registry keys of the classes read from dependencies (see registerDependency)
 	scannedPackages    map[string]bool         // packages that a class of the scanned sources declares
 	allTypeParams      map[string]bool
 	resolving          map[string][]string // class -> the types it is being expanded as, innermost last (see isBeingExpanded)
@@ -197,7 +197,7 @@ func NewTypeResolver(classes []parser.Class) *TypeResolver {
 		allTypeParams: make(map[string]bool),
 		resolving:     make(map[string][]string),
 
-		depBySimpleName: make(map[string][]string),
+		dependencyKeys:  make(map[string]bool),
 		scannedPackages: make(map[string]bool),
 	}
 	for _, c := range classes {
@@ -230,14 +230,15 @@ func (r *TypeResolver) register(c parser.Class, key string) {
 // registerDependency indexes a class read from the dependencies under its
 // qualified name, so a later lookup of that name is answered from the registry.
 //
-// A name that nothing in scope declares falls back to a declaration of the
-// scanned sources carrying it (see declaredElsewhere). The classes read from
-// dependencies are indexed apart from those, and answer only after them: a
-// class a library declares must not stand in for a class of the project that
-// has the same simple name.
+// The class is not entered under its simple name: a name that nothing in scope
+// declares falls back to a declaration of the scanned sources carrying it (see
+// declaredElsewhere), and a class a library declares must not stand in for it, nor
+// for a class that another source reaches under the same simple name. The key is
+// remembered so that a class of the dependencies can be told from one of the
+// scanned sources (see declares).
 func (r *TypeResolver) registerDependency(c parser.Class, key string) {
 	r.classRegistry[key] = c
-	r.depBySimpleName[c.Name] = appendKey(r.depBySimpleName[c.Name], key)
+	r.dependencyKeys[key] = true
 	for _, tp := range c.TypeParameters {
 		r.allTypeParams[tp] = true
 	}
@@ -401,9 +402,7 @@ func (r *TypeResolver) ResolveForBinding(source parser.Class, rawType string, ty
 }
 
 // resolveSimpleName maps a type name as written in source to the registry key
-// it denotes, following JLS 6.5.5.1 and 6.4.1: a declaration in the same
-// compilation unit shadows a single-type import, which shadows a declaration
-// in the same package, which shadows an import-on-demand.
+// it denotes, following JLS 6.5.5.1 and 6.4.1 (see scopedName).
 //
 // The result doubles as the name to keep resolving with, so an import of a
 // type whose body is not among the scanned sources still selects the imported
@@ -416,71 +415,64 @@ func (r *TypeResolver) resolveSimpleName(source parser.Class, name string) strin
 	return r.scopedName(source, name, false)
 }
 
-// scopedName is the lookup behind resolveSimpleName and resolveName. Its answer
-// follows one order whatever the resolver has read before, so that the class a
-// name denotes does not depend on which lookup came first:
+// resolveName is resolveSimpleName that also reads the dependencies. A name
+// that nothing in the scope of source declares among the classes held may still
+// be a class of a library: one the package of source declares, or one that an
+// import-on-demand brings in, as in `import com.example.model.*`. Such a class
+// is asked of the dependencies by its qualified name (see declares).
+func (r *TypeResolver) resolveName(source parser.Class, name string) string {
+	return r.scopedName(source, name, true)
+}
+
+// scopedName is the lookup behind resolveSimpleName and resolveName. It walks the
+// scope of source tier by tier, as JLS 6.4.1 orders it, and the first tier that
+// declares the name answers:
 //
-//  1. the declarations of the scanned sources in scope of source (inScope);
-//  2. when source is a class read from a library, the classes of the
-//     dependencies in scope of source (inDependencies);
-//  3. a declaration of the scanned sources that carries the name anywhere
-//     (declaredElsewhere);
-//  4. when source is a compilation unit of the scanned sources, the classes of
-//     the dependencies in scope of source (inDependencies);
-//  5. a class read from the dependencies under the name alone (readElsewhere).
+//  1. the compilation unit of source: the classes declared in the same file,
+//     which are the member types of source and of the classes around it;
+//  2. a single-type import;
+//  3. the package of source;
+//  4. the imports on demand, in the order they are written.
 //
-// The classes of the dependencies in scope of source are those of JLS 6.4.1: a
-// class already read and one still to be asked for stand at the same place in
-// that order. The scope of a class read from a library is its own, so a class
-// of the project that happens to carry the same simple name as one of its
-// neighbours does not take the neighbour's place (step 2 before step 3). A
-// scanned source has no such claim: what its imports and package do not name
-// falls back to the project's declaration (step 3 before step 4).
+// Every kind of declaration takes part in a tier at the same place: a class of
+// the scanned sources, a class already read from the dependencies, and a class
+// of the dependencies not read yet, which is asked for when ask is set. What a
+// name denotes therefore does not depend on where its declaration comes from,
+// nor on what the resolver read before, nor on whether source is a class of the
+// project or one read from a library. The one exception is the split package
+// (see declares).
+//
+// Only a name that no tier declares falls back to the declaration of the scanned
+// sources that carries the simple name wherever it sits (see declaredElsewhere):
+// the last resort of sources parsed without scope information, which never takes
+// the place of a class that a tier would have named. A class read from the
+// dependencies answers only through a tier, never by its simple name alone, so
+// that a source which cannot reach it does not get it because another source read
+// it first.
 func (r *TypeResolver) scopedName(source parser.Class, name string, ask bool) string {
-	if key, found := r.inScope(source, name); found {
+	if name == "" || strings.Contains(name, ".") {
+		return name
+	}
+	if key, found := r.inScope(source, name, ask); found {
 		return key
 	}
-	library := !r.isScannedSource(source)
-	if library {
-		if key, found := r.inDependencies(source, name, ask); found {
-			return key
-		}
-	}
-	// A class of the project that carries the name wins over a library's: the
-	// resolver spells a type by its simple name again when a bound type
-	// argument is expanded inside a generic class, where no import of the
-	// project applies, and that name must still denote the project's class.
 	if key, found := r.declaredElsewhere(name); found {
-		return key
-	}
-	if !library {
-		if key, found := r.inDependencies(source, name, ask); found {
-			return key
-		}
-	}
-	if key, found := r.readElsewhere(name); found {
 		return key
 	}
 	return name
 }
 
 // inScope returns the registry key an unqualified name denotes through the
-// scope of source: the four steps of JLS 6.4.1 that need no more than the
-// declarations of the scanned sources. A qualified name denotes itself; a name
-// that nothing in scope declares is not found.
+// scope of source (the tiers of scopedName), and whether any tier declares it.
 //
-// A class read from the dependencies does not answer here, in the package of
-// source or in an import on demand alike: it takes part in the order only
-// through inDependencies, where a class not read yet stands at the same place,
-// so that reading a class earlier cannot move it ahead of another.
-func (r *TypeResolver) inScope(source parser.Class, name string) (string, bool) {
-	if name == "" || strings.Contains(name, ".") {
-		return name, true
-	}
-
-	// 1. Same compilation unit: a class declared in the same file.
+// A class that the current view does not see, an enum of the JSON view, still
+// answers: it is what the name denotes, so no later tier can supply another
+// class for it. The caller finds the class not seen and exports it as it does
+// any type whose declaration was not read.
+func (r *TypeResolver) inScope(source parser.Class, name string, ask bool) (string, bool) {
+	// 1. Same compilation unit.
 	for _, key := range r.byFile[source.FilePath] {
-		if c, found := r.lookup(key); found && c.Name == name {
+		if c, found := r.classRegistry[key]; found && c.Name == name {
 			return key, true
 		}
 	}
@@ -496,19 +488,23 @@ func (r *TypeResolver) inScope(source parser.Class, name string) (string, bool) 
 		}
 	}
 
+	ask = ask && r.dependencyResolver != nil && r.mayBeDependencyClass(name)
+
 	// 3. Same package.
 	if source.Package != "" {
-		if key := source.Package + "." + name; r.isDeclared(key) {
+		if key := source.Package + "." + name; r.declares(source, key, ask) {
 			return key, true
 		}
 	}
 
-	// 4. Import-on-demand.
+	// 4. Import-on-demand. An import of a class (`import com.example.Outer.*`)
+	// brings in the types nested in that class, which are not named by a
+	// package-qualified key; a static one imports members.
 	for _, imp := range source.Imports {
-		if imp.Static || !imp.OnDemand {
+		if imp.Static || !imp.OnDemand || isClassImport(imp.Path) {
 			continue
 		}
-		if key := imp.Path + "." + name; r.isDeclared(key) {
+		if key := imp.Path + "." + name; r.declares(source, key, ask) {
 			return key, true
 		}
 	}
@@ -516,11 +512,61 @@ func (r *TypeResolver) inScope(source parser.Class, name string) (string, bool) 
 	return "", false
 }
 
-// isDeclared reports whether key is a declaration of the scanned sources that
-// the current view sees, as against a class read from the dependencies.
-func (r *TypeResolver) isDeclared(key string) bool {
-	c, found := r.lookup(key)
-	return found && !slices.Contains(r.depBySimpleName[c.Name], key)
+// isClassImport reports whether the path of an import on demand names a class
+// rather than a package, going by the convention that a class name starts with a
+// capital letter.
+func isClassImport(path string) bool {
+	last := lastSegment(path)
+	return last != "" && unicode.IsUpper(rune(last[0]))
+}
+
+// declares reports whether a class stands under key, as seen from source: one of
+// the scanned sources, one already read from the dependencies, or, when ask is
+// set, one the dependencies hold, which is then read and registered (see
+// registerDependency) so that it is asked for once and answers later lookups from
+// the registry. The JDK and the Kotlin standard library are not asked: they are
+// reached as scalars and collections, and every ask is a call to the indexer.
+//
+// A source of the project does not see a class of the dependencies in a package
+// that the scanned sources declare, whether or not the class has been read: the
+// project owns that package, and a name its classes do not carry is taken not to
+// be in it. This is the one tier that is not complete, and it is deliberate. The
+// same-package candidate comes before every import on demand, so completing it
+// asks the dependencies for `pkg.Name` for each name that an import on demand
+// supplies, once per package of the project. Measured on the export of one
+// service, that took the calls to the indexer from 88 to 277, and each call is a
+// process. The price is a split package, a package that the project and a
+// dependency both declare: a class of the dependency in it is not found by its
+// simple name from a source of the project, which can still spell it in full. A
+// class read from a library asks for every package, its own included.
+func (r *TypeResolver) declares(source parser.Class, key string, ask bool) bool {
+	splitPackage := r.isScannedSource(source) && r.scannedPackages[packageOf(key)]
+	if _, found := r.classRegistry[key]; found {
+		return !splitPackage || !r.dependencyKeys[key]
+	}
+	if !ask || splitPackage || isPlatformName(key) {
+		return false
+	}
+	class := r.dependencyClass(key)
+	if class == nil {
+		return false
+	}
+	r.registerDependency(*class, key)
+	return true
+}
+
+// isScannedSource reports whether source is a compilation unit of the scanned
+// sources, as against a class read from a library, whose file is not one of them.
+func (r *TypeResolver) isScannedSource(source parser.Class) bool {
+	return len(r.byFile[source.FilePath]) > 0
+}
+
+// packageOf returns the package part of a qualified name.
+func packageOf(name string) string {
+	if i := strings.LastIndex(name, "."); i >= 0 {
+		return name[:i]
+	}
+	return ""
 }
 
 // declaredElsewhere returns the declaration of the scanned sources that carries
@@ -531,21 +577,6 @@ func (r *TypeResolver) isDeclared(key string) bool {
 // to anyway.
 func (r *TypeResolver) declaredElsewhere(name string) (string, bool) {
 	return r.firstRegistered(r.bySimpleName[name])
-}
-
-// readElsewhere is declaredElsewhere over the classes already read from the
-// dependencies. A name reaches it when a class read earlier is spelled by its
-// simple name again, as a type argument is once the class it was bound to has
-// been expanded.
-//
-// A simple name that a class of the scanned sources carries belongs to the
-// project, whether or not the current view sees that class (the JSON view does
-// not see an enum): no library class answers for it.
-func (r *TypeResolver) readElsewhere(name string) (string, bool) {
-	if len(r.bySimpleName[name]) > 0 {
-		return "", false
-	}
-	return r.firstRegistered(r.depBySimpleName[name])
 }
 
 func (r *TypeResolver) firstRegistered(keys []string) (string, bool) {
@@ -560,73 +591,6 @@ func (r *TypeResolver) firstRegistered(keys []string) (string, bool) {
 func (r *TypeResolver) isRegistered(key string) bool {
 	_, found := r.lookup(key)
 	return found
-}
-
-// resolveName is resolveSimpleName that also reads the dependencies. A name
-// that nothing in the scope of source declares among the scanned sources may
-// still be a class of a library: one the package of source declares, or one
-// that an import-on-demand brings in, as in `import com.example.model.*`. See
-// inDependencies for how such a class is found.
-func (r *TypeResolver) resolveName(source parser.Class, name string) string {
-	return r.scopedName(source, name, true)
-}
-
-// inDependencies returns the qualified name of the class of the dependencies
-// that an unqualified name denotes through the scope of source: the package of
-// source first and then each import-on-demand in the order they are written
-// (JLS 6.4.1), the first that holds a class by that name.
-//
-// A class already read, by an earlier lookup of any source, and a class not
-// read yet are candidates in the same order. When ask is set, each candidate
-// not held is asked of the dependencies by its qualified name until one
-// answers; without it only the classes held answer. A class found is registered
-// under its qualified name (see registerDependency), so each candidate is asked
-// once and later answered from the registry.
-//
-// A source of the project does not ask for a package that the scanned sources
-// declare: the project owns it, and a name its classes do not carry is not in
-// it. Without that, every name that a library declares costs a call for the
-// package of each controller and for each import of the project's own model
-// packages, and every call is a process of the indexer. The price is a split
-// package, a library class in a package of the project, which a project source
-// does not find. A class read from a library asks for every package, its own
-// included: its neighbours need no import, whoever else declares the package.
-func (r *TypeResolver) inDependencies(source parser.Class, name string, ask bool) (string, bool) {
-	ask = ask && r.dependencyResolver != nil && r.mayBeDependencyClass(name)
-	if !ask && len(r.depBySimpleName[name]) == 0 {
-		return "", false
-	}
-	scannedSource := r.isScannedSource(source)
-	for _, candidate := range dependencyCandidates(source, name) {
-		if held, found := r.classRegistry[candidate]; found {
-			if r.sees(held) {
-				return candidate, true
-			}
-			// The resolver already holds a declaration of that name that the
-			// current view does not see: an enum of the JSON view. It is what
-			// the name denotes, so a package imported after it cannot supply
-			// another.
-			return "", false
-		}
-		if !ask {
-			continue
-		}
-		if scannedSource && r.scannedPackages[candidate[:strings.LastIndex(candidate, ".")]] {
-			continue
-		}
-		if class := r.dependencyClass(candidate); class != nil {
-			r.registerDependency(*class, candidate)
-			return candidate, true
-		}
-	}
-	return "", false
-}
-
-// isScannedSource reports whether source is a compilation unit of the scanned
-// sources, as against a class read from a library, whose file is not one of
-// them.
-func (r *TypeResolver) isScannedSource(source parser.Class) bool {
-	return len(r.byFile[source.FilePath]) > 0
 }
 
 // mayBeDependencyClass reports whether an unqualified name could denote a class
@@ -645,43 +609,6 @@ func (r *TypeResolver) mayBeDependencyClass(name string) bool {
 		return false
 	}
 	return simple != "object"
-}
-
-// dependencyCandidates lists the qualified names an unqualified name may denote
-// through the package of source and the packages it imports on demand, in the
-// order JLS 6.4.1 gives them. The JDK and the Kotlin standard library are left
-// out, as they are when type arguments are qualified (see isPlatformName), and
-// so is an on-demand import of a class (`import com.example.Outer.*`): it
-// imports the types nested in that class, which the index, holding top-level
-// classes only, does not know.
-func dependencyCandidates(source parser.Class, name string) []string {
-	var candidates []string
-	add := func(pkg string) {
-		if pkg == "" {
-			return
-		}
-		candidate := pkg + "." + name
-		if isPlatformName(candidate) {
-			return
-		}
-		for _, existing := range candidates {
-			if existing == candidate {
-				return
-			}
-		}
-		candidates = append(candidates, candidate)
-	}
-	add(source.Package)
-	for _, imp := range source.Imports {
-		if imp.Static || !imp.OnDemand {
-			continue
-		}
-		if last := lastSegment(imp.Path); last != "" && unicode.IsUpper(rune(last[0])) {
-			continue
-		}
-		add(imp.Path)
-	}
-	return candidates
 }
 
 // lastSegment returns the last dot-separated segment of a name.

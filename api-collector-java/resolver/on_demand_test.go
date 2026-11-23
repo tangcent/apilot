@@ -132,6 +132,12 @@ func TestResolve_APackageOfTheScannedSourcesIsNotAsked(t *testing.T) {
 	// A class read from a library, in the same package, finds it.
 	neighbour := parser.Class{Name: "Neighbour", Package: "com.example.app", Imports: onDemand("com.example.lib")}
 	assertFieldNames(t, fieldNamesOf(t, r, neighbour, "Shared"), []string{"split"})
+
+	// The library's class is read now, and the project's source still does not
+	// see it by its simple name: the answer does not depend on what was read.
+	if shared := r.ResolveFrom(source, "Shared", nil); shared.Kind != model.KindSingle {
+		t.Errorf("Shared after it was read = %+v, want an opaque value", shared)
+	}
 }
 
 func TestResolve_ImportsOnDemandAreTriedInTheOrderTheyAreWritten(t *testing.T) {
@@ -242,12 +248,14 @@ func TestResolve_ATypeArgumentNamedByAnImportOnDemandIsQualified(t *testing.T) {
 	}
 }
 
-// The project's classes win over the library's. The resolver spells a type by
-// its simple name again when it expands a type argument inside a generic class,
-// so a library class that answers to a simple name would take the place of a
-// project class of that name, and of a class another source reaches under the
-// same simple name (see TestSeeOptions_ALibraryClassDoesNotShadowAProjectEnum).
-func TestResolve_ALibraryClassFoundByAnImportOnDemandDoesNotShadowAProjectClass(t *testing.T) {
+// A source names the class its scope names: a library class it imports on demand
+// is the one, and a class of the project that the source reaches neither by an
+// import nor by its package does not take its place. A source that reaches no
+// Level keeps falling back to the project's class, and the library class read for
+// the other source does not answer for it. (A type argument spelled by its simple
+// name inside a generic class is qualified before it travels, so the scope of
+// that class is never consulted for it; see qualifyTypeName.)
+func TestResolve_ALibraryClassFoundByAnImportOnDemandBeatsAProjectClassTheSourceDoesNotReach(t *testing.T) {
 	library := &libraryClasses{classes: map[string]parser.Class{
 		"com.example.lib.Level": {Name: "Level", Package: "com.example.lib", Fields: []parser.Field{{Name: "rank", Type: "int"}}},
 	}}
@@ -261,13 +269,8 @@ func TestResolve_ALibraryClassFoundByAnImportOnDemandDoesNotShadowAProjectClass(
 	})
 	r.SetDependencyResolver(library)
 
-	// The project class is the one the resolver has always answered with when
-	// nothing in scope names the class: an import on demand does not displace it.
-	assertFieldNames(t, fieldNamesOf(t, r, imported, "Level"), []string{"score"})
+	assertFieldNames(t, fieldNamesOf(t, r, imported, "Level"), []string{"rank"})
 	assertFieldNames(t, fieldNamesOf(t, r, bare, "Level"), []string{"score"})
-	if len(library.asked) != 0 {
-		t.Errorf("the library was asked for %v, though the project declares Level", library.asked)
-	}
 }
 
 // A library class read through one source does not stand in for an enum of the
@@ -382,26 +385,32 @@ func TestResolve_TheScopeOrderDoesNotDependOnWhatWasReadBefore(t *testing.T) {
 	}
 }
 
-// A class of the project that carries the name wins over a library class that
-// the source reaches by its package or an import, and that holds also once the
-// library class has been read: reading it does not move it ahead.
-func TestResolve_AProjectClassKeepsWinningOnceTheLibraryClassIsRead(t *testing.T) {
+// The class a source reaches by an import on demand is the same before and after
+// it has been read, and a source that does not reach it keeps the project's class
+// either way: reading the library class moves neither ahead.
+func TestResolve_ReadingALibraryClassMovesNeitherItNorTheProjectClassAhead(t *testing.T) {
 	library := &libraryClasses{classes: map[string]parser.Class{
 		"lib.Level": {Name: "Level", Package: "lib", Fields: []parser.Field{{Name: "rank", Type: "int"}}},
 	}}
 	imported := parser.Class{Name: "Imported", Package: "app.web", FilePath: "Imported.java", Imports: onDemand("lib")}
+	bare := parser.Class{Name: "Bare", Package: "app.web", FilePath: "Bare.java"}
 	r := NewTypeResolver([]parser.Class{
 		{Name: "Level", Package: "app.model", FilePath: "Level.java", Fields: []parser.Field{{Name: "score", Type: "int"}}},
-		imported,
+		imported, bare,
 	})
 	r.SetDependencyResolver(library)
 
-	assertFieldNames(t, fieldNamesOf(t, r, imported, "Level"), []string{"score"})
+	assertFieldNames(t, fieldNamesOf(t, r, imported, "Level"), []string{"rank"})
+	assertFieldNames(t, fieldNamesOf(t, r, bare, "Level"), []string{"score"})
 	// Read through its qualified name, as a source that spells it in full does.
 	assertFieldNames(t, fieldNamesOf(t, r, parser.Class{}, "lib.Level"), []string{"rank"})
-	assertFieldNames(t, fieldNamesOf(t, r, imported, "Level"), []string{"score"})
-	if class, found := r.Class(imported, "Level"); !found || class.Package != "app.model" {
-		t.Errorf("Class(Level) = %+v, %v, want the project's class", class, found)
+	assertFieldNames(t, fieldNamesOf(t, r, imported, "Level"), []string{"rank"})
+	assertFieldNames(t, fieldNamesOf(t, r, bare, "Level"), []string{"score"})
+	if class, found := r.Class(bare, "Level"); !found || class.Package != "app.model" {
+		t.Errorf("Class(bare, Level) = %+v, %v, want the project's class", class, found)
+	}
+	if class, found := r.Class(imported, "Level"); !found || class.Package != "lib" {
+		t.Errorf("Class(imported, Level) = %+v, %v, want the library's class", class, found)
 	}
 }
 
