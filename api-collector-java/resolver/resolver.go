@@ -167,9 +167,7 @@ type TypeResolver struct {
 	bySimpleName       map[string][]string     // simple name -> qualified names, sorted
 	byFile             map[string][]string     // compilation unit -> qualified names declared there
 	allTypeParams      map[string]bool
-	// resolving holds, for each class being expanded, the types it is being
-	// expanded as, the innermost last (see isBeingExpanded).
-	resolving          map[string][]string
+	resolving          map[string][]string // class -> the types it is being expanded as, innermost last (see isBeingExpanded)
 	dependencyResolver DependencyResolver
 	unresolved         *collector.UnresolvedSet
 	// bindingView is set while ResolveForBinding expands a model attribute.
@@ -625,7 +623,7 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	name := r.resolveSimpleName(source, baseName)
 
 	if class, found := r.lookup(name); found {
-		return r.resolveClass(class, name, typeArgs, typeBindings)
+		return r.resolveClass(class, name, typeArgs)
 	}
 
 	// An enum of the scanned sources is already known; the JSON view just
@@ -636,7 +634,7 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 		if depClass := r.dependencyClass(name); depClass != nil {
 			r.register(*depClass, name)
 			if r.sees(*depClass) {
-				return r.resolveClass(*depClass, name, typeArgs, typeBindings)
+				return r.resolveClass(*depClass, name, typeArgs)
 			}
 		}
 	}
@@ -735,8 +733,11 @@ func fillWildcardArgs(declared, inferred string) (string, bool) {
 	return declBase + "<" + strings.Join(args, ", ") + ">", true
 }
 
-// resolveClass expands one declaration into an object model.
-func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []string, typeBindings map[string]string) *model.ObjectModel {
+// resolveClass expands one declaration into an object model. Its type
+// parameters are bound to typeArgs, which are spelled in full (see
+// qualifyTypeName), and to nothing else: a parameter that no argument binds
+// stays open, as it does for a raw type.
+func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []string) *model.ObjectModel {
 	// Only the binding view reaches an enum: a request parameter names one
 	// of its constants.
 	if class.IsEnum {
@@ -749,13 +750,13 @@ func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []s
 
 	if class.IsInterface {
 		if impl, implKey, found := r.findImplementation(class, key); found {
-			return r.resolveClass(impl, implKey, nil, nil)
+			return r.resolveClass(impl, implKey, nil)
 		}
 		return model.RefModel(class.Name)
 	}
 
 	if isMapSubclass(class) {
-		return r.resolveMapSubclass(class, typeArgs, typeBindings)
+		return r.resolveMapSubclass(class, typeArgs)
 	}
 
 	r.resolving[key] = append(r.resolving[key], expansion)
@@ -771,11 +772,6 @@ func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []s
 	for i, tp := range class.TypeParameters {
 		if i < len(typeArgs) {
 			localBindings[tp] = typeArgs[i]
-		}
-	}
-	for k, v := range typeBindings {
-		if _, exists := localBindings[k]; !exists {
-			localBindings[k] = v
 		}
 	}
 
@@ -1067,11 +1063,6 @@ func (r *TypeResolver) resolveInheritedFields(class parser.Class, localBindings 
 	}
 
 	superBindings := r.SuperClassBindings(class, superClass, localBindings)
-	for k, v := range localBindings {
-		if _, exists := superBindings[k]; !exists {
-			superBindings[k] = v
-		}
-	}
 
 	superTypeParamSet := make(map[string]bool, len(superClass.TypeParameters))
 	for _, tp := range superClass.TypeParameters {
@@ -1321,18 +1312,13 @@ func (r *TypeResolver) findImplementation(iface parser.Class, key string) (parse
 	return parser.Class{}, "", false
 }
 
-func (r *TypeResolver) resolveMapSubclass(class parser.Class, typeArgs []string, typeBindings map[string]string) *model.ObjectModel {
+func (r *TypeResolver) resolveMapSubclass(class parser.Class, typeArgs []string) *model.ObjectModel {
 	keyModel := model.SingleModel(model.JsonTypeString)
 
 	localBindings := make(map[string]string)
 	for i, tp := range class.TypeParameters {
 		if i < len(typeArgs) {
 			localBindings[tp] = typeArgs[i]
-		}
-	}
-	for k, v := range typeBindings {
-		if _, exists := localBindings[k]; !exists {
-			localBindings[k] = v
 		}
 	}
 
@@ -1345,7 +1331,7 @@ func (r *TypeResolver) resolveMapSubclass(class parser.Class, typeArgs []string,
 			valueModel = r.ResolveFrom(class, firstTypeParam, localBindings)
 		}
 	} else if len(class.SuperClassTypeArgs) >= 2 {
-		valueModel = r.ResolveFrom(class, class.SuperClassTypeArgs[1], typeBindings)
+		valueModel = r.ResolveFrom(class, class.SuperClassTypeArgs[1], nil)
 	} else {
 		valueModel = model.NullModel()
 	}
