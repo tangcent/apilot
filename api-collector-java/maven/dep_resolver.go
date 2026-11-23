@@ -285,7 +285,7 @@ func (r *MavenDependencyResolver) keepSiblings(className string, classes []parse
 	var siblings []parser.Class
 	for i := range classes {
 		c := classes[i]
-		if &classes[i] == picked || c.Package != picked.Package {
+		if &classes[i] == picked || c.Package != picked.Package || c.Local {
 			continue
 		}
 		if outermost, _, _ := strings.Cut(c.Outer, "."); outermost == picked.Name && picked.Outer == "" {
