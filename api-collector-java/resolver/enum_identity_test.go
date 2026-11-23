@@ -663,3 +663,40 @@ class Holder {
 		}
 	}
 }
+
+// A subclass inherits the enums nested in its superclass, but a bare name is not
+// looked up through the supertypes. A name that nothing in scope declares takes the
+// enum nested in a class when only one carries it; when two do, it stays
+// unresolved, and is never the wrong enum.
+func TestResolve_AnInheritedMemberEnumIsNeverTakenForAnotherOfItsName(t *testing.T) {
+	sources := map[string]string{
+		"p/Base.java": `package p;
+
+public class Base {
+    public enum Mode { SLOW, FAST }
+}
+`,
+		"p/Impl.java": `package p;
+
+public class Impl extends Base {
+    Mode mode;
+}
+`,
+	}
+	if got := fieldOf(parseFiles(t, sources), "p.Impl", "mode", false); !wantConstants(got, "SLOW", "FAST") {
+		t.Errorf("Impl.mode = %v, want a string of SLOW and FAST: Base.Mode is the only enum named Mode", got)
+	}
+
+	sources["p/Other.java"] = `package p;
+
+public class Other {
+    public enum Mode { ON, OFF }
+}
+`
+	classes := parseFiles(t, sources)
+	for order, ordered := range map[string][]parser.Class{"as declared": classes, "reversed": reversed(classes)} {
+		if got := fieldOf(ordered, "p.Impl", "mode", false); !wantUnresolved(got) {
+			t.Errorf("%s: Impl.mode = %v, want it unresolved: Base.Mode and Other.Mode are both candidates", order, got)
+		}
+	}
+}
