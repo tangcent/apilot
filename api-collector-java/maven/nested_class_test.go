@@ -275,3 +275,23 @@ func TestOutermostClass(t *testing.T) {
 		}
 	}
 }
+
+// A class declared in a method is in scope in that method only, so the classes
+// kept with a class do not include it.
+func TestResolveClass_ALocalClassIsNotKeptWithTheClassThatDeclaresIt(t *testing.T) {
+	const source = "package com.example.lib;\n\npublic class Page {\n    public static class Sort {\n    }\n\n    void run() {\n        class Row {\n        }\n    }\n}"
+	var asked []string
+	r := nestedIndex(t, map[string]string{"com.example.lib.Page": source}, &asked)
+
+	r.ResolveClass("com.example.lib.Page")
+	var kept []string
+	for _, c := range r.Siblings("com.example.lib.Page") {
+		kept = append(kept, c.QualifiedName())
+	}
+	if want := []string{"com.example.lib.Page.Sort"}; !reflect.DeepEqual(kept, want) {
+		t.Errorf("Siblings(Page) = %v, want %v", kept, want)
+	}
+	if class := r.ResolveClass("com.example.lib.Page.Row"); class != nil {
+		t.Errorf("Page.Row = %+v, want none: a local class has no name outside its method", class)
+	}
+}

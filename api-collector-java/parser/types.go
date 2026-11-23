@@ -94,6 +94,12 @@ type Class struct {
 	// Outer.Mid.Deep. Empty for a top-level declaration. A nested class is a
 	// declaration of its own, and this is all that says where it belongs.
 	Outer string
+	// Local marks a class declared in a method, a constructor, an initializer or a
+	// lambda, or inside an anonymous class or the body of an enum constant. Its
+	// name is in scope in the block that declares it and nowhere else, so it is
+	// neither a member type of the class around it nor a class of its package.
+	// Outer still names the types around it.
+	Local bool
 	// FilePath is the compilation unit that declared this class. Simple-name
 	// resolution needs it to tell a declaration in the same file apart from
 	// one that is merely imported (JLS 6.5.5.1). Empty for sources parsed

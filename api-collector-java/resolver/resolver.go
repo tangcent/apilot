@@ -211,7 +211,11 @@ func NewTypeResolver(classes []parser.Class) *TypeResolver {
 		supertypesHeld:  make(map[string]bool),
 	}
 	for _, c := range classes {
-		r.register(c, qualifiedName(c))
+		// A local class is in scope in its block only: no name that the resolver
+		// looks up denotes it (see parser.Class.Local).
+		if !c.Local {
+			r.register(c, qualifiedName(c))
+		}
 	}
 	return r
 }
@@ -253,8 +257,8 @@ func (r *TypeResolver) register(c parser.Class, key string) {
 // and a name that denotes one of them is not asked of the dependencies again:
 // the indexer holds top-level classes only. A resolver that kept them says so
 // through siblingReader, and they are registered under their own qualified
-// names with the class. Another top-level class of the same source is not: it
-// is asked for on its own, as it always was.
+// names with the class, a local class excepted. Another top-level class of the
+// same source is not: it is asked for on its own, as it always was.
 func (r *TypeResolver) registerDependency(c parser.Class, key string) {
 	r.indexDependency(c, key)
 	reader, ok := r.dependencyResolver.(siblingReader)
@@ -264,7 +268,7 @@ func (r *TypeResolver) registerDependency(c parser.Class, key string) {
 	for _, sibling := range reader.Siblings(key) {
 		// The declarations already held win: a sibling that the scanned sources
 		// or an earlier answer declare under the same name is not replaced.
-		if siblingKey := qualifiedName(sibling); siblingKey != "" {
+		if siblingKey := qualifiedName(sibling); siblingKey != "" && !sibling.Local {
 			if _, held := r.classRegistry[siblingKey]; !held {
 				r.indexDependency(sibling, siblingKey)
 			}

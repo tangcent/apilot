@@ -219,3 +219,72 @@ class Nested extends Base<java.util.List<com.example.Item>> {}
 		}
 	}
 }
+
+// A class declared in a block is local: its name is in scope in that block only.
+// A member of a local class is local too, and a member of a member is not.
+func TestParser_MarksTheClassesDeclaredInABlock(t *testing.T) {
+	classes := parseNestedSource(t, `package com.example;
+
+import java.util.function.Supplier;
+
+public class Outer {
+    public static class Member {
+        public static class Deeper {}
+    }
+
+    private final Runnable anonymous = new Runnable() {
+        class InAnonymous {}
+        public void run() {}
+    };
+
+    static {
+        class InInitializer {}
+    }
+
+    Outer() {
+        record InConstructor(String a) {}
+    }
+
+    void run(int x) {
+        class InMethod {
+            class InLocal {}
+        }
+        interface LocalInterface {}
+        enum LocalEnum { A }
+        Supplier<Object> lambda = () -> {
+            class InLambda {}
+            return null;
+        };
+        switch (x) {
+            case 1:
+                class InSwitch {}
+        }
+    }
+
+    enum Kind {
+        ONE {
+            class InConstant {}
+        };
+        static class InEnum {}
+    }
+
+    interface Contract {
+        class InInterface {}
+    }
+}
+`)
+	local := map[string]bool{}
+	for key, c := range classes {
+		local[key[len("com.example."):]] = c.Local
+	}
+	want := map[string]bool{
+		"Outer": false, "Outer.Member": false, "Outer.Member.Deeper": false,
+		"Outer.Kind": false, "Outer.Kind.InEnum": false, "Outer.Contract": false, "Outer.Contract.InInterface": false,
+		"Outer.InAnonymous": true, "Outer.InInitializer": true, "Outer.InConstructor": true,
+		"Outer.InMethod": true, "Outer.InMethod.InLocal": true, "Outer.LocalInterface": true, "Outer.LocalEnum": true,
+		"Outer.InLambda": true, "Outer.InSwitch": true, "Outer.Kind.InConstant": true,
+	}
+	if !reflect.DeepEqual(local, want) {
+		t.Errorf("local classes:\n got  %v\n want %v", local, want)
+	}
+}

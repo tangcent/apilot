@@ -28,7 +28,8 @@ import (
 // read instead of skipped, and `String tags[]` is the type `String[]`.
 // Version 9: every declarator of a field declaration is a field, and a varargs
 // parameter is read as an array.
-// Version 10: Class carries Outer, the classes it is nested in.
+// Version 10: Class carries Outer, the classes it is nested in, and Local, whether
+// it is declared in a block.
 const cacheSchemaVersion = "10"
 
 // Cache provides file-level caching based on content hash.

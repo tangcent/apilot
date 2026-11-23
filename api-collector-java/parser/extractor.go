@@ -60,8 +60,7 @@ func extractImports(root *tree_sitter.Node, source []byte) []Import {
 // declared in Outer. It is empty for a top-level declaration.
 //
 // A class declared in a method body is read as one of the types around the
-// method: no other class can name it, and the type that holds the method is as
-// close to where it belongs as the model goes.
+// method, and is marked local (see isLocalType).
 func enclosingTypes(node *tree_sitter.Node, source []byte) string {
 	var names []string
 	for parent := node.Parent(); parent != nil; parent = parent.Parent() {
@@ -76,6 +75,27 @@ func enclosingTypes(node *tree_sitter.Node, source []byte) string {
 		names[i], names[j] = names[j], names[i]
 	}
 	return strings.Join(names, ".")
+}
+
+// isLocalType reports whether a type declaration is local: declared anywhere but
+// as a member of a type, in a block, a lambda, an anonymous class or the body of
+// an enum constant. Its name is in scope in that block only (JLS 6.3), so no
+// other class names it, and it takes no part in the scope of the types around it.
+// A member of a local class is local too.
+func isLocalType(node *tree_sitter.Node) bool {
+	for parent := node.Parent(); parent != nil; parent = parent.Parent() {
+		switch parent.Kind() {
+		case "class_declaration", "interface_declaration", "enum_declaration", "record_declaration",
+			"annotation_type_declaration", "class_body", "interface_body", "enum_body",
+			"enum_body_declarations", "annotation_type_body", "ERROR":
+			// A member of a type, or the text the grammar could not place.
+		case "program":
+			return false
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 // declaredName returns the name a type declaration gives itself.
