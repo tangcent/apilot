@@ -318,3 +318,109 @@ public class FileItem {
 		t.Errorf("request body:\n got  %v\n want %v", got, want)
 	}
 }
+
+// A class of a library that writes a class by its qualified name keeps that
+// class when a class of the same simple name sits in the library's own package:
+// `List<app.dto.Item>` and `Box<app.dto.Item>` name the project's Item, and
+// `Item` written simply is the library's own, whether or not the library's Item
+// was read first.
+func TestAClassOfALibraryKeepsTheQualifiedClassItNames(t *testing.T) {
+	sources := map[string]string{
+		"lib.Holder": `package lib;
+
+import java.util.List;
+
+public class Holder {
+    private List<app.dto.Item> items;
+    private Box<app.dto.Item> box;
+    private Item own;
+}
+`,
+		"lib.Box": `package lib;
+
+public class Box<T> {
+    private T value;
+}
+`,
+		"lib.Item": `package lib;
+
+public class Item {
+    private String libraryItem;
+}
+`,
+	}
+	for name, controller := range map[string]string{
+		// The library's Item is read for the first endpoint, before Holder's.
+		"library Item read first": `
+    @GetMapping("/item")
+    public Item item() {
+        return null;
+    }
+
+    @GetMapping("/holder")
+    public Holder holder() {
+        return null;
+    }
+`,
+		"nothing read first": `
+    @GetMapping("/holder")
+    public Holder holder() {
+        return null;
+    }
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeTree(t, dir, map[string]string{
+				"src/main/java/app/dto/Item.java": `package app.dto;
+
+public class Item {
+    private String projectItem;
+}
+`,
+				"src/main/java/app/web/HolderController.java": `package app.web;
+
+import lib.Holder;
+import lib.Item;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+public class HolderController {
+` + controller + `}
+`,
+			})
+			p, err := parser.NewParser(parser.ParserOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer p.Close()
+			results, err := p.ParseDirectory(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sm := springmvc.NewParser()
+			sm.SetDependencyResolver(&starLibrary{t: t, parser: p, sources: sources})
+			endpoints := map[string]collector.ApiEndpoint{}
+			for _, ctrl := range sm.ExtractControllers(results) {
+				for _, ep := range ctrl.Endpoints {
+					endpoints[ep.MethodName] = springmvcEndpointToAPI(ep, ctrl.Name)
+				}
+			}
+
+			holder := endpoints["holder"]
+			if holder.Response == nil {
+				t.Fatalf("holder = %+v, want a response", holder)
+			}
+			want := map[string]string{"items": "array<object{projectItem}>", "box": "object{value}", "own": "object{libraryItem}"}
+			if got := starFieldKinds(holder.Response.Body); !reflect.DeepEqual(got, want) {
+				t.Errorf("response:\n got  %v\n want %v", got, want)
+			}
+			// The type argument of Box is the project's class too.
+			for _, field := range holder.Response.Body.Fields["box"].Model.Fields {
+				if got, want := starModelKind(field.Model), "object{projectItem}"; got != want {
+					t.Errorf("box.value = %s, want %s", got, want)
+				}
+			}
+		})
+	}
+}

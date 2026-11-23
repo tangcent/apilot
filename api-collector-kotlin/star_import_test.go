@@ -314,3 +314,114 @@ class FileItem {
 		})
 	}
 }
+
+// A class of a library written in Kotlin that names a class by its qualified name
+// keeps that class when a class of the same simple name sits in the library's own
+// package, whether or not the library's own Item was read first.
+func TestAClassOfALibraryKeepsTheQualifiedClassItNames(t *testing.T) {
+	sources := map[string]string{
+		"lib.Holder": `package lib
+
+class Holder {
+    var items: List<app.dto.Item> = emptyList()
+    var box: Box<app.dto.Item>? = null
+    var own: Item? = null
+}
+`,
+		"lib.Box": `package lib
+
+class Box<T> {
+    var value: T? = null
+}
+`,
+		"lib.Item": `package lib
+
+class Item {
+    var libraryItem: String = ""
+}
+`,
+	}
+	caller := ktparser.Class{Name: "HolderController", Package: "app.web", FilePath: "HolderController.kt"}
+	project := []ktparser.Class{
+		{Name: "Item", Package: "app.dto", FilePath: "Item.kt", Fields: []ktparser.Property{{Name: "projectItem", Type: "String"}}},
+		caller,
+	}
+
+	for _, readFirst := range []string{"", "lib.Item", "app.dto.Item"} {
+		t.Run("read first "+readFirst, func(t *testing.T) {
+			typeResolver := resolver.New(project)
+			typeResolver.SetDependencyResolver(&starLibrary{t: t, sources: sources})
+			if readFirst != "" {
+				typeResolver.ResolveFrom(&caller, readFirst, nil)
+			}
+
+			holder := typeResolver.ResolveFrom(&caller, "lib.Holder", nil)
+			want := map[string]string{"items": "array<object{projectItem}>", "box": "object{value}", "own": "object{libraryItem}"}
+			if got := starFieldKinds(holder); !reflect.DeepEqual(got, want) {
+				t.Errorf("Holder:\n got  %v\n want %v", got, want)
+			}
+			if got, want := starModelKind(holder.Fields["box"].Model.Fields["value"].Model), "object{projectItem}"; got != want {
+				t.Errorf("box.value = %s, want %s", got, want)
+			}
+		})
+	}
+}
+
+// The scope of a name is walked tier by tier whatever the declarations come from:
+// the package of a library class comes before an import on demand when the
+// wildcard's class is one of the project's, and the other way round for a source
+// of the project that imports a library on demand while another class of the
+// project carries the name elsewhere.
+func TestATierOfTheScopeAnswersWhateverKindOfDeclarationItHolds(t *testing.T) {
+	sources := map[string]string{
+		"lib.a.Holder": `package lib.a
+
+import lib.b.*
+
+class Holder {
+    var shared: Shared? = null
+}
+`,
+		"lib.a.Shared": `package lib.a
+
+class Shared {
+    var fromSamePackage: String = ""
+}
+`,
+		"lib.Status": `package lib
+
+class Status {
+    var fromLibrary: String = ""
+}
+`,
+	}
+	caller := ktparser.Class{
+		Name: "StatusController", Package: "app.web", FilePath: "StatusController.kt",
+		Imports: []ktparser.Import{{Path: "lib", OnDemand: true}},
+	}
+	project := []ktparser.Class{
+		// Declared in the project, in the package a library class imports on demand.
+		{Name: "Shared", Package: "lib.b", FilePath: "b/Shared.kt", Fields: []ktparser.Property{{Name: "fromOnDemand", Type: "String"}}},
+		// Declared in the project, where the controller cannot reach it.
+		{Name: "Status", Package: "app.model", FilePath: "Status.kt", Fields: []ktparser.Property{{Name: "fromProject", Type: "String"}}},
+		caller,
+	}
+
+	for _, readFirst := range []string{"", "lib.a.Shared", "lib.Status"} {
+		t.Run("read first "+readFirst, func(t *testing.T) {
+			typeResolver := resolver.New(project)
+			typeResolver.SetDependencyResolver(&starLibrary{t: t, sources: sources})
+			if readFirst != "" {
+				typeResolver.ResolveFrom(&caller, readFirst, nil)
+			}
+
+			holder := typeResolver.ResolveFrom(&caller, "lib.a.Holder", nil)
+			if got, want := starModelKind(holder.Fields["shared"].Model), "object{fromSamePackage}"; got != want {
+				t.Errorf("shared = %s, want %s", got, want)
+			}
+			if got, want := starModelKind(typeResolver.ResolveFrom(&caller, "Status", nil)), "object{fromLibrary}"; got != want {
+				t.Errorf("Status from the controller = %s, want %s", got, want)
+			}
+		})
+	}
+}

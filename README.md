@@ -227,8 +227,12 @@ Each qualified name that the package of the source or an import-on-demand could
 give an unimported name is asked of the indexer once, the package of the source
 first and then the imports in the order they are written. A package that the
 project's own sources declare is not asked, so a library class that sits in a
-package of the project is not found. A class of the project with the same simple
-name is not displaced by a library class.
+package of the project is not found by its simple name from a source of the
+project (it can still be written in full). Which class a simple name denotes
+follows the scope of the source, tier by tier, whatever the class comes from: a
+class declared in the same file, a single-type import, the package of the source,
+then the imports on demand. A class of the project that the source reaches by none
+of these answers only when no tier does.
 
 With maven-indexer-cli 1.2.0 or later, APilot asks the indexer to pin each
 class to the version the project's dependency tree names (`--project-path`),
