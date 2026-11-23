@@ -1312,6 +1312,13 @@ func (r *TypeResolver) findImplementation(iface parser.Class, key string) (parse
 	return parser.Class{}, "", false
 }
 
+// mapSuperClass stands for the superclass of a map subclass, Map<K, V> or one
+// of its implementations, whose arguments are the key and the value type.
+var mapSuperClass = parser.Class{TypeParameters: []string{"K", "V"}}
+
+// resolveMapSubclass expands a class that extends a map. It is a map of what the
+// arguments of its extends clause say, written in its own scope: the value is
+// the second of them, with the class's own parameters bound to typeArgs.
 func (r *TypeResolver) resolveMapSubclass(class parser.Class, typeArgs []string) *model.ObjectModel {
 	keyModel := model.SingleModel(model.JsonTypeString)
 
@@ -1322,18 +1329,9 @@ func (r *TypeResolver) resolveMapSubclass(class parser.Class, typeArgs []string)
 		}
 	}
 
-	var valueModel *model.ObjectModel
-	if len(class.TypeParameters) > 0 {
-		firstTypeParam := class.TypeParameters[0]
-		if resolved, ok := localBindings[firstTypeParam]; ok {
-			valueModel = r.ResolveFrom(class, resolved, nil)
-		} else {
-			valueModel = r.ResolveFrom(class, firstTypeParam, localBindings)
-		}
-	} else if len(class.SuperClassTypeArgs) >= 2 {
-		valueModel = r.ResolveFrom(class, class.SuperClassTypeArgs[1], nil)
-	} else {
-		valueModel = model.NullModel()
+	valueModel := model.NullModel()
+	if value, ok := r.SuperClassBindings(class, mapSuperClass, localBindings)["V"]; ok {
+		valueModel = r.ResolveFrom(class, value, nil)
 	}
 
 	return &model.ObjectModel{

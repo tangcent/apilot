@@ -1,12 +1,15 @@
 package com.example.typearg.app
 
 import com.example.typearg.dto.Item
+import com.example.typearg.lib.Bag
 import com.example.typearg.lib.BaseController
 import com.example.typearg.lib.Box
 import com.example.typearg.lib.Holder
 import com.example.typearg.lib.MidController
+import com.example.typearg.lib.Named
 import com.example.typearg.lib.Node
 import com.example.typearg.lib.Outer
+import com.example.typearg.lib.Pairs
 import java.time.Period
 import java.util.Date
 import org.springframework.web.bind.annotation.GetMapping
@@ -57,6 +60,15 @@ class TypeArgumentController {
 
     @GetMapping("/node")
     fun node(): Node<Item> = TODO()
+
+    @GetMapping("/bag")
+    fun bag(): Bag<Item> = TODO()
+
+    @GetMapping("/named")
+    fun named(): Named = TODO()
+
+    @GetMapping("/pairs")
+    fun pairs(): Pairs<String, Item> = TODO()
 
     @GetMapping("/holder")
     fun holder(): Holder = TODO()

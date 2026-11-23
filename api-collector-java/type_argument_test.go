@@ -66,6 +66,11 @@ var typeArgumentExpectation = map[string]map[string]string{
 	},
 	"/type-args/outer-outer": {"response.wrapped.data.wrapped.data": "object{name}"},
 	"/type-args/node":        {"response.value": "object{name}", "response.next": "Node"},
+	// A class that extends a map is a map of its superclass argument, written
+	// in its own scope.
+	"/type-args/bag":   {"response": "map<string,array<object{name}>>"},
+	"/type-args/named": {"response": "map<string,object{name}>"},
+	"/type-args/pairs": {"response": "map<string,object{name}>"},
 	// The classes the library's Holder writes in full are the ones it names,
 	// and the one it writes simply is its own.
 	"/type-args/holder": {
