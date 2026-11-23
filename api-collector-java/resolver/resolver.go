@@ -318,35 +318,25 @@ func (r *TypeResolver) classNamed(key string) (parser.Class, bool) {
 	if c, found := r.classRegistry[key]; found {
 		return c, r.sees(c)
 	}
-	if class := r.readQualified(key); class != nil {
+	if class, _ := r.readQualified(key); class != nil {
 		return *class, r.sees(*class)
 	}
 	return parser.Class{}, false
 }
 
 // readQualified reads the class a qualified name denotes from the dependencies
-// and registers it, or returns nil. A name that no scope qualified is not asked
+// and registers it, or returns nil, with the key it is held under. A name that no scope qualified is not asked
 // for: the index knows a class by its qualified name only. Nor is a class of the
 // JDK or of the Kotlin standard library, which are reached as scalars and
 // collections and as supertypes (Serializable) far more often than as a class
 // worth reading. A class nested in a class of the scanned sources is one of the
 // project's: the dependencies would read the class again from some release of
 // it, and answer with that one's.
-func (r *TypeResolver) readQualified(key string) *parser.Class {
+func (r *TypeResolver) readQualified(key string) (*parser.Class, string) {
 	if r.dependencyResolver == nil || !strings.Contains(key, ".") || isPlatformName(key) || r.memberOfScanned(key) {
-		return nil
+		return nil, ""
 	}
 	return r.readDependency(key)
-}
-
-// readDependency asks the dependencies for the class name denotes and registers
-// it under that name, or returns nil. Each name is asked for once.
-func (r *TypeResolver) readDependency(name string) *parser.Class {
-	class := r.dependencyClass(name)
-	if class != nil {
-		r.registerDependency(*class, name)
-	}
-	return class
 }
 
 // Supertype returns the declaration that name denotes when class writes it in
@@ -355,8 +345,55 @@ func (r *TypeResolver) readDependency(name string) *parser.Class {
 // member types are not in scope (JLS 6.3), so `Base` in
 // `class Child extends Base` is the class that Child's file imports, not a
 // `Child.Base` that Child declares.
+//
+// The name goes through the same scope as any other, the dependencies included:
+// a supertype that only a dependency declares is read from it, whether it is
+// imported, imported on demand, a neighbour of class in its package, or written
+// in full.
 func (r *TypeResolver) Supertype(class parser.Class, name string) (parser.Class, bool) {
-	return r.classNamed(r.supertypeKey(class, qualifiedName(class), name))
+	super, _, found := r.supertypeClass(class, qualifiedName(class), name)
+	return super, found && r.sees(super)
+}
+
+// supertypeClass returns the class that name denotes when c, registered under
+// key, writes it in its extends or implements clause, with the key it is held
+// under. A class the resolver does not hold is read from the dependencies.
+func (r *TypeResolver) supertypeClass(c parser.Class, key, name string) (parser.Class, string, bool) {
+	superKey := r.supertypeKey(c, key, name)
+	if held, found := r.classRegistry[superKey]; found {
+		return held, superKey, true
+	}
+	// A class of the JDK or of the project is not asked of the dependencies, nor is
+	// a name that no scope qualified.
+	if r.dependencyResolver == nil || !strings.Contains(superKey, ".") || isPlatformName(superKey) ||
+		r.isRegisteredEnum(superKey) || r.memberOfScanned(superKey) {
+		return parser.Class{}, "", false
+	}
+	class, heldAs := r.readDependency(superKey)
+	if class == nil {
+		return parser.Class{}, "", false
+	}
+	return *class, heldAs, true
+}
+
+// holdSuperclasses reads the superclasses of class from the dependencies when the
+// resolver does not hold them yet, so that the member types they declare are known
+// before the fields of class are read: a field typed by an inherited member type
+// is read in the scope of class, which includes it (JLS 8.5).
+func (r *TypeResolver) holdSuperclasses(class parser.Class) {
+	seen := map[string]bool{}
+	for c := class; c.SuperClass != ""; {
+		key := qualifiedName(c)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		super, _, found := r.supertypeClass(c, key, c.SuperClass)
+		if !found {
+			return
+		}
+		c = super
+	}
 }
 
 // sees reports whether the current view takes a declaration into account.
@@ -468,6 +505,26 @@ func (r *TypeResolver) dependencyClass(name string) *parser.Class {
 	return class
 }
 
+// readDependency asks the dependencies for the class name denotes, registers it
+// and returns it with the key it is held under. A name with a `$` is asked for as
+// written: the dependency resolver reads it as the binary name of a nested class
+// and as the name of a top-level class, whichever it finds. A resolver that does
+// not tell the two apart is asked for the binary name too.
+func (r *TypeResolver) readDependency(name string) (*parser.Class, string) {
+	class := r.dependencyClass(name)
+	if class == nil {
+		if canonical := canonicalName(name); canonical != name {
+			class, name = r.dependencyClass(canonical), canonical
+		}
+	}
+	if class == nil {
+		return nil, ""
+	}
+	key := heldKey(*class, name)
+	r.registerDependency(*class, key)
+	return class, key
+}
+
 // ResolveForBinding expands a type the way Spring's data binder sees it when
 // it binds a model attribute from request parameters, rather than the way
 // Jackson writes it: getter-only properties cannot be bound, so they are left
@@ -498,11 +555,13 @@ func (r *TypeResolver) resolveName(source parser.Class, name string) string {
 // by tier, as JLS 6.4.1 orders it, and the first tier that
 // declares the name answers:
 //
-//  1. the compilation unit of source: the classes declared in the same file,
-//     which are the member types of source and of the classes around it;
+//  0. the member types of source and of the classes around it, declared or
+//     inherited from a supertype (JLS 8.5), the innermost class first;
+//  1. the top-level classes of the compilation unit of source;
 //  2. a single-type import;
 //  3. the package of source;
-//  4. the imports on demand, in the order they are written.
+//  4. the imports on demand, in the order they are written, where an import of a
+//     class names the types nested in it.
 //
 // Every kind of declaration takes part in a tier at the same place: a class of
 // the scanned sources, a class already read from the dependencies, and a class
@@ -527,7 +586,16 @@ func (r *TypeResolver) scopedName(source parser.Class, name string, ask bool) st
 	if name == "" {
 		return name
 	}
-	name = r.readName(source, name)
+	if canonical := canonicalName(name); canonical != name {
+		return r.dollarName(source, name, canonical, ask)
+	}
+	return r.scopedPlain(source, name, ask)
+}
+
+// scopedPlain is scopedName for a name that is read as written: a dotted name is
+// a path to a member type (see resolveQualified), any other the simple name of a
+// class in scope.
+func (r *TypeResolver) scopedPlain(source parser.Class, name string, ask bool) string {
 	if strings.Contains(name, ".") {
 		return r.resolveQualified(source, name, func(s parser.Class, head string) string {
 			return r.scopedName(s, head, ask)
@@ -551,16 +619,34 @@ func (r *TypeResolver) isDependencySource(source parser.Class) bool {
 	return source.Name != "" && r.dependencyKeys[qualifiedName(source)]
 }
 
-// readName spells a name as the registry holds it. A `$` in a name is the
-// separator of a binary name, `Outer$Inner`, or a character of an identifier,
-// `Price$Value`, and the name alone does not say which: a name is read as a
-// binary name (see canonicalName) unless a class carries it as written, in which
-// case it is left alone.
-func (r *TypeResolver) readName(source parser.Class, name string) string {
-	if canonical := canonicalName(name); canonical != name && !r.carriedAsWritten(source, name) {
-		return canonical
+// dollarName resolves a name with a `$` in it. The `$` is the separator of a
+// binary name, `Outer$Inner`, or a character of an identifier, `Price$Value`, and
+// the name alone does not say which. It is read as a binary name first, `canonical`
+// (see canonicalName), unless a class carries it as written; when that finds no
+// class it is read as written, in the same scope.
+//
+// A name that neither reading finds a class for is returned as it was written,
+// not as the binary name, so that it reaches the dependencies in the spelling the
+// source used: only the dependency resolver can say whether `lib.Price$Value` is
+// the class Value nested in Price or a class of that name.
+func (r *TypeResolver) dollarName(source parser.Class, name, canonical string, ask bool) string {
+	binary := ""
+	if !r.carriedAsWritten(source, name) {
+		binary = r.scopedPlain(source, canonical, ask)
+		if r.isDeclared(binary) {
+			return binary
+		}
 	}
-	return name
+	written := r.scopedPlain(source, name, ask)
+	switch {
+	case r.isDeclared(written):
+		return written
+	case binary != "" && binary != canonical:
+		// The name of the class that encloses it was found: the path to the member
+		// is that class's key followed by the name, to be asked for.
+		return binary
+	}
+	return written
 }
 
 // carriedAsWritten reports whether a name spells a class with its `$` in the
@@ -615,34 +701,6 @@ func canonicalName(name string) string {
 		}
 	}
 	return strings.Join(parts, ".")
-}
-
-// canonicalType applies readName to every name a type spelling holds:
-// `List<Outer$Inner>` is `List<Outer.Inner>`.
-func canonicalType(rawType string, readName func(string) string) string {
-	if !strings.Contains(rawType, "$") {
-		return rawType
-	}
-	var out strings.Builder
-	start := -1
-	flush := func(end int) {
-		if start >= 0 {
-			out.WriteString(readName(rawType[start:end]))
-			start = -1
-		}
-	}
-	for i, ch := range rawType {
-		if unicode.IsLetter(ch) || unicode.IsDigit(ch) || ch == '_' || ch == '$' || ch == '.' {
-			if start < 0 {
-				start = i
-			}
-			continue
-		}
-		flush(i)
-		out.WriteRune(ch)
-	}
-	flush(len(rawType))
-	return out.String()
 }
 
 // resolveQualified resolves a dotted name. A name that starts with a package, as
@@ -746,8 +804,7 @@ func (r *TypeResolver) memberOf(c parser.Class, key, name string, seen map[strin
 		if super == "" {
 			continue
 		}
-		superKey := r.supertypeKey(c, key, super)
-		if superClass, found := r.classRegistry[superKey]; found {
+		if superClass, superKey, found := r.supertypeClass(c, key, super); found {
 			if member, found := r.memberOf(superClass, superKey, name, seen); found {
 				return member, true
 			}
@@ -830,7 +887,7 @@ func (r *TypeResolver) inScope(source parser.Class, name string, ask bool) (stri
 
 	// 3. Same package.
 	if source.Package != "" {
-		if key := source.Package + "." + name; r.declares(source, key, ask) {
+		if key, found := r.declares(source, source.Package+"."+name, ask); found {
 			return key, true
 		}
 	}
@@ -842,7 +899,7 @@ func (r *TypeResolver) inScope(source parser.Class, name string, ask bool) (stri
 		if imp.Static || !imp.OnDemand {
 			continue
 		}
-		if key := imp.Path + "." + name; r.declares(source, key, ask) {
+		if key, found := r.declares(source, imp.Path+"."+name, ask); found {
 			return key, true
 		}
 	}
@@ -873,20 +930,37 @@ func (r *TypeResolver) inScope(source parser.Class, name string, ask bool) (stri
 // A class the resolver holds has its member types registered with it (see
 // registerDependency), so a name under a held class that is not registered is not
 // a member: it is not asked for, which would only read the owner again.
-func (r *TypeResolver) declares(source parser.Class, key string, ask bool) bool {
+//
+// It returns the key the class is held under, which is the key asked for unless
+// the name has a `$`: `lib.Price$Value` may be the binary name of the class Value
+// nested in Price, which the dependencies answer with and which is held under
+// `lib.Price.Value`.
+func (r *TypeResolver) declares(source parser.Class, key string, ask bool) (string, bool) {
 	splitPackage := r.isScannedSource(source) && r.scannedPackages[packageOf(key)]
-	if _, found := r.classRegistry[key]; found {
-		return !splitPackage || !r.dependencyKeys[key]
+	for _, held := range []string{key, canonicalName(key)} {
+		if _, found := r.classRegistry[held]; found {
+			return held, !splitPackage || !r.dependencyKeys[held]
+		}
 	}
 	if !ask || splitPackage || isPlatformName(key) || r.isDeclared(packageOf(key)) {
-		return false
+		return "", false
 	}
 	class := r.dependencyClass(key)
 	if class == nil {
-		return false
+		return "", false
 	}
-	r.registerDependency(*class, key)
-	return true
+	held := heldKey(*class, key)
+	r.registerDependency(*class, held)
+	return held, true
+}
+
+// heldKey returns the key a class that the dependencies answered for name is held
+// under: the key of the class itself when name is its binary name, name otherwise.
+func heldKey(class parser.Class, name string) string {
+	if canonical := canonicalName(name); canonical != name && qualifiedName(class) == canonical {
+		return canonical
+	}
+	return name
 }
 
 // isScannedSource reports whether source is a compilation unit of the scanned
@@ -1067,7 +1141,6 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	if rawType == "" {
 		return model.NullModel()
 	}
-	rawType = canonicalType(rawType, func(name string) string { return r.readName(source, name) })
 
 	if typeBindings != nil {
 		if bound, ok := typeBindings[rawType]; ok {
@@ -1169,9 +1242,9 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	// which the table below answers for. A class of the JDK is no dependency of
 	// the project: asking for it would only cost a call to the indexer.
 	if r.dependencyResolver != nil && (strings.Contains(name, ".") || r.mayBeDependencyClass(source, name) && !isJdkValueName(name)) && !r.isRegisteredEnum(name) && !strings.HasPrefix(name, "java.") && !r.memberOfScanned(name) {
-		if depClass := r.readDependency(name); depClass != nil {
+		if depClass, key := r.readDependency(name); depClass != nil {
 			if r.sees(*depClass) {
-				return r.resolveClass(*depClass, name, typeArgs)
+				return r.resolveClass(*depClass, key, typeArgs)
 			}
 		}
 	}
@@ -1304,6 +1377,8 @@ func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []s
 			delete(r.resolving, key)
 		}
 	}()
+
+	r.holdSuperclasses(class)
 
 	localBindings := make(map[string]string)
 	for i, tp := range class.TypeParameters {
@@ -1757,7 +1832,8 @@ func (r *TypeResolver) writeInFull(key, name string) bool {
 	if r.isRegistered(key) || r.dependencyResolver != nil || r.allTypeParams[name] {
 		return true
 	}
-	for _, other := range r.bySimpleName[name] {
+	// A class nested in another is read by the simple name it ends in.
+	for _, other := range r.bySimpleName[lastSegment(canonicalName(name))] {
 		if other != key {
 			return true
 		}

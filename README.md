@@ -246,6 +246,14 @@ is reported as unresolved. The indexer holds top-level classes only, so a class
 nested in a library class is read from the source of the class that declares
 it, in one call for the class and all that is nested in it.
 
+A name written with a `$` is read as the binary name of a nested class
+(`Outer$Inner`) and, when that finds no class, as the name of a class that has a
+`$` in it (`Price$Value`); the indexer is asked for it as written, so it can say
+which. A superclass is read like any other class, a library's included, whether it
+is imported, imported on demand, a neighbour in the package or written in full, and
+the arguments of its `extends` clause are read in the header of the subclass, where
+the subclass's own nested classes are not in scope.
+
 With maven-indexer-cli 1.2.0 or later, APilot asks the indexer to pin each
 class to the version the project's dependency tree names (`--project-path`),
 but on released CLIs up to 1.2.1 most types are still read from the version
