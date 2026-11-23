@@ -1,10 +1,13 @@
 package com.example.typearg.app;
 
 import com.example.typearg.dto.Item;
+import com.example.typearg.lib.Bag;
 import com.example.typearg.lib.Box;
 import com.example.typearg.lib.Holder;
+import com.example.typearg.lib.Named;
 import com.example.typearg.lib.Node;
 import com.example.typearg.lib.Outer;
+import com.example.typearg.lib.Pairs;
 import java.time.Period;
 import java.util.Date;
 import java.util.List;
@@ -86,6 +89,21 @@ public class TypeArgumentController {
 
     @GetMapping("/node")
     public Node<Item> node() {
+        return null;
+    }
+
+    @GetMapping("/bag")
+    public Bag<Item> bag() {
+        return null;
+    }
+
+    @GetMapping("/named")
+    public Named named() {
+        return null;
+    }
+
+    @GetMapping("/pairs")
+    public Pairs<String, Item> pairs() {
         return null;
     }
 
