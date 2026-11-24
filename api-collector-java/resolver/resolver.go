@@ -1867,7 +1867,7 @@ func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []s
 	}
 
 	if class.IsInterface {
-		if impl, implKey, found := r.findImplementation(class, key); found {
+		if impl, implKey, found := r.findImplementation(key); found {
 			return r.resolveClass(impl, implKey, nil)
 		}
 		return model.RefModel(class.Name)
@@ -2530,9 +2530,14 @@ func (r *TypeResolver) isMapSubclass(class parser.Class) bool {
 }
 
 // findImplementation returns the class in the scanned sources that implements
-// the interface registered under key, preferring a declaration whose own
-// implements clause resolves to that interface.
-func (r *TypeResolver) findImplementation(iface parser.Class, key string) (parser.Class, string, bool) {
+// the interface registered under key: the first, in the order of the keys, whose
+// implements clause names it.
+//
+// The clause names the interface as the header of the class reads the name (see
+// supertypeKey), which is the whole of what makes a name the interface: the simple
+// name alone does not say which interface it is, and one that another package, a
+// library or a class around the implementing class declares under it is another.
+func (r *TypeResolver) findImplementation(key string) (parser.Class, string, bool) {
 	keys := make([]string, 0, len(r.classRegistry))
 	for candidate := range r.classRegistry {
 		keys = append(keys, candidate)
@@ -2545,10 +2550,7 @@ func (r *TypeResolver) findImplementation(iface parser.Class, key string) (parse
 			continue
 		}
 		for _, ifaceName := range class.Interfaces {
-			// The simple name stands for an interface of the scanned sources only
-			// when it is a top-level one: a nested interface has its own key, and
-			// another interface of the same name nested elsewhere is not it.
-			if r.supertypeKey(class, candidate, ifaceName) == key || (iface.Outer == "" && ifaceName == iface.Name) {
+			if r.supertypeKey(class, candidate, ifaceName) == key {
 				return class, candidate, true
 			}
 		}
