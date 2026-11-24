@@ -170,6 +170,11 @@ func (r *TypeResolver) Identity(source parser.Class, name string) string {
 	if _, keyword := primitiveTypes[name]; keyword {
 		return name
 	}
+	// A type variable of source is no class: it is what the name denotes in the
+	// body of the class, before any class of the scope.
+	if r.isTypeVariable(source, name) {
+		return name
+	}
 	if key, found := r.inScope(source, name, false); found {
 		return key
 	}

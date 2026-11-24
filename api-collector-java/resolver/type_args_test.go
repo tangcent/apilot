@@ -243,12 +243,12 @@ func TestQualifyTypeName_ATypeOfTheJdkIsWrittenInFull(t *testing.T) {
 
 // A type variable of the caller is replaced by what it is bound to, once: the
 // binding is an argument already spelled in full. One that nothing binds is
-// left alone, whatever class shares its name.
+// spelled as an open variable, whatever class shares its name.
 func TestQualifyTypeName_TypeVariablesOfTheCaller(t *testing.T) {
 	r := NewTypeResolver([]parser.Class{typeArgItem(typeArgDtoPackage, "name")})
 	caller := parser.Class{Name: "Result", Package: typeArgAppPackage, TypeParameters: []string{"T", "Item"}}
 	got := r.qualifyTypeArgs(caller, map[string]string{"T": "com.example.app.dto.Item[]"}, []string{"T", "List<T>", "Item", "Map<String, T[]>"})
-	want := []string{"com.example.app.dto.Item[]", "java.util.List<com.example.app.dto.Item[]>", "Item", "java.util.Map<java.lang.String, com.example.app.dto.Item[][]>"}
+	want := []string{"com.example.app.dto.Item[]", "java.util.List<com.example.app.dto.Item[]>", "'Item", "java.util.Map<java.lang.String, com.example.app.dto.Item[][]>"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("qualifyTypeArgs:\n got  %q\n want %q", got, want)
 	}
@@ -271,8 +271,8 @@ func TestSuperClassBindings(t *testing.T) {
 		{"SubList", nil, map[string]string{"B": "java.util.List<com.example.app.dto.Item>"}},
 		{"SubInt", nil, map[string]string{"B": "java.lang.Integer"}},
 		{"SubGeneric", map[string]string{"S": "com.example.lib.Item"}, map[string]string{"B": "java.util.List<com.example.lib.Item>"}},
-		// A parameter nobody bound stays a name.
-		{"SubGeneric", nil, map[string]string{"B": "java.util.List<S>"}},
+		// A parameter nobody bound stays a variable, spelled as an open one.
+		{"SubGeneric", nil, map[string]string{"B": "java.util.List<'S>"}},
 	} {
 		got := r.SuperClassBindings(typeArgClass(tc.class), base, tc.bindings)
 		if !reflect.DeepEqual(got, tc.want) {

@@ -286,6 +286,7 @@ func extractAllClasses(tree *tree_sitter.Tree, source []byte) ([]Class, error) {
 			class.Package = packageName
 			class.Outer = enclosingTypes(node, source)
 			class.Local = isLocalType(node)
+			class.Inner = isInnerClass(node)
 			class.Imports = imports
 			classes = append(classes, class)
 		case "interface_declaration":

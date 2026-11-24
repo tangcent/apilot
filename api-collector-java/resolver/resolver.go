@@ -1389,10 +1389,55 @@ func (r *TypeResolver) mayBeDependencyClass(source parser.Class, name string) bo
 	return true
 }
 
-// isTypeVariable reports whether name is a type parameter of the class source,
-// the type variables in scope in its body.
+// isTypeVariable reports whether name is a type variable in scope in the body of
+// the class source: a type parameter of source, or, when source is an inner
+// class, of a class around it, the innermost first (see parser.Class.Inner). A
+// type variable is the first thing a name denotes there: it hides every class
+// that carries the name, whichever the scope declares, imports or inherits.
 func (r *TypeResolver) isTypeVariable(source parser.Class, name string) bool {
-	return slices.Contains(source.TypeParameters, name)
+	for c := source; ; c = r.enclosing(c) {
+		if slices.Contains(c.TypeParameters, name) {
+			return true
+		}
+		if !c.Inner || c.Outer == "" {
+			return false
+		}
+	}
+}
+
+// openVariableMark begins the spelling of a type variable of the caller that no
+// argument binds, as it is bound to the parameter of the class it is passed to
+// (see qualifyTypeName). The caller knows that the name is its own variable, and
+// the class the argument reaches does not: there, the same name is looked up as a
+// class, and a class of any package that carries it would be the answer. The mark
+// is not a character of any name, so the spelling cannot be mistaken for one.
+const openVariableMark = "'"
+
+// openVariable spells name as a type variable of the caller that nothing binds.
+func openVariable(name string) string {
+	return openVariableMark + name
+}
+
+// variableName returns the name of the type variable that a spelling stands for,
+// and whether it stands for one (see openVariableMark).
+func variableName(spelled string) (string, bool) {
+	return strings.CutPrefix(strings.TrimSpace(spelled), openVariableMark)
+}
+
+// isOpenBinding reports whether the argument a type parameter is bound to is a
+// type variable that nothing binds, so that the field typed with the parameter is
+// generic.
+//
+// The caller marks a variable of its own class (see openVariableMark). One of a
+// method is not marked: the parser does not record them, so the name reaches here
+// as written, a name that no scope declared. It is a variable when some class
+// declares it as a type parameter and no class of the project carries it.
+func (r *TypeResolver) isOpenBinding(bound string) bool {
+	if name, marked := variableName(bound); marked {
+		// An array of the variable is an array, not a variable.
+		return !strings.HasSuffix(name, "[]")
+	}
+	return r.allTypeParams[bound] && len(r.bySimpleName[bound]) == 0
 }
 
 // isJdkValueName reports whether a simple name is one that ResolveFrom answers
@@ -1561,6 +1606,17 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	// `Order[][]` is an array of arrays of Order.
 	if element, ok := strings.CutSuffix(strings.TrimSpace(rawType), "[]"); ok {
 		return model.ArrayModel(r.ResolveFrom(source, element, typeBindings))
+	}
+
+	// A type variable that nothing binds is an open type, whatever class carries
+	// its name: the name is not looked up. One that an argument passed on from the
+	// caller is spelled as such (see openVariableMark); one of source's own class
+	// is in scope here (see isTypeVariable).
+	if name, marked := variableName(rawType); marked {
+		return model.SingleModel(name)
+	}
+	if name := strings.TrimSpace(rawType); r.isTypeVariable(source, name) {
+		return model.SingleModel(name)
 	}
 
 	if jsonType, ok := primitiveTypes[rawType]; ok {
@@ -1972,8 +2028,12 @@ func (r *TypeResolver) resolveField(source parser.Class, f parser.Field, localBi
 		Model:    fieldModel,
 		Required: r.fieldRequired(source, f.Annotations),
 	}
+	// A field typed with a type variable is typed with what the variable is bound
+	// to, not with the class its name could be: the rules below read a class by the
+	// name the field is written with.
+	variable := r.isTypeVariable(source, strings.TrimSpace(f.Type))
 	// In the binding view, an enum field is one of the enum's constants.
-	if r.bindingView {
+	if r.bindingView && !variable {
 		if enum, ok := r.enumClass(source, f.Type); ok {
 			fm.Options = EnumOptions(enum)
 		}
@@ -1983,12 +2043,14 @@ func (r *TypeResolver) resolveField(source parser.Class, f parser.Field, localBi
 	// holding one of its constants in either view: its declaration is known
 	// without being read, so there is nothing for the JSON view not to see.
 	valueType := f.Type
-	if inner, optional := r.optionalValue(source, f.Type); optional {
-		fm.Required = false
-		valueType = inner
-	}
-	if enum, ok := r.platformEnum(source, valueType); ok {
-		fm.Options = EnumOptions(enum)
+	if !variable {
+		if inner, optional := r.optionalValue(source, f.Type); optional {
+			fm.Required = false
+			valueType = inner
+		}
+		if enum, ok := r.platformEnum(source, valueType); ok {
+			fm.Options = EnumOptions(enum)
+		}
 	}
 	javadoc.FieldDocumentationFor(f.Annotations, f.JavaDoc).Normalize().ApplyTo(fm)
 	// Values the field declares in its own way win over the ones its doc
@@ -1996,18 +2058,14 @@ func (r *TypeResolver) resolveField(source parser.Class, f parser.Field, localBi
 	if len(fm.Options) == 0 {
 		fm.Options = r.seeOptions(source, f.RawJavaDoc)
 	}
+	// The field is generic when its type is a variable that nothing binds: one of
+	// source's own parameters that no argument binds, or that is bound to a variable
+	// the caller left open (see isOpenBinding), or, in an inner class, one of the
+	// classes around it, which no argument can reach (see isTypeVariable).
 	if r.isUnboundTypeParam(f.Type, localBindings, typeParamSet) {
 		fm.Generic = true
-	} else if fieldModel != nil && fieldModel.Kind == model.KindSingle {
-		// The name on the model is the one the source wrote; whether it is a
-		// variable is a matter of what it denotes, which the binding spells.
-		name := fieldModel.TypeName
-		if bound, ok := localBindings[f.Type]; ok && r.shortForm(bound) == name {
-			name = bound
-		}
-		if r.isOpenTypeVariable(source, name) {
-			fm.Generic = true
-		}
+	} else if variable && !slices.Contains(source.TypeParameters, strings.TrimSpace(f.Type)) {
+		fm.Generic = true
 	}
 	return fm
 }
@@ -2132,24 +2190,7 @@ func (r *TypeResolver) isUnboundTypeParam(typeName string, localBindings map[str
 	}
 	if bound, exists := localBindings[typeName]; exists {
 		// Bound to another type variable: one the caller left open.
-		return r.isOpenTypeVariable(parser.Class{}, bound)
-	}
-	return true
-}
-
-// isOpenTypeVariable reports whether name, as written in source, is read as a
-// type variable that nothing binds. The names of the type parameters of every
-// class of the project are known, and a class that carries the name of one of
-// them is that class and not a variable: a class of the scanned sources, an enum
-// the JSON view does not read, a class that source imports.
-func (r *TypeResolver) isOpenTypeVariable(source parser.Class, name string) bool {
-	if !r.allTypeParams[name] || len(r.bySimpleName[name]) > 0 {
-		return false
-	}
-	for _, imp := range source.Imports {
-		if !imp.Static && !imp.OnDemand && lastSegment(imp.Path) == name {
-			return false
-		}
+		return r.isOpenBinding(bound)
 	}
 	return true
 }
@@ -2236,8 +2277,9 @@ func (r *TypeResolver) qualifyTypeArgs(source parser.Class, bindings map[string]
 // simple name.
 //
 // A type variable of source that bindings binds is replaced by its binding,
-// which is already spelled this way; one that nothing binds stays as written.
-// Every other class name goes through the same scope order as a direct
+// which is already spelled this way; one that nothing binds is spelled as an open
+// variable (see openVariableMark), which keeps it apart from every class that
+// carries its name. Every other class name goes through the same scope order as a direct
 // reference (see resolveName) and is written as the class it denotes, in full, in
 // nested type arguments, array dimensions and wildcard bounds alike: whatever the
 // class is, of the project, of a library or of the JDK, the spelling names it by
@@ -2261,6 +2303,10 @@ func (r *TypeResolver) qualifyTypeName(source parser.Class, bindings map[string]
 	if typeName == "" {
 		return typeName
 	}
+	// A variable the caller left open is spelled already, and is no name to look up.
+	if _, marked := variableName(typeName); marked {
+		return typeName
+	}
 	if isWildcard(typeName) {
 		rest := strings.TrimSpace(strings.TrimPrefix(typeName, "?"))
 		for _, bound := range []string{"extends ", "super "} {
@@ -2280,8 +2326,8 @@ func (r *TypeResolver) qualifyTypeName(source parser.Class, bindings map[string]
 		if bound, ok := bindings[base]; ok {
 			return bound + suffix
 		}
-		if slices.Contains(source.TypeParameters, base) {
-			return base + suffix
+		if r.isTypeVariable(source, base) {
+			return openVariable(base) + suffix
 		}
 	}
 	if spelled, ok := scopeFreeName(base); ok {
@@ -2350,6 +2396,8 @@ func (r *TypeResolver) ShowAs(identity, name string) {
 // is shown on a model and reported as unresolved is a name for people, so
 // `Optional<com.pr.lib.Item>` reads as `Optional<Item>`, as it was written.
 func (r *TypeResolver) shortForm(spelled string) string {
+	// A variable the caller left open is shown by its name (see openVariableMark).
+	spelled = strings.ReplaceAll(spelled, openVariableMark, "")
 	if len(r.shown) == 0 || !strings.Contains(spelled, ".") {
 		return spelled
 	}

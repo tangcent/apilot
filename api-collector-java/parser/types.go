@@ -100,6 +100,12 @@ type Class struct {
 	// neither a member type of the class around it nor a class of its package.
 	// Outer still names the types around it.
 	Local bool
+	// Inner marks a member class that is not static. Only an inner class sees the
+	// type parameters of the classes around it: `class Outer<T> { class Inner { T
+	// value; } }` reads the T of Outer, and a static member class has no such T. A
+	// member of an interface is static whether or not it says so, and an
+	// interface, an enum and a record are never inner.
+	Inner bool
 	// Decompiled marks a class read from a source that a decompiler printed from
 	// bytecode, as against one a developer wrote. Bytecode spells the class Inner
 	// of Outer as `Outer$Inner`, its binary name, and a decompiler may keep that

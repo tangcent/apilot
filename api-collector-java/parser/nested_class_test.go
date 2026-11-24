@@ -288,3 +288,54 @@ public class Outer {
 		t.Errorf("local classes:\n got  %v\n want %v", local, want)
 	}
 }
+
+// An inner class is a member class that is not static, and it is the only kind
+// that sees the type parameters of the classes around it. A member of an
+// interface is static without saying so; an interface, an enum and a record
+// are never inner, and a class declared in a block is not a member.
+func TestParser_MarksTheInnerClasses(t *testing.T) {
+	classes := parseNestedSource(t, `package com.example;
+
+public class Outer<T> {
+    class Inner {}
+    static class Nested {}
+    public final class FinalInner {}
+    class Mid {
+        class Deep {}
+        static class Fixed {}
+    }
+    interface Contract {
+        class InInterface {}
+    }
+    enum Kind {
+        ONE;
+        class InEnum {}
+    }
+    record Pair(String a) {
+        class InRecord {}
+    }
+    private final Runnable anonymous = new Runnable() {
+        class InAnonymous {}
+        public void run() {}
+    };
+    void run() {
+        class InMethod {}
+    }
+}
+`)
+	inner := map[string]bool{}
+	for key, c := range classes {
+		inner[key[len("com.example."):]] = c.Inner
+	}
+	want := map[string]bool{
+		"Outer": false, "Outer.Inner": true, "Outer.Nested": false, "Outer.FinalInner": true,
+		"Outer.Mid": true, "Outer.Mid.Deep": true, "Outer.Mid.Fixed": false,
+		"Outer.Contract": false, "Outer.Contract.InInterface": false,
+		"Outer.Kind": false, "Outer.Kind.InEnum": true,
+		"Outer.Pair": false, "Outer.Pair.InRecord": true,
+		"Outer.InAnonymous": false, "Outer.InMethod": false,
+	}
+	if !reflect.DeepEqual(inner, want) {
+		t.Errorf("inner classes:\n got  %v\n want %v", inner, want)
+	}
+}

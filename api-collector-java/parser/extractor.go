@@ -77,6 +77,31 @@ func enclosingTypes(node *tree_sitter.Node, source []byte) string {
 	return strings.Join(names, ".")
 }
 
+// isInnerClass reports whether a class declaration is an inner class: a member of
+// a class, an enum or a record, without the modifier static (see Class.Inner). A
+// member of an interface or an annotation type is static, and a class declared in
+// a block is not a member.
+func isInnerClass(node *tree_sitter.Node) bool {
+	if node.Kind() != "class_declaration" || isLocalType(node) {
+		return false
+	}
+	if parent := node.Parent(); parent == nil || (parent.Kind() != "class_body" && parent.Kind() != "enum_body_declarations") {
+		return false
+	}
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() != "modifiers" {
+			continue
+		}
+		for j := uint(0); j < child.ChildCount(); j++ {
+			if child.Child(j).Kind() == "static" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // isLocalType reports whether a type declaration is local: declared anywhere but
 // as a member of a type, in a block, a lambda, an anonymous class or the body of
 // an enum constant. Its name is in scope in that block only (JLS 6.3), so no
