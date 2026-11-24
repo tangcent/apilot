@@ -229,6 +229,7 @@ func extractClass(node *tree_sitter.Node, source []byte, packageName, filePath s
 		Name:           nameNode.Utf8Text(source),
 		Package:        packageName,
 		Outer:          outer,
+		IsInner:        flags["inner"],
 		IsPrivate:      flags["private"],
 		FilePath:       filePath,
 		KDoc:           kdoc,

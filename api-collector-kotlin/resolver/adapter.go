@@ -629,7 +629,7 @@ func toJavaImports(imports []ktparser.Import) []javaparser.Import {
 // Spring can set, under its Kotlin name.
 func (s *typeScope) toBindingClass(class ktparser.Class) javaparser.Class {
 	out := s.toJavaClass(ktparser.Class{
-		Name: class.Name, Package: class.Package, Outer: class.Outer, FilePath: class.FilePath, KDoc: class.KDoc,
+		Name: class.Name, Package: class.Package, Outer: class.Outer, IsInner: class.IsInner, FilePath: class.FilePath, KDoc: class.KDoc,
 		Annotations: class.Annotations, TypeParameters: class.TypeParameters,
 		SuperClass: class.SuperClass, SuperClassTypeArgs: class.SuperClassTypeArgs,
 		Interfaces: class.Interfaces, Imports: class.Imports,
@@ -659,6 +659,7 @@ func (s *typeScope) toJavaClass(class ktparser.Class) javaparser.Class {
 		Name:           class.Name,
 		Package:        class.Package,
 		Outer:          class.Outer,
+		Inner:          class.IsInner,
 		FilePath:       class.FilePath,
 		JavaDoc:        javadoc.CleanJavaDoc(class.KDoc),
 		Annotations:    toJavaAnnotations(class.Annotations),

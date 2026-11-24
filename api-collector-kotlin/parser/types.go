@@ -109,6 +109,10 @@ type Class struct {
 	// belongs. A companion object is not one: its constants are read onto the
 	// class it belongs to.
 	Outer string
+	// IsInner marks a class written with the modifier inner. Only an inner class
+	// sees the type parameters of the classes around it: a nested class without
+	// the modifier has no access to them.
+	IsInner bool
 	// IsPrivate marks a declaration written private. At the top level that makes
 	// it visible in its file only.
 	IsPrivate bool

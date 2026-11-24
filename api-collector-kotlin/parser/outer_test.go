@@ -56,6 +56,33 @@ internal class Shown
 	}
 }
 
+// A class written with the modifier inner is marked: it sees the type parameters
+// of the classes around it, which a nested class without the modifier does not.
+func TestParse_AnInnerClassIsMarked(t *testing.T) {
+	result := parseKotlin(t, `package a.b
+
+class Holder<T> {
+    inner class Inside(val value: T)
+    class Nested(val value: String)
+    inner class Mid {
+        private inner class Deep
+    }
+    data class Row(val id: Int)
+    enum class Kind { A }
+}
+`)
+	got := map[string]bool{}
+	for _, class := range result.Classes {
+		got[class.Name] = class.IsInner
+	}
+	want := map[string]bool{
+		"Holder": false, "Inside": true, "Nested": false, "Mid": true, "Deep": true, "Row": false, "Kind": false,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("inner classes = %v, want %v", got, want)
+	}
+}
+
 // A typealias is read with its name, its type parameters and the type it names,
 // which is read in the scope of the file that declares it.
 func TestParse_ATypeAliasIsRead(t *testing.T) {

@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"slices"
 	"strings"
 
 	javaparser "github.com/tangcent/apilot/api-collector-java/parser"
@@ -215,6 +216,26 @@ func (s *typeScope) aliasAt(unit *ktparser.Class, qualified string) *ktparser.Ty
 // loop.
 const maxSuperDepth = 8
 
+// typeParameter reports whether name is a type parameter in scope in unit: one
+// that unit declares, or, when unit is an inner class, one of a class around it,
+// the innermost first. A nested class that is not inner has no access to the type
+// parameters of the class around it. A type parameter is the first thing a name
+// denotes where it is in scope, before any class, nested, imported, of the
+// package or of the standard library: `class Box<String>(val value: String)` has
+// a value of the type parameter String, not of kotlin.String.
+func (s *typeScope) typeParameter(unit *ktparser.Class, name string) bool {
+	for c := unit; c != nil; {
+		if slices.Contains(c.TypeParameters, name) {
+			return true
+		}
+		if s == nil || !c.IsInner || c.Outer == "" {
+			return false
+		}
+		c = s.classes[qualify(c.Package, c.Outer)]
+	}
+	return false
+}
+
 // memberType reports whether name is a nested class that the body of unit sees
 // by its simple name: one nested in unit, in a class that encloses it, or in a
 // supertype of either. Kotlin looks for it there before it looks at the file
@@ -364,7 +385,8 @@ type binding struct {
 // A name spelled with its package is that class or it is not. A simple name is
 // bound in the order Kotlin binds the names of a class body and the top level of
 // a file, which the Kotlin specification gives under "Call without an explicit
-// receiver" (Overload resolution, 3.1 to 3.4):
+// receiver" (Overload resolution, 3.1 to 3.4), after the type parameters in
+// scope, which hide every class (see typeParameter):
 //
 //  0. nested classes in scope in the body: those of the class, of the classes
 //     around it and of their supertypes,
@@ -385,6 +407,9 @@ func (s *typeScope) bind(unit *ktparser.Class, name string) binding {
 		return binding{alias: s.aliasAt(unit, name)}
 	}
 	if unit != nil {
+		if s.typeParameter(unit, name) {
+			return binding{}
+		}
 		if s.memberType(unit, name) {
 			return binding{}
 		}
