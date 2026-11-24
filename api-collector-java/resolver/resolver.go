@@ -1354,13 +1354,14 @@ func isJavaLangType(name string) bool {
 // name denotes the JDK class only when nothing closer declares it: java.lang is
 // imported by every compilation unit, but only as the last on-demand import
 // (JLS 6.4.1), so a class of the same file, a single-type import, a class of
-// the same package or another on-demand import of that name comes first.
-// Importing the JDK class by name is no such declaration.
+// the same package or another on-demand import of that name comes first, and a
+// type variable of source hides it before any of them. Importing the JDK class
+// by name is no such declaration.
 func (r *TypeResolver) javaLangType(source parser.Class, typeName string) (string, bool) {
 	if simple, qualified := strings.CutPrefix(typeName, "java.lang."); qualified {
 		return simple, isJavaLangType(simple)
 	}
-	if !isJavaLangType(typeName) {
+	if !isJavaLangType(typeName) || r.isTypeVariable(source, typeName) {
 		return "", false
 	}
 	if key, declared := r.inScope(source, typeName, true); declared && key != "java.lang."+typeName {
