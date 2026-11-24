@@ -344,6 +344,10 @@ type TypeResolver struct {
 	// a single value named MultipartFile, which a class of the project or a name
 	// nothing binds that is called the same is not (see IsUpload).
 	uploads map[*model.ObjectModel]bool
+	// variables holds the models the resolver answered a type variable that nothing
+	// binds with: a single value named like the variable, which an enum or a class of
+	// the project that is called the same is not (see IsOpenVariable).
+	variables map[*model.ObjectModel]bool
 }
 
 // SetRequiredFields selects how resolved fields are marked required: one of
@@ -1424,6 +1428,26 @@ func variableName(spelled string) (string, bool) {
 	return strings.CutPrefix(strings.TrimSpace(spelled), openVariableMark)
 }
 
+// openType is the model of a type variable that nothing binds: a single value
+// named like the variable. The model is remembered, as the one that tells the
+// variable apart from a class or an enum that carries the name (see IsOpenVariable).
+func (r *TypeResolver) openType(name string) *model.ObjectModel {
+	open := model.SingleModel(name)
+	if r.variables == nil {
+		r.variables = make(map[*model.ObjectModel]bool)
+	}
+	r.variables[open] = true
+	return open
+}
+
+// IsOpenVariable reports whether m is a model this resolver answered a type
+// variable that nothing binds with. The model is shown by the name of the
+// variable, as a class of the project or an enum that is called so is, so the
+// model itself is what tells them apart, not its name.
+func (r *TypeResolver) IsOpenVariable(m *model.ObjectModel) bool {
+	return m != nil && r.variables[m]
+}
+
 // isOpenBinding reports whether the argument a type parameter is bound to is a
 // type variable that nothing binds, so that the field typed with the parameter is
 // generic.
@@ -1613,10 +1637,10 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	// caller is spelled as such (see openVariableMark); one of source's own class
 	// is in scope here (see isTypeVariable).
 	if name, marked := variableName(rawType); marked {
-		return model.SingleModel(name)
+		return r.openType(name)
 	}
 	if name := strings.TrimSpace(rawType); r.isTypeVariable(source, name) {
-		return model.SingleModel(name)
+		return r.openType(name)
 	}
 
 	if jsonType, ok := primitiveTypes[rawType]; ok {

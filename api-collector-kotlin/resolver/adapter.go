@@ -279,6 +279,14 @@ func (r *Resolver) IsUpload(m *model.ObjectModel) bool {
 	return r.tr.IsUpload(m) || (r.bindingTR != nil && r.bindingTR.IsUpload(m))
 }
 
+// isOpenVariable reports whether m is a model the resolver answered a type
+// variable that nothing binds with, in the JSON view or the binding view. It is
+// shown by the name of the variable, as an enum of the project that is called so
+// is.
+func (r *Resolver) isOpenVariable(m *model.ObjectModel) bool {
+	return r.tr.IsOpenVariable(m) || (r.bindingTR != nil && r.bindingTR.IsOpenVariable(m))
+}
+
 // IsEnumIn reports whether a class name written in source denotes an enum of the
 // project, by the scope of its file.
 func (r *Resolver) IsEnumIn(source *ktparser.Class, name string) bool {
@@ -523,7 +531,8 @@ func (r *Resolver) applyEnums(m *model.ObjectModel) {
 	}
 	switch m.Kind {
 	case model.KindSingle:
-		if r.IsEnum(m.TypeName) {
+		// A type variable that nothing binds is not the enum that carries its name.
+		if !r.isOpenVariable(m) && r.IsEnum(m.TypeName) {
 			m.TypeName = model.JsonTypeString
 		}
 	case model.KindObject:
@@ -531,7 +540,7 @@ func (r *Resolver) applyEnums(m *model.ObjectModel) {
 			if field == nil || field.Model == nil {
 				continue
 			}
-			if field.Model.Kind == model.KindSingle {
+			if field.Model.Kind == model.KindSingle && !r.isOpenVariable(field.Model) {
 				if options := r.enumOptions(field.Model.TypeName); len(options) > 0 {
 					field.Model = model.SingleModel(model.JsonTypeString)
 					field.Options = options

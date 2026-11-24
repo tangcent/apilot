@@ -160,6 +160,32 @@ func TestResolve_ATypeVariableIsDecidedByTheScopeOfTheClassThatWritesIt(t *testi
 	}
 }
 
+// The model of an open variable is told from the model of a class or an enum that
+// carries the name by the model itself: both are a single value called Status.
+func TestIsOpenVariable_TellsAVariableFromAClassOfTheSameName(t *testing.T) {
+	for kind, unrelated := range unrelatedStatuses() {
+		t.Run(kind, func(t *testing.T) {
+			r := NewTypeResolver(openVariableClasses(unrelated))
+			caller := recursionCaller()
+
+			outer := r.ResolveFrom(caller, "com.example.lib.Outer", nil)
+			for _, path := range []string{"own", "box.data", "box.list.[]"} {
+				if got := typeArgAtItems(outer, path); !r.IsOpenVariable(got) {
+					t.Errorf("Outer.%s = %s, want the model of an open variable", path, typeArgShape(got))
+				}
+			}
+			// Bound to the other package's Status, the value is that class or enum.
+			bound := r.ResolveFrom(caller, "com.example.lib.Outer<com.example.other.Status>", nil)
+			if got := typeArgAt(bound, "own"); r.IsOpenVariable(got) {
+				t.Errorf("Outer<Status>.own = %s, want what Status is bound to", typeArgShape(got))
+			}
+			if r.IsOpenVariable(nil) || r.IsOpenVariable(model.SingleModel("Status")) {
+				t.Error("a model that the resolver did not answer with is no open variable")
+			}
+		})
+	}
+}
+
 // typeArgAtItems follows a dotted path of field names, and a segment `[]` steps
 // into the element of an array.
 func typeArgAtItems(m *model.ObjectModel, path string) *model.ObjectModel {
