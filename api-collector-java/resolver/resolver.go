@@ -1817,10 +1817,9 @@ func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []s
 		return model.RefModel(class.Name)
 	}
 
-	if r.isMapSubclass(class) {
-		return r.resolveMapSubclass(class, typeArgs)
-	}
-
+	// The class is being expanded from here on, a map subclass too: the value of
+	// its map is read from the arguments of its extends clause, which may name
+	// the class again (`Tree extends HashMap<String, Tree>`).
 	r.resolving[key] = append(r.resolving[key], expansion)
 	defer func() {
 		if active := r.resolving[key]; len(active) > 1 {
@@ -1829,6 +1828,10 @@ func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []s
 			delete(r.resolving, key)
 		}
 	}()
+
+	if r.isMapSubclass(class) {
+		return r.resolveMapSubclass(class, typeArgs)
+	}
 
 	localBindings := make(map[string]string)
 	for i, tp := range class.TypeParameters {

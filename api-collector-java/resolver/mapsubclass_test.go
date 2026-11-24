@@ -96,6 +96,74 @@ func TestResolve_AMapSubclassAsTheArgumentOfAGenericClass(t *testing.T) {
 	}
 }
 
+// A map subclass whose value type refers to the subclass again is expanded once
+// and then named: `Tree extends HashMap<String, Tree>` is a map of trees, and the
+// tree inside it is a reference, not the same map expanded without end. The value
+// comes from the superclass's arguments, which may name the class with the
+// arguments it is expanded as, so the class is registered as being expanded
+// before the map's value is read.
+func selfMapClasses() []parser.Class {
+	f := typeArgField
+	class := func(name string, params []string, value string) parser.Class {
+		return parser.Class{
+			Name: name, Package: typeArgLibPackage, FilePath: "com/example/lib/" + name + ".java",
+			TypeParameters: params, SuperClass: "HashMap", SuperClassTypeArgs: []string{"String", value},
+		}
+	}
+	return []parser.Class{
+		typeArgItem(typeArgDtoPackage, "name"),
+		class("Tree", nil, "Tree"),
+		class("Node", []string{"V"}, "Node<V>"),
+		class("Forest", []string{"V"}, "List<Forest<V>>"),
+		class("Grow", []string{"V"}, "Grow<List<V>>"),
+		class("Left", nil, "Right"),
+		class("Right", nil, "Left"),
+		{
+			Name: "Holder", Package: typeArgLibPackage, FilePath: "com/example/lib/Holder.java",
+			Fields: []parser.Field{f("tree", "Tree"), f("node", "Node<Item>"), f("raw", "Node"), f("trees", "List<Tree>"), f("forest", "Forest<Item>")},
+		},
+	}
+}
+
+func TestResolve_AMapSubclassThatContainsItselfEnds(t *testing.T) {
+	isMapOfRef := func(m *model.ObjectModel) bool { return m != nil && m.IsMap() && isReference(m.ValueModel) }
+	for view, resolveIn := range typeArgViews {
+		t.Run(view, func(t *testing.T) {
+			r := NewTypeResolver(selfMapClasses())
+			caller := recursionCaller()
+			for _, typeName := range []string{"Tree", "Node<Item>", "Node", "Grow<Item>"} {
+				if got := resolveIn(r, caller, typeName); !isMapOfRef(got) {
+					t.Errorf("%s = %s, want a map whose value is a reference", typeName, typeArgShape(got))
+				}
+			}
+
+			// A map of lists of the map, and two maps that hold each other.
+			forest := resolveIn(r, caller, "Forest<Item>")
+			if !forest.IsMap() || !forest.ValueModel.IsArray() || !isReference(forest.ValueModel.Items) {
+				t.Errorf("Forest<Item> = %s, want a map of arrays of references", typeArgShape(forest))
+			}
+			left := resolveIn(r, caller, "Left")
+			if !left.IsMap() || !left.ValueModel.IsMap() || !isReference(left.ValueModel.ValueModel) {
+				t.Errorf("Left = %s, want a map of Right, a map of references", typeArgShape(left))
+			}
+
+			// As the type of a field, the map ends at its own reference too.
+			holder := resolveIn(r, caller, "com.example.lib.Holder")
+			for _, name := range []string{"tree", "node", "raw"} {
+				if got := typeArgAt(holder, name); !isMapOfRef(got) {
+					t.Errorf("Holder.%s = %s, want a map whose value is a reference", name, typeArgShape(got))
+				}
+			}
+			if trees := typeArgAt(holder, "trees"); !trees.IsArray() || !isMapOfRef(trees.Items) {
+				t.Errorf("Holder.trees = %s, want an array of maps whose value is a reference", typeArgShape(trees))
+			}
+			if got := typeArgAt(holder, "forest"); !got.IsMap() || !got.ValueModel.IsArray() || !isReference(got.ValueModel.Items) {
+				t.Errorf("Holder.forest = %s, want a map of arrays of references", typeArgShape(got))
+			}
+		})
+	}
+}
+
 // The superclass that a class writes in full is a map as well: `extends
 // java.util.HashMap<String, Item>` is the map `extends HashMap<String, Item>` is,
 // and a class of another package that shares the simple name is not.
