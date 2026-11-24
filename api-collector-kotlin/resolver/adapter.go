@@ -664,15 +664,16 @@ func (s *typeScope) toJavaClass(class ktparser.Class) javaparser.Class {
 		JavaDoc:        javadoc.CleanJavaDoc(class.KDoc),
 		Annotations:    toJavaAnnotations(class.Annotations),
 		TypeParameters: append([]string(nil), class.TypeParameters...),
-		SuperClass:     s.normalize(&class, class.SuperClass),
+		SuperClass:     s.normalizeHeader(&class, class.SuperClass),
 		Interfaces:     make([]string, 0, len(class.Interfaces)),
 		IsInterface:    class.IsInterface || class.IsSealed,
 	}
+	// The supertype list is outside the body of the class.
 	for _, arg := range class.SuperClassTypeArgs {
-		out.SuperClassTypeArgs = append(out.SuperClassTypeArgs, s.normalize(&class, arg))
+		out.SuperClassTypeArgs = append(out.SuperClassTypeArgs, s.normalizeHeader(&class, arg))
 	}
 	for _, iface := range class.Interfaces {
-		out.Interfaces = append(out.Interfaces, s.normalize(&class, iface))
+		out.Interfaces = append(out.Interfaces, s.normalizeHeader(&class, iface))
 	}
 	out.Imports = toJavaImports(class.Imports)
 	for _, prop := range class.Fields {

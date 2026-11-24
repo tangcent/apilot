@@ -2513,6 +2513,10 @@ func splitTypeArgs(s string) []string {
 	return args
 }
 
+// isMapSubclass reports whether class extends a map. The extends clause is outside
+// the body of the class, where its own member types are not in scope, so the
+// superclass is read in the scope of the header: a class nested in the class that is
+// called HashMap does not hide the import of java.util.HashMap that the clause means.
 func (r *TypeResolver) isMapSubclass(class parser.Class) bool {
 	if class.SuperClass == "" {
 		return false
@@ -2520,7 +2524,9 @@ func (r *TypeResolver) isMapSubclass(class parser.Class) bool {
 	baseName, _ := parseGenericType(class.SuperClass)
 	// A map written in full is a class of java.util: another package's HashMap is a
 	// class of its own.
-	return r.isMapType(class, baseName)
+	var isMap bool
+	r.inHeader(qualifiedName(class), func() { isMap = r.isMapType(class, baseName) })
+	return isMap
 }
 
 // findImplementation returns the class in the scanned sources that implements

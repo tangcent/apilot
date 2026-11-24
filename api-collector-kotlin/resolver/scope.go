@@ -240,7 +240,11 @@ func (s *typeScope) typeParameter(unit *ktparser.Class, name string) bool {
 // by its simple name: one nested in unit, in a class that encloses it, or in a
 // supertype of either. Kotlin looks for it there before it looks at the file
 // and the package.
-func (s *typeScope) memberType(unit *ktparser.Class, name string) bool {
+//
+// The supertype list of a class is outside its body: the classes nested in unit
+// and the ones it inherits are not in scope there, those of the classes around it
+// are. header says that the name is written in the supertype list of unit.
+func (s *typeScope) memberType(unit *ktparser.Class, name string, header bool) bool {
 	if s == nil || unit == nil || unit.Name == "" {
 		return false
 	}
@@ -268,7 +272,7 @@ func (s *typeScope) memberType(unit *ktparser.Class, name string) bool {
 		}
 		return false
 	}
-	if visit(qualifiedName(*unit), 0) {
+	if !header && visit(qualifiedName(*unit), 0) {
 		return true
 	}
 	for outer := unit.Outer; outer != ""; {
@@ -399,7 +403,11 @@ type binding struct {
 // The specification states the order for callables, a class being one through
 // its constructor; the compiler binds a type name the same way. A private
 // top-level declaration of another file is not in the package's scope.
-func (s *typeScope) bind(unit *ktparser.Class, name string) binding {
+//
+// header says that the name is written in the supertype list of unit, which is
+// outside the body of unit: the type parameters of unit are in scope there, and
+// the classes nested in it are not (see memberType).
+func (s *typeScope) bind(unit *ktparser.Class, name string, header bool) binding {
 	if strings.Contains(name, ".") {
 		if b, ok := builtinTypes[name]; ok {
 			return binding{builtin: &b}
@@ -410,7 +418,7 @@ func (s *typeScope) bind(unit *ktparser.Class, name string) binding {
 		if s.typeParameter(unit, name) {
 			return binding{}
 		}
-		if s.memberType(unit, name) {
+		if s.memberType(unit, name, header) {
 			return binding{}
 		}
 		for _, imp := range unit.Imports {
@@ -465,12 +473,13 @@ func (s *typeScope) bind(unit *ktparser.Class, name string) binding {
 
 // spelling carries what a type is being written under: the type parameters of
 // an alias that are replaced by the arguments it was used with, how deep in
-// aliases the walk is, and whether the classes of the project are named in
-// full.
+// aliases the walk is, whether the classes of the project are named in full, and
+// whether the type is written in the supertype list of its class (see bind).
 type spelling struct {
 	subst   map[string]string
 	depth   int
 	qualify bool
+	header  bool
 }
 
 // maxAliasDepth bounds a chain of typealiases defined by one another, so a cycle
@@ -483,6 +492,12 @@ const maxAliasDepth = 8
 // written, and so are the arguments'.
 func (s *typeScope) normalize(unit *ktparser.Class, raw string) string {
 	return s.spell(unit, raw, spelling{})
+}
+
+// normalizeHeader is normalize for a type written in the supertype list of unit:
+// the classes nested in unit are not in scope there (see bind).
+func (s *typeScope) normalizeHeader(unit *ktparser.Class, raw string) string {
+	return s.spell(unit, raw, spelling{header: true})
 }
 
 func (s *typeScope) spell(unit *ktparser.Class, raw string, sp spelling) string {
@@ -499,7 +514,7 @@ func (s *typeScope) spell(unit *ktparser.Class, raw string, sp spelling) string 
 			return replacement
 		}
 	}
-	b := s.bind(unit, base)
+	b := s.bind(unit, base, sp.header)
 	switch {
 	case b.alias != nil:
 		if sp.depth >= maxAliasDepth || strings.Contains(b.alias.Target, "->") {
