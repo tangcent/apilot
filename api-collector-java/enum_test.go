@@ -324,3 +324,80 @@ func TestJSONViewResolvesEnumNamesInTheScopeOfTheSource(t *testing.T) {
 		t.Errorf("unresolved = %v, want %v", names, enumScopeUnresolved)
 	}
 }
+
+// enumNestedExpectation is the export of testdata/enum-nested: two classes of
+// one file, each nesting an enum named Status that declares the constant A.
+// Order.Status declares @JsonValue and Product.Status does not, so a field typed
+// with the first keeps its type name, however the type is written around it, and
+// a field typed with the second is a string of its own constants, A and C.
+//
+// The Kotlin collector asserts the same table for the same declarations written
+// in Kotlin (api-collector-kotlin/enum_test.go): keep the two in sync.
+var enumNestedExpectation = map[string]enumField{
+	"order":        {"Order.Status", nil},
+	"orders":       {"array<Order.Status>", nil},
+	"orderArray":   {"array<Order.Status>", nil},
+	"product":      {"string", []string{"A: ", "C: "}},
+	"products":     {"array<string>", []string{"A: ", "C: "}},
+	"productArray": {"array<string>", []string{"A: ", "C: "}},
+	"byName":       {"map<string,string>", nil},
+}
+
+// enumNestedBinding is the same declarations bound from request parameters: the
+// binding view reads every enum, so the constants are those of the enum each
+// parameter names, and a collection takes no options when it is a property of a
+// model attribute.
+var enumNestedBinding = map[string][]string{
+	"order":    {"A", "B"},
+	"product":  {"A", "C"},
+	"orders":   nil,
+	"products": nil,
+	// Parameters of a handler that carries no annotation: an array and a
+	// collection of an enum list the constants of the enum they hold.
+	"orderStatus":     {"A", "B"},
+	"productStatus":   {"A", "C"},
+	"productStatuses": {"A", "C"},
+	"orderStatusList": {"A", "B"},
+}
+
+func TestJSONViewTellsEnumsNestedInDifferentClassesApart(t *testing.T) {
+	abs, err := filepath.Abs("testdata/enum-nested")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := New().(*JavaCollector)
+	endpoints, err := c.Collect(collector.CollectContext{SourceDir: abs, NoDeps: true})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	byName := map[string]collector.ApiEndpoint{}
+	for _, ep := range endpoints {
+		byName[ep.Name] = ep
+	}
+	create := byName["create"]
+	if create.RequestBody == nil || create.RequestBody.Body == nil {
+		t.Fatalf("endpoints = %+v, want create with a body", endpoints)
+	}
+	checkEnumFields(t, "request body", create.RequestBody.Body.Fields, enumNestedExpectation)
+
+	params := map[string]collector.ApiParameter{}
+	for _, name := range []string{"page", "values"} {
+		for _, p := range byName[name].Parameters {
+			params[p.Name] = p
+		}
+	}
+	for name, want := range enumNestedBinding {
+		if got := params[name].Enum; !reflect.DeepEqual(got, want) {
+			t.Errorf("parameter %s enum = %q, want %q", name, got, want)
+		}
+	}
+
+	var names []string
+	for name := range c.Unresolved() {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if want := []string{"Order.Status"}; !reflect.DeepEqual(names, want) {
+		t.Errorf("unresolved = %v, want %v", names, want)
+	}
+}

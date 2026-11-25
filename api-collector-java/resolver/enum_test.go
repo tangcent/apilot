@@ -287,13 +287,14 @@ func TestResolve_EnumsNestedInDifferentClassesAreTold(t *testing.T) {
 }
 
 // An enum nested in a class is named through the class: Order.Status, or the
-// import com.example.Order.Status.
+// import com.example.Order.Status. The enum is the one that is nested in exactly
+// those classes.
 func TestResolve_ANestedEnumIsReachedThroughItsOuterClass(t *testing.T) {
 	classes := []parser.Class{
 		{Name: "Order", Package: "com.example", FilePath: "Order.java"},
 		{Name: "Inner", Package: "com.example", Outer: "Order", FilePath: "Order.java"},
 		{Name: "Status", Package: "com.example", Outer: "Order", FilePath: "Order.java", IsEnum: true, EnumConstants: []string{"OPEN", "CLOSED"}},
-		{Name: "Phase", Package: "com.example", Outer: "Order.Inner", FilePath: "Order.java", IsEnum: true, EnumConstants: []string{"OPEN", "CLOSED"}},
+		{Name: "Status", Package: "com.example", Outer: "Order.Inner", FilePath: "Order.java", IsEnum: true, EnumConstants: []string{"DEEP"}},
 		// Declared in a file of its own, so nested in nothing.
 		{Name: "Stray", Package: "com.example", FilePath: "Stray.java", IsEnum: true, EnumConstants: []string{"X"}},
 		{
@@ -302,7 +303,7 @@ func TestResolve_ANestedEnumIsReachedThroughItsOuterClass(t *testing.T) {
 			Fields: []parser.Field{
 				{Name: "imported", Type: "Status"},
 				{Name: "qualified", Type: "com.example.Order.Status"},
-				{Name: "deeper", Type: "com.example.Order.Inner.Phase"},
+				{Name: "deeper", Type: "com.example.Order.Inner.Status"},
 				{Name: "strayed", Type: "com.example.Order.Stray"},
 				{Name: "foreign", Type: "com.dep.Order.Status"},
 			},
@@ -315,10 +316,10 @@ func TestResolve_ANestedEnumIsReachedThroughItsOuterClass(t *testing.T) {
 	want := []any{"OPEN", "CLOSED"}
 
 	holder, _ := resolveJSON(classes, "com.other.Holder")
-	for _, name := range []string{"imported", "qualified", "deeper"} {
+	for name, constants := range map[string][]any{"imported": want, "qualified": want, "deeper": {"DEEP"}} {
 		field := holder.Fields[name]
-		if field.Model.TypeName != model.JsonTypeString || !reflect.DeepEqual(optionValues(field.Options), want) {
-			t.Errorf("%s = %+v, options %v, want a string of OPEN and CLOSED", name, field.Model, field.Options)
+		if field.Model.TypeName != model.JsonTypeString || !reflect.DeepEqual(optionValues(field.Options), constants) {
+			t.Errorf("%s = %+v, options %v, want a string of %v", name, field.Model, optionValues(field.Options), constants)
 		}
 	}
 	for name, typeName := range map[string]string{"strayed": "com.example.Order.Stray", "foreign": "com.dep.Order.Status"} {
