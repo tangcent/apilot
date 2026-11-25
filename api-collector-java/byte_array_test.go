@@ -430,3 +430,70 @@ func byteArrayModelAt(m *model.ObjectModel, path string) *model.ObjectModel {
 	}
 	return m
 }
+
+// byteArrayRecordExpectation is, per record of testdata/byte-array that has an
+// explicit component and a varargs one, the name of the component and the kind
+// both export as: `byte... data` is the byte[] that `byte[] data` is, `Byte...`
+// the `Byte[]` that is an array of numbers, as the varargs parameters are.
+var byteArrayRecordExpectation = map[string][2]string{
+	"bytes":       {"data", "string"},
+	"chars":       {"data", "string"},
+	"boxed-bytes": {"data", "array<int>"},
+	"boxed-chars": {"data", "array<string>"},
+	"names":       {"names", "array<string>"},
+	"ints":        {"data", "array<int>"},
+}
+
+// A varargs component of a record is the array it is declared with, in a request
+// body and in a response.
+func TestVarargComponentsOfARecordAreExportedAsTheArraysTheyAre(t *testing.T) {
+	c, byPath := collectByteArrays(t)
+
+	for name, want := range byteArrayRecordExpectation {
+		for _, form := range []string{"explicit", "vararg"} {
+			path := "/byte-records/" + form + "/" + name
+			endpoint := byPath[path]
+			if endpoint == nil || endpoint.RequestBody == nil || endpoint.Response == nil {
+				t.Errorf("%s = %+v, want a request body and a response", path, endpoint)
+				continue
+			}
+			for what, body := range map[string]*model.ObjectModel{
+				"request body": endpoint.RequestBody.Body,
+				"response":     endpoint.Response.Body,
+			} {
+				if got, wantKinds := arrayFieldKinds(body), map[string]string{want[0]: want[1]}; !reflect.DeepEqual(got, wantKinds) {
+					t.Errorf("%s %s:\n got  %v\n want %v", path, what, got, wantKinds)
+				}
+			}
+		}
+	}
+
+	if unresolved := c.Unresolved(); len(unresolved) != 0 {
+		t.Errorf("unresolved = %v, want none", unresolved)
+	}
+}
+
+// The components of a bound record are request parameters, and a varargs one is
+// listed as the one declared with the array.
+func TestVarargComponentsOfARecordAreBoundAsTheArraysTheyAre(t *testing.T) {
+	_, byPath := collectByteArrays(t)
+
+	for name, want := range byteArrayRecordExpectation {
+		explicit := byPath["/byte-records/explicit-bound/"+name]
+		vararg := byPath["/byte-records/vararg-bound/"+name]
+		if explicit == nil || vararg == nil {
+			t.Errorf("%s: explicit = %+v, vararg = %+v, want both", name, explicit, vararg)
+			continue
+		}
+		got := map[string]string{}
+		for _, p := range vararg.Parameters {
+			got[p.Name] = p.TypeName
+		}
+		if wantParams := map[string]string{want[0]: "array"}; !reflect.DeepEqual(got, wantParams) {
+			t.Errorf("%s: vararg parameters:\n got  %v\n want %v", name, got, wantParams)
+		}
+		if !reflect.DeepEqual(vararg.Parameters, explicit.Parameters) {
+			t.Errorf("%s: vararg parameters:\n got  %+v\n want %+v", name, vararg.Parameters, explicit.Parameters)
+		}
+	}
+}
