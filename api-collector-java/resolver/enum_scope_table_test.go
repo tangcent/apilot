@@ -274,3 +274,78 @@ func TestResolve_EnumsOfTheDependenciesAndOfTheProjectAreToldWhateverTheirForm(t
 		scopeRead{"app.LocalCodey", "c", "unres(Codey)"},
 	)
 }
+
+// A `@see` that no tier of the scope declares a name for, which is how an author
+// points at an enum of another package without importing it, takes the one enum of
+// the scanned sources that carries the name; with two it takes none. The scope
+// comes first: a class of the package, or an import, that declares the name keeps
+// it. A field written so is not leniently read, a class of the dependencies is
+// taken for no name that the scope does not declare, and neither is one of the JDK.
+func TestSeeOptions_AnUndeclaredNameTakesTheOnlyEnumOfThatName(t *testing.T) {
+	files := map[string]string{
+		"x/Level.java":        "package x; public enum Level { LOW, HIGH }",
+		"y/Mode.java":         "package y; public enum Mode { A }",
+		"z/Mode.java":         "package z; public enum Mode { B }",
+		"w/Holder.java":       "package w; public class Holder { public enum Kind { K } }",
+		"other/Duration.java": "package other; public enum Duration { SHORT }",
+		"app/Level.java":      "package app; public class Level { String v; }",
+		"app/Doc.java": `package app;
+import java.time.Duration;
+import lib.Remote;
+class Doc {
+  /** @see Mode */ String ambiguous;
+  /** @see Kind */ String nested;
+  /** @see Level#LOW */ String member;
+  /** @see Duration */ String jdk;
+  /** @see Remote */ String imported;
+  /** @see Unknown */ String unknown;
+  /** @see Level */ String shadowed;
+  Level typed;
+}
+`,
+		"b/Doc2.java": `package b;
+class Doc2 {
+  /** @see Level */ String level;
+  /** @see lib.Remote */ String qualifiedRemote;
+  /** @see Remote */ String undeclaredRemote;
+  /** @see x.Level */ String qualified;
+  Kind typed;
+}
+`,
+	}
+	classes := parseFiles(t, files)
+	library := func() DependencyResolver {
+		return libraryOf(t, map[string]string{"lib/Remote.java": "package lib; public enum Remote { NEAR, FAR }"})
+	}
+	for order, ordered := range map[string][]parser.Class{"as declared": classes, "reversed": reversed(classes)} {
+		checkReads(t, "@see leniency, "+order, ordered, library, false,
+			scopeRead{"app.Doc", "ambiguous", "str"},
+			scopeRead{"app.Doc", "nested", "str[K]"},
+			scopeRead{"app.Doc", "member", "str"},
+			scopeRead{"app.Doc", "jdk", "str"},
+			scopeRead{"app.Doc", "imported", "str[NEAR,FAR]"},
+			scopeRead{"app.Doc", "unknown", "str"},
+			// app.Level is a class of the package: the scope declares the name.
+			scopeRead{"app.Doc", "shadowed", "str"},
+			scopeRead{"app.Doc", "typed", "obj(Level:v)"},
+			scopeRead{"b.Doc2", "level", "str[LOW,HIGH]"},
+			scopeRead{"b.Doc2", "qualifiedRemote", "str[NEAR,FAR]"},
+			// A class of the dependencies is not taken for a name nothing declares.
+			scopeRead{"b.Doc2", "undeclaredRemote", "str"},
+			scopeRead{"b.Doc2", "qualified", "str[LOW,HIGH]"},
+			// A field typed with the name is read strictly.
+			scopeRead{"b.Doc2", "typed", "unres(Kind)"},
+		)
+		checkReads(t, "@see leniency without dependencies, "+order, ordered, nil, false,
+			scopeRead{"b.Doc2", "level", "str[LOW,HIGH]"},
+			scopeRead{"b.Doc2", "undeclaredRemote", "str"},
+		)
+	}
+
+	// A name that nothing declares and only one enum of a nested kind carries.
+	nested := parseFiles(t, map[string]string{
+		"w/Holder.java": "package w; public class Holder { public enum Kind { K } }",
+		"v/Doc3.java":   "package v; class Doc3 { /** @see Kind */ String kind; }",
+	})
+	checkReads(t, "@see of a nested enum", nested, nil, false, scopeRead{"v.Doc3", "kind", "str[K]"})
+}

@@ -758,3 +758,52 @@ func TestResolveFromADependencyEnumIsNotTurnedAwayByANestedEnumOfItsName(t *test
 		t.Errorf("Holder.status = %+v, options %v, want the enum of the dependencies, not the one nested in Outer", got.Model, entries(got))
 	}
 }
+
+// A `@see` that no tier of the scope declares a name for takes the one enum of the
+// project that carries the name, and none when two do; the scope comes first, so a
+// class of the package that declares the name keeps it, and a field typed with the
+// name is read strictly.
+func TestResolveFromSeeNamesAnEnumOfAnotherPackageOnlyWhenItIsTheOne(t *testing.T) {
+	doc := func(name, ref string) ktparser.Property {
+		return ktparser.Property{Name: name, Type: "String", KDoc: "/** @see " + ref + " */"}
+	}
+	classes := []ktparser.Class{
+		{Name: "Level", Package: "x", FilePath: "x/Level.kt", IsEnum: true, EnumValues: []string{"LOW", "HIGH"}},
+		{Name: "Mode", Package: "y", FilePath: "y/Mode.kt", IsEnum: true, EnumValues: []string{"A"}},
+		{Name: "Mode", Package: "z", FilePath: "z/Mode.kt", IsEnum: true, EnumValues: []string{"B"}},
+		{Name: "Level", Package: "app", FilePath: "app/Level.kt"},
+		{
+			Name: "Doc", Package: "app", FilePath: "app/Doc.kt",
+			Fields: []ktparser.Property{doc("shadowed", "Level"), doc("ambiguous", "Mode"), doc("qualified", "x.Level")},
+		},
+		{
+			Name: "Doc2", Package: "b", FilePath: "b/Doc2.kt",
+			Fields: []ktparser.Property{doc("level", "Level"), doc("ambiguous", "Mode"), testProperty("typed", "Level")},
+		},
+	}
+	r := New(classes)
+	for holder, want := range map[string]map[string][]string{
+		"Doc":  {"shadowed": nil, "ambiguous": nil, "qualified": {"LOW", "HIGH"}},
+		"Doc2": {"level": {"LOW", "HIGH"}, "ambiguous": nil, "typed": nil},
+	} {
+		for i := range classes {
+			if classes[i].Name != holder {
+				continue
+			}
+			got := r.ResolveFrom(&classes[i], holder, nil)
+			for name, entries := range want {
+				if field := objectField(t, got, name); !reflect.DeepEqual(entriesOf(field), entries) {
+					t.Errorf("%s.%s options = %v, want %v", holder, name, entriesOf(field), entries)
+				}
+			}
+		}
+	}
+}
+
+func entriesOf(field *model.FieldModel) []string {
+	var got []string
+	for _, option := range field.Options {
+		got = append(got, option.Value.(string))
+	}
+	return got
+}
