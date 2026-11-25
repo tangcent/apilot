@@ -24,10 +24,11 @@ func TestSeeOptions_ALibraryClassDoesNotShadowAProjectEnum(t *testing.T) {
 			Imports: []parser.Import{{Path: "com.example.lib.Level"}},
 			Fields:  []parser.Field{{Name: "level", Type: "String", RawJavaDoc: "/** @see Level */"}},
 		},
-		// Imports no Level: the name falls back to the declaration carrying it.
+		// Imports the package of the project's Level on demand.
 		{
 			Name: "Bare", Package: "com.example.web", FilePath: "Bare.java",
-			Fields: []parser.Field{{Name: "level", Type: "String", RawJavaDoc: "/** @see Level */"}},
+			Imports: []parser.Import{{Path: "com.example.web.enums", OnDemand: true}},
+			Fields:  []parser.Field{{Name: "level", Type: "String", RawJavaDoc: "/** @see Level */"}},
 		},
 	})
 	r.SetDependencyResolver(library)

@@ -235,6 +235,7 @@ func TestResolveFromKotlinTypes(t *testing.T) {
 			{Path: "com.example.model.PageResult"},
 			{Path: "com.example.model.User"},
 			{Path: "com.example.model.Category"},
+			{Path: "com.example.model.Status"},
 		},
 	}
 	r := New(append(resolveTestClasses(), source))

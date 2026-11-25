@@ -446,8 +446,8 @@ func TestResolve_AnEnumInScopeIsNotReplacedByAnotherOfTheSameName(t *testing.T) 
 		// Declares its own Code, nested in it, next to the two above.
 		{Name: "Own", Package: "d", FilePath: "d/Own.java", Fields: fields},
 		{Name: "Code", Package: "d", FilePath: "d/Own.java", IsEnum: true, EnumConstants: []string{"D"}, EnumJsonValue: true},
-		// Neither declares nor imports a Code: the name falls back to the first
-		// declaration that carries it, in both views, and that is a.Code.
+		// Neither declares nor imports a Code: no scope binds the name, and the
+		// declarations that carry it are not taken for it, in either view.
 		{Name: "Stranger", Package: "e", FilePath: "e/Stranger.java", Fields: fields},
 	}
 
