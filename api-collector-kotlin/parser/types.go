@@ -49,6 +49,15 @@ type Parameter struct {
 	DefaultValue string
 	// Nullable marks a nullable type (`String?`). Type drops the `?`.
 	Nullable bool
+	// Vararg marks `vararg name: T`. Type is then `Array<T>`, the array the
+	// function receives, and Nullable is false, as the array is never null. A
+	// vararg of a primitive type is not an Array of it but the primitive array
+	// (`vararg name: Byte` is a ByteArray), which only the scope the type is
+	// written in tells (see resolver.ParameterType).
+	Vararg bool
+	// ElementNullable marks a vararg of `T?`, which is an Array of boxed
+	// values whatever T is.
+	ElementNullable bool
 }
 
 // Property is a constructor or body property (val/var).

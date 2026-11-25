@@ -557,6 +557,7 @@ func extractFunction(node *tree_sitter.Node, source []byte, filePath string) (*F
 				// array itself is never null.
 				if vararg && param.Type != "" {
 					param.Type = "Array<" + param.Type + ">"
+					param.Vararg, param.ElementNullable = true, param.Nullable
 					param.Nullable = false
 				}
 				vararg = false

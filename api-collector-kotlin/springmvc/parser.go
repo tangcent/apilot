@@ -226,7 +226,11 @@ func (p *Parser) extractEndpoint(method *ktparser.Function, basePath string, cla
 	var requestBodyType string
 	methodDocParams := javadoc.ParseJavaDocParams(method.KDoc)
 	for i := range method.Parameters {
-		param := &method.Parameters[i]
+		// The parameter is read as a copy: its type is the one this source
+		// gives it, and the function may be read from more than one source.
+		declared := method.Parameters[i]
+		declared.Type = p.typeResolver.ParameterType(source, declared)
+		param := &declared
 		if ep := p.extractParameter(param, methodDocParams, method.Name, source); ep != nil {
 			params = append(params, *ep)
 			if ep.ParamType == "body" {

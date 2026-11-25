@@ -120,4 +120,97 @@ public class ByteArrayController {
     public String bound(ByteArrayQuery query) {
         return "";
     }
+
+    // A varargs parameter is the array it is declared with: `byte...` is a
+    // byte[] and `Byte...` a Byte[], as the explicit declaration beside each.
+
+    @PostMapping("/explicit/bytes")
+    public byte[] explicitBytes(@RequestBody byte[] bytes) {
+        return bytes;
+    }
+
+    @PostMapping("/vararg/bytes")
+    public byte[] varargBytes(@RequestBody byte... bytes) {
+        return bytes;
+    }
+
+    @PostMapping("/explicit/chars")
+    public char[] explicitChars(@RequestBody char[] chars) {
+        return chars;
+    }
+
+    @PostMapping("/vararg/chars")
+    public char[] varargChars(@RequestBody char... chars) {
+        return chars;
+    }
+
+    @PostMapping("/explicit/boxed-bytes")
+    public Byte[] explicitBoxedBytes(@RequestBody Byte[] bytes) {
+        return bytes;
+    }
+
+    @PostMapping("/vararg/boxed-bytes")
+    public Byte[] varargBoxedBytes(@RequestBody Byte... bytes) {
+        return bytes;
+    }
+
+    @PostMapping("/explicit/boxed-chars")
+    public Character[] explicitBoxedChars(@RequestBody Character[] chars) {
+        return chars;
+    }
+
+    @PostMapping("/vararg/boxed-chars")
+    public Character[] varargBoxedChars(@RequestBody Character... chars) {
+        return chars;
+    }
+
+    @PostMapping("/explicit/ints")
+    public int[] explicitInts(@RequestBody int[] ints) {
+        return ints;
+    }
+
+    @PostMapping("/vararg/ints")
+    public int[] varargInts(@RequestBody int ... ints) {
+        return ints;
+    }
+
+    @GetMapping("/explicit-query/bytes")
+    public String explicitQueryBytes(@RequestParam byte[] data) {
+        return "";
+    }
+
+    @GetMapping("/vararg-query/bytes")
+    public String varargQueryBytes(@RequestParam byte... data) {
+        return "";
+    }
+
+    @GetMapping("/explicit-query/chars")
+    public String explicitQueryChars(@RequestParam char[] data) {
+        return "";
+    }
+
+    @GetMapping("/vararg-query/chars")
+    public String varargQueryChars(@RequestParam char... data) {
+        return "";
+    }
+
+    @GetMapping("/explicit-query/boxed-bytes")
+    public String explicitQueryBoxedBytes(@RequestParam Byte[] data) {
+        return "";
+    }
+
+    @GetMapping("/vararg-query/boxed-bytes")
+    public String varargQueryBoxedBytes(@RequestParam Byte... data) {
+        return "";
+    }
+
+    @GetMapping("/explicit-query/boxed-chars")
+    public String explicitQueryBoxedChars(@RequestParam Character[] data) {
+        return "";
+    }
+
+    @GetMapping("/vararg-query/boxed-chars")
+    public String varargQueryBoxedChars(@RequestParam Character... data) {
+        return "";
+    }
 }

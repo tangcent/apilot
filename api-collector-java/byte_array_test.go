@@ -182,6 +182,71 @@ func TestByteArrayRequestParametersAreListedAsDeclared(t *testing.T) {
 	}
 }
 
+// byteArrayVarargExpectation is, per declaration of testdata/byte-array that
+// has an explicit form and a varargs form, the kind both export as: `byte...`
+// is the byte[] that `byte[]` is, and `Byte...` the `Byte[]` that is an array of
+// numbers. The Kotlin collector asserts the same table for `vararg` of Byte and
+// Byte? (api-collector-kotlin/byte_array_test.go): keep the two in sync.
+var byteArrayVarargExpectation = map[string]string{
+	"bytes":       "string",
+	"chars":       "string",
+	"boxed-bytes": "array<int>",
+	"boxed-chars": "array<string>",
+	"ints":        "array<int>",
+}
+
+func TestVarargsOfBytesAndCharsAreExportedAsTheArraysTheyAre(t *testing.T) {
+	c, byPath := collectByteArrays(t)
+
+	for name, kind := range byteArrayVarargExpectation {
+		for _, form := range []string{"explicit", "vararg"} {
+			path := "/byte-arrays/" + form + "/" + name
+			endpoint := byPath[path]
+			if endpoint == nil || endpoint.RequestBody == nil || endpoint.Response == nil {
+				t.Errorf("%s = %+v, want a request body and a response", path, endpoint)
+				continue
+			}
+			if got := arrayFieldKind(endpoint.RequestBody.Body); got != kind {
+				t.Errorf("%s request body = %s, want %s", path, got, kind)
+			}
+			if got := arrayFieldKind(endpoint.Response.Body); got != kind {
+				t.Errorf("%s response = %s, want %s", path, got, kind)
+			}
+		}
+	}
+
+	if unresolved := c.Unresolved(); len(unresolved) != 0 {
+		t.Errorf("unresolved = %v, want none", unresolved)
+	}
+}
+
+// A request parameter of a varargs parameter is listed as the one declared with
+// the array: the same type name and the same binding.
+func TestVarargsOfBytesAndCharsAreListedAsTheArraysTheyAre(t *testing.T) {
+	_, byPath := collectByteArrays(t)
+
+	wantType := map[string]string{
+		"bytes":       "byte[]",
+		"chars":       "char[]",
+		"boxed-bytes": "Byte[]",
+		"boxed-chars": "Character[]",
+	}
+	for name, typeName := range wantType {
+		explicit := byPath["/byte-arrays/explicit-query/"+name]
+		vararg := byPath["/byte-arrays/vararg-query/"+name]
+		if explicit == nil || vararg == nil || len(explicit.Parameters) != 1 || len(vararg.Parameters) != 1 {
+			t.Errorf("%s: explicit = %+v, vararg = %+v, want one parameter each", name, explicit, vararg)
+			continue
+		}
+		if got := vararg.Parameters[0]; got.Name != "data" || got.In != "query" || got.TypeName != typeName {
+			t.Errorf("%s: vararg parameter = %+v, want data in query as %s", name, got, typeName)
+		}
+		if !reflect.DeepEqual(vararg.Parameters[0], explicit.Parameters[0]) {
+			t.Errorf("%s: vararg parameter:\n got  %+v\n want %+v", name, vararg.Parameters[0], explicit.Parameters[0])
+		}
+	}
+}
+
 // byteArrayGenericExpectation is, per endpoint of testdata/byte-array, the kind
 // of the fields at a path of the request body and of the response. A path
 // follows field names, `[]` for the elements of an array and `*` for the value

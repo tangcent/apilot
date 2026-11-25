@@ -311,6 +311,76 @@ func TestByteArraysThroughGenericClassesWhenBound(t *testing.T) {
 	}
 }
 
+// byteArrayVarargExpectation is, per declaration of testdata/byte-array that
+// has an explicit form and a `vararg` form, the kind both export as. Kotlin
+// types `vararg n: Byte` as a ByteArray and `vararg c: Char` as a CharArray, the
+// arrays the explicit forms are, and `vararg n: Byte?` as an `Array` of boxed
+// values, as `Array<Byte?>` is. The Java collector asserts the same table for
+// `byte...` and `Byte...` (api-collector-java/byte_array_test.go): keep the two
+// in sync.
+var byteArrayVarargExpectation = map[string]string{
+	"bytes":       "string",
+	"chars":       "string",
+	"boxed-bytes": "array<int>",
+	"boxed-chars": "array<string>",
+	"ints":        "array<int>",
+}
+
+// A vararg of a primitive type is exported as the primitive array it is: the
+// body of a handler that takes `vararg Byte` is the string a ByteArray is, and
+// `vararg Byte?` is the array of numbers `Array<Byte?>` is.
+func TestVarargsOfBytesAndCharsAreExportedAsThePrimitiveArraysTheyAre(t *testing.T) {
+	c, byPath := collectByteArrays(t)
+
+	for name, kind := range byteArrayVarargExpectation {
+		for _, form := range []string{"explicit", "vararg"} {
+			path := "/byte-arrays/" + form + "/" + name
+			endpoint := byPath[path]
+			if endpoint == nil || endpoint.RequestBody == nil || endpoint.Response == nil {
+				t.Errorf("%s = %+v, want a request body and a response", path, endpoint)
+				continue
+			}
+			if got := arrayFieldKind(endpoint.RequestBody.Body); got != kind {
+				t.Errorf("%s request body = %s, want %s", path, got, kind)
+			}
+			if got := arrayFieldKind(endpoint.Response.Body); got != kind {
+				t.Errorf("%s response = %s, want %s", path, got, kind)
+			}
+		}
+	}
+
+	if unresolved := c.Unresolved(); len(unresolved) != 0 {
+		t.Errorf("unresolved = %v, want none", unresolved)
+	}
+}
+
+// A request parameter of a vararg is listed as the one declared with the array
+// the vararg is: the same type name and the same binding.
+func TestVarargsOfBytesAndCharsAreListedAsThePrimitiveArraysTheyAre(t *testing.T) {
+	_, byPath := collectByteArrays(t)
+
+	wantType := map[string]string{
+		"bytes":       "ByteArray",
+		"chars":       "CharArray",
+		"boxed-bytes": "Array<Byte>",
+		"boxed-chars": "Array<Char>",
+	}
+	for name, typeName := range wantType {
+		explicit := byPath["/byte-arrays/explicit-query/"+name]
+		vararg := byPath["/byte-arrays/vararg-query/"+name]
+		if explicit == nil || vararg == nil || len(explicit.Parameters) != 1 || len(vararg.Parameters) != 1 {
+			t.Errorf("%s: explicit = %+v, vararg = %+v, want one parameter each", name, explicit, vararg)
+			continue
+		}
+		if got := vararg.Parameters[0]; got.Name != "data" || got.In != "query" || got.TypeName != typeName {
+			t.Errorf("%s: vararg parameter = %+v, want data in query as %s", name, got, typeName)
+		}
+		if !reflect.DeepEqual(vararg.Parameters[0], explicit.Parameters[0]) {
+			t.Errorf("%s: vararg parameter:\n got  %+v\n want %+v", name, vararg.Parameters[0], explicit.Parameters[0])
+		}
+	}
+}
+
 // byteArrayModelAt follows a path of field names, `[]` and `*` from a model.
 func byteArrayModelAt(m *model.ObjectModel, path string) *model.ObjectModel {
 	for _, step := range strings.Split(path, ".") {
