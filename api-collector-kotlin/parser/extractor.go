@@ -114,6 +114,7 @@ func extractTypeAlias(node *tree_sitter.Node, source []byte, packageName, filePa
 		Package:        packageName,
 		FilePath:       filePath,
 		Target:         spelling,
+		TargetNullable: typeNodeNullable(target),
 		TypeParameters: extractTypeParameters(node, source),
 		Imports:        imports,
 		IsPrivate:      hasModifier(node, "private"),

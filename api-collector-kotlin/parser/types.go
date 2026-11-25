@@ -141,7 +141,10 @@ type TypeAlias struct {
 	// Target is the aliased type as written in the file that declares the alias:
 	// it is read in that file's scope, not in the scope of the code that uses the
 	// alias.
-	Target         string
+	Target string
+	// TargetNullable marks a target that is nullable as a whole (`typealias
+	// MaybeByte = Byte?`). Target drops the `?`.
+	TargetNullable bool
 	TypeParameters []string
 	Imports        []Import
 	// IsPrivate marks an alias written private: visible in its file only.

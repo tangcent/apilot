@@ -216,7 +216,8 @@ func (r *Resolver) NormalizeType(source *ktparser.Class, rawType string) string 
 
 // ParameterType returns the type of a parameter of a function written in
 // source as the function receives it: the type as written, but for a vararg of a
-// primitive type, which is the primitive array (see typeScope.receivedType).
+// primitive type or of a typealias of one, which is the primitive array (see
+// typeScope.receivedType).
 func (r *Resolver) ParameterType(source *ktparser.Class, param ktparser.Parameter) string {
 	if r == nil {
 		return (*typeScope)(nil).receivedType(source, param)

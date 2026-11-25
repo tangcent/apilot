@@ -575,12 +575,14 @@ func (s *typeScope) expand(use *ktparser.Class, alias *ktparser.TypeAlias, args 
 // the function receives it. It is the type as written, except for a vararg:
 // Kotlin types `vararg n: Byte` as a ByteArray and `vararg c: Char` as a
 // CharArray, the primitive arrays, and so for every primitive type, where
-// `vararg n: Byte?` and `vararg s: String` are an `Array` of the element. The
-// primitive is what the element's name denotes where it is written (see bind):
-// a class of the project that is called Byte, or a type parameter, is not one. A
-// typealias of a primitive type is left as an `Array` of the alias: the parser
-// reads the target of an alias without its `?`, so a nullable one could not be
-// told from it.
+// `vararg n: Byte?` and `vararg s: String` are an `Array` of the element.
+//
+// The primitive is the type the element stands for (see primitiveOf): what its
+// name denotes where it is written (see bind), so a class of the project that is
+// called Byte, or a type parameter, is not one, and what a typealias names, so
+// `vararg o: Octet` of `typealias Octet = Byte` is a ByteArray and one of
+// `typealias MaybeByte = Byte?`, or of a chain of aliases that is nullable at any
+// level, an `Array` of the alias.
 func (s *typeScope) receivedType(unit *ktparser.Class, param ktparser.Parameter) string {
 	if !param.Vararg || param.ElementNullable {
 		return param.Type
@@ -593,21 +595,44 @@ func (s *typeScope) receivedType(unit *ktparser.Class, param ktparser.Parameter)
 	if !ok {
 		return param.Type
 	}
-	element = strings.TrimSpace(element)
-	if _, args := splitGenericType(element); args != nil {
-		return param.Type
-	}
-	b := s.bind(unit, element, false)
-	if b.builtin == nil || b.builtin.array == "" {
+	b := s.primitiveOf(unit, strings.TrimSpace(element), 0)
+	if b == nil || b.array == "" {
 		return param.Type
 	}
 	// The array is written by its simple name where that name still means
 	// it, so that the parameter is listed as `ByteArray` like one declared so.
-	qualified := "kotlin." + b.builtin.array
-	if got := s.bind(unit, b.builtin.array, false); got.builtin != nil && *got.builtin == builtinTypes[qualified] {
-		return b.builtin.array
+	qualified := "kotlin." + b.array
+	if got := s.bind(unit, b.array, false); got.builtin != nil && *got.builtin == builtinTypes[qualified] {
+		return b.array
 	}
 	return qualified
+}
+
+// primitiveOf returns the standard type that a type written in unit stands for,
+// following the typealiases that lead to it, each read in the file that declares
+// it as expand reads it; it returns nil when the type stands for none, or for a
+// nullable type, which an alias with a nullable target does at that level: a
+// vararg of it is boxed. The arguments of a generic alias, and of a generic
+// standard type, which is none of the primitive ones, are not looked into: an
+// alias cannot stand for one of its type parameters, so none of them is what the
+// alias stands for.
+func (s *typeScope) primitiveOf(unit *ktparser.Class, raw string, depth int) *builtinType {
+	base, args := splitGenericType(raw)
+	b := s.bind(unit, base, false)
+	switch {
+	case b.builtin != nil:
+		if args != nil {
+			return nil
+		}
+		return b.builtin
+	case b.alias != nil:
+		if depth >= maxAliasDepth || b.alias.TargetNullable {
+			return nil
+		}
+		declaring := &ktparser.Class{Package: b.alias.Package, FilePath: b.alias.FilePath, Imports: b.alias.Imports}
+		return s.primitiveOf(declaring, b.alias.Target, depth+1)
+	}
+	return nil
 }
 
 // qualifyProject writes a class of the project that unit names by its simple
