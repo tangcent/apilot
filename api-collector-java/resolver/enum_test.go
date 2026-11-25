@@ -425,3 +425,149 @@ func TestResolveForBinding_LeavesOutGetterOnlyProperties(t *testing.T) {
 		t.Fatal("the JSON view must be unaffected after a binding resolution")
 	}
 }
+
+// A simple name denotes the declaration the scope of the source gives it, whether
+// or not the current view reads that declaration. An enum of the source's own
+// package whose JSON form is not the name of its constant stays unresolved in the
+// JSON view, and an enum of another package that carries the same simple name
+// does not stand in for it.
+func TestResolve_AnEnumInScopeIsNotReplacedByAnotherOfTheSameName(t *testing.T) {
+	excluded := parser.Class{Name: "Code", Package: "a", FilePath: "a/Code.java", IsEnum: true, EnumConstants: []string{"A"}, EnumJsonValue: true}
+	plain := parser.Class{Name: "Code", Package: "b", FilePath: "b/Code.java", IsEnum: true, EnumConstants: []string{"B"}}
+	fields := []parser.Field{{Name: "code", Type: "Code"}, {Name: "codes", Type: "List<Code>"}}
+	classes := []parser.Class{
+		excluded,
+		plain,
+		{Name: "Holder", Package: "a", FilePath: "a/Holder.java", Fields: fields},
+		{Name: "Holder", Package: "b", FilePath: "b/Holder.java", Fields: fields},
+		{Name: "OnDemand", Package: "c", FilePath: "c/OnDemand.java", Imports: []parser.Import{{Path: "a", OnDemand: true}}, Fields: fields},
+		{Name: "Single", Package: "c", FilePath: "c/Single.java", Imports: []parser.Import{{Path: "a.Code"}}, Fields: fields},
+		// Declares its own Code, nested in it, next to the two above.
+		{Name: "Own", Package: "d", FilePath: "d/Own.java", Fields: fields},
+		{Name: "Code", Package: "d", FilePath: "d/Own.java", IsEnum: true, EnumConstants: []string{"D"}, EnumJsonValue: true},
+		// Neither declares nor imports a Code: the name falls back to the first
+		// declaration that carries it, in both views, and that is a.Code.
+		{Name: "Stranger", Package: "e", FilePath: "e/Stranger.java", Fields: fields},
+	}
+
+	for _, holder := range []string{"a.Holder", "c.OnDemand", "c.Single", "d.Own", "e.Stranger"} {
+		got, _ := resolveJSON(classes, holder)
+		for _, name := range []string{"code", "codes"} {
+			field := got.Fields[name]
+			typeName := field.Model.TypeName
+			if name == "codes" {
+				typeName = field.Model.Items.TypeName
+			}
+			if typeName != "Code" || len(field.Options) != 0 {
+				t.Errorf("%s.%s = %+v, options %v; want the type name of the enum it names, left unresolved", holder, name, field.Model, optionValues(field.Options))
+			}
+		}
+	}
+
+	got, _ := resolveJSON(classes, "b.Holder")
+	if code := got.Fields["code"]; code.Model.TypeName != model.JsonTypeString || !reflect.DeepEqual(optionValues(code.Options), []any{"B"}) {
+		t.Errorf("b.Holder.code = %+v, options %v, want a string of B", code.Model, optionValues(code.Options))
+	}
+
+	// The binding view reads every enum, and the one in scope is the one it reads.
+	r := NewTypeResolver(classes)
+	if bound := r.ResolveForBinding(parser.Class{}, "a.Holder", nil).Fields["code"]; !reflect.DeepEqual(optionValues(bound.Options), []any{"A"}) {
+		t.Errorf("binding a.Holder.code options = %v, want A", optionValues(bound.Options))
+	}
+}
+
+// The same holds for a class of the same simple name elsewhere: the name binds to
+// the enum in scope, and the JSON view does not expand the class in its place.
+func TestResolve_AnEnumInScopeIsNotReplacedByAClassOfTheSameName(t *testing.T) {
+	classes := []parser.Class{
+		{Name: "Code", Package: "a", FilePath: "a/Code.java", IsEnum: true, EnumConstants: []string{"A"}, EnumJsonValue: true},
+		{Name: "Code", Package: "b", FilePath: "b/Code.java", Fields: []parser.Field{{Name: "number", Type: "int"}}},
+		{Name: "Holder", Package: "a", FilePath: "a/Holder.java", Fields: []parser.Field{{Name: "code", Type: "Code"}}},
+	}
+	got, _ := resolveJSON(classes, "a.Holder")
+	if code := got.Fields["code"]; code.Model.TypeName != "Code" || len(code.Model.Fields) != 0 {
+		t.Errorf("code = %+v, want the type name of the enum in scope, not the fields of b.Code", code.Model)
+	}
+}
+
+// An enum named through its outer class, Order.Status, is the one nested in the
+// Order the source's scope gives, not the first one of that name: the outer class
+// is looked up like any other simple name, and then its nested enum is taken.
+func TestResolve_ANestedEnumIsFoundThroughTheOuterClassInScope(t *testing.T) {
+	fields := []parser.Field{
+		{Name: "status", Type: "Order.Status"},
+		{Name: "history", Type: "List<Order.Status>"},
+		{Name: "wide", Type: "List<? extends Order.Status>"},
+		{Name: "set", Type: "Set<Order.Status>"},
+	}
+	bHolder := parser.Class{Name: "Holder", Package: "b", FilePath: "b/Holder.java", Fields: fields}
+	classes := []parser.Class{
+		{Name: "Order", Package: "a", FilePath: "a/Order.java"},
+		{Name: "Status", Package: "a", Outer: "Order", FilePath: "a/Order.java", IsEnum: true, EnumConstants: []string{"A1", "A2"}},
+		{Name: "Order", Package: "b", FilePath: "b/Order.java"},
+		{Name: "Status", Package: "b", Outer: "Order", FilePath: "b/Order.java", IsEnum: true, EnumConstants: []string{"B1"}},
+		{Name: "Holder", Package: "a", FilePath: "a/Holder.java", Fields: fields},
+		bHolder,
+		{Name: "Single", Package: "c", FilePath: "c/Single.java", Imports: []parser.Import{{Path: "b.Order"}}, Fields: fields},
+		{Name: "OnDemand", Package: "c", FilePath: "c/OnDemand.java", Imports: []parser.Import{{Path: "b", OnDemand: true}}, Fields: fields},
+		{Name: "Qualified", Package: "c", FilePath: "c/Qualified.java", Fields: []parser.Field{{Name: "status", Type: "b.Order.Status"}, {Name: "history", Type: "List<b.Order.Status>"}}},
+	}
+
+	for holder, want := range map[string][]any{
+		"a.Holder":    {"A1", "A2"},
+		"b.Holder":    {"B1"},
+		"c.Single":    {"B1"},
+		"c.OnDemand":  {"B1"},
+		"c.Qualified": {"B1"},
+	} {
+		got, unresolved := resolveJSON(classes, holder)
+		for name, field := range got.Fields {
+			if !reflect.DeepEqual(optionValues(field.Options), want) {
+				t.Errorf("%s.%s options = %v, want %v", holder, name, optionValues(field.Options), want)
+			}
+		}
+		if len(unresolved) != 0 {
+			t.Errorf("%s: unresolved = %v, want none", holder, unresolved)
+		}
+	}
+
+	r := NewTypeResolver(classes)
+	if bound := r.ResolveForBinding(bHolder, "Order.Status", nil); bound.TypeName != model.JsonTypeString {
+		t.Errorf("binding Order.Status = %+v, want a string", bound)
+	}
+	constants, ok := r.EnumConstants(bHolder, "Order.Status")
+	if !ok || !reflect.DeepEqual(constants, []string{"B1"}) {
+		t.Errorf("EnumConstants(b.Holder, Order.Status) = %v, %v, want B1", constants, ok)
+	}
+}
+
+// A type argument is written in the scope of the source and read later inside
+// the generic class, where that scope no longer applies: a nested enum named
+// through its outer class is qualified, as a simple name is, so that it is not
+// looked up again among the declarations of the class that receives it.
+func TestResolve_ANestedEnumTypeArgumentKeepsTheScopeItIsWrittenIn(t *testing.T) {
+	classes := []parser.Class{
+		{Name: "Order", Package: "b", FilePath: "b/Order.java"},
+		{Name: "Status", Package: "b", Outer: "Order", FilePath: "b/Order.java", IsEnum: true, EnumConstants: []string{"B1"}},
+		{Name: "Order", Package: "a", FilePath: "a/Order.java"},
+		{Name: "Status", Package: "a", Outer: "Order", FilePath: "a/Order.java", IsEnum: true, EnumConstants: []string{"A1"}},
+		{Name: "Envelope", Package: "a", FilePath: "a/Envelope.java", TypeParameters: []string{"T"}, Fields: []parser.Field{{Name: "data", Type: "T"}}},
+		{Name: "Holder", Package: "b", FilePath: "b/Holder.java", Imports: []parser.Import{{Path: "a.Envelope"}}, Fields: []parser.Field{
+			{Name: "one", Type: "Envelope<Order.Status>"},
+			{Name: "many", Type: "Envelope<List<Order.Status>>"},
+		}},
+	}
+	r := NewTypeResolver(classes)
+	r.SetDependencyResolver(&libraryClasses{})
+
+	holder := r.Resolve("b.Holder", nil)
+	for _, name := range []string{"one", "many"} {
+		data := holder.Fields[name].Model.Fields["data"]
+		if data == nil || data.Model.Kind == model.KindObject {
+			t.Fatalf("%s = %+v, want an envelope with a data field", name, holder.Fields[name].Model)
+		}
+		if got := optionValues(data.Options); !reflect.DeepEqual(got, []any{"B1"}) {
+			t.Errorf("%s.data options = %v, want the constants of b.Order.Status", name, got)
+		}
+	}
+}

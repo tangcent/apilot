@@ -451,6 +451,59 @@ func TestResolveFromNestedEnum(t *testing.T) {
 	}
 }
 
+// A property names an enum as the scope of its source gives the name: the enum of
+// the source's own package, even where the JSON view leaves it unresolved, and the
+// enum nested in the Order that scope gives. Another package's enum of the same
+// simple name does not stand in for either.
+func TestResolveFromEnumsInTheScopeOfTheSource(t *testing.T) {
+	properties := []ktparser.Property{
+		testProperty("code", "Code"),
+		testProperty("status", "Order.Status"),
+		testProperty("history", "List<Order.Status>"),
+	}
+	holderA := ktparser.Class{Name: "Holder", Package: "a", FilePath: "a/Holder.kt", Fields: properties}
+	holderB := ktparser.Class{Name: "Holder", Package: "b", FilePath: "b/Holder.kt", Fields: properties}
+	classes := []ktparser.Class{
+		{
+			Name: "Code", Package: "a", FilePath: "a/Code.kt", IsEnum: true, EnumValues: []string{"X"},
+			Fields: []ktparser.Property{testProperty("code", "String", testAnnotation("JsonValue", nil))},
+		},
+		{Name: "Code", Package: "b", FilePath: "b/Code.kt", IsEnum: true, EnumValues: []string{"B"}},
+		{Name: "Order", Package: "a", FilePath: "a/Order.kt"},
+		{Name: "Status", Package: "a", Outer: "Order", FilePath: "a/Order.kt", IsEnum: true, EnumValues: []string{"A1"}},
+		{Name: "Order", Package: "b", FilePath: "b/Order.kt"},
+		{Name: "Status", Package: "b", Outer: "Order", FilePath: "b/Order.kt", IsEnum: true, EnumValues: []string{"B1"}},
+		holderA,
+		holderB,
+	}
+	r := New(classes)
+
+	values := func(field *model.FieldModel) []string {
+		var got []string
+		for _, option := range field.Options {
+			got = append(got, option.Value.(string))
+		}
+		return got
+	}
+
+	a := r.ResolveFrom(&holderA, "Holder", nil)
+	if code := objectField(t, a, "code"); code.Model.TypeName != "Code" || len(code.Options) != 0 {
+		t.Errorf("a.Holder.code = %+v, options %v, want the type name of a.Code, not the entries of b.Code", code.Model, values(code))
+	}
+	for name, want := range map[string][]string{"status": {"A1"}, "history": {"A1"}} {
+		if got := values(objectField(t, a, name)); !reflect.DeepEqual(got, want) {
+			t.Errorf("a.Holder.%s options = %v, want %v", name, got, want)
+		}
+	}
+
+	b := r.ResolveFrom(&holderB, "Holder", nil)
+	for name, want := range map[string][]string{"code": {"B"}, "status": {"B1"}, "history": {"B1"}} {
+		if got := values(objectField(t, b, name)); !reflect.DeepEqual(got, want) {
+			t.Errorf("b.Holder.%s options = %v, want %v", name, got, want)
+		}
+	}
+}
+
 func TestToJavaClassFieldMapping(t *testing.T) {
 	class := ktparser.Class{
 		Name:    "CreateReq",

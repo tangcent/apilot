@@ -264,3 +264,63 @@ func TestJSONViewReadsEnumsOfADependency(t *testing.T) {
 		}
 	}
 }
+
+// enumScopeExpectation is the export of testdata/enum-scope: the request body of
+// each handler. Two packages declare a Code and an Order with an enum Status
+// nested in it, and the holder of each package names them in its own scope.
+// a.Code declares @JsonValue, so a field typed with it keeps its type name, and
+// the b.Code that the holder of a does not see does not stand in for it. The
+// holder of b reads b.Code. A nested enum named through Order is the one nested
+// in the Order the holder's own package declares.
+//
+// The Kotlin collector asserts the same table for the same declarations written
+// in Kotlin (api-collector-kotlin/enum_test.go): keep the two in sync.
+var enumScopeExpectation = map[string]map[string]enumField{
+	"createA": {
+		"code":     {"Code", nil},
+		"codes":    {"array<Code>", nil},
+		"statuses": {"array<string>", []string{"A_OPEN: Opened in a.", "A_CLOSED: "}},
+	},
+	"createB": {
+		"code":     {"string", []string{"B: ", "C: "}},
+		"codes":    {"array<string>", []string{"B: ", "C: "}},
+		"statuses": {"array<string>", []string{"B_OPEN: Opened in b.", "B_CLOSED: "}},
+	},
+}
+
+// enumScopeUnresolved are the types of testdata/enum-scope the export reports as
+// unresolved: the enum of a that Jackson writes in another form.
+var enumScopeUnresolved = []string{"Code"}
+
+func TestJSONViewResolvesEnumNamesInTheScopeOfTheSource(t *testing.T) {
+	abs, err := filepath.Abs("testdata/enum-scope")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := New().(*JavaCollector)
+	endpoints, err := c.Collect(collector.CollectContext{SourceDir: abs, NoDeps: true})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	byName := map[string]collector.ApiEndpoint{}
+	for _, ep := range endpoints {
+		byName[ep.Name] = ep
+	}
+	for name, want := range enumScopeExpectation {
+		ep := byName[name]
+		if ep.RequestBody == nil || ep.RequestBody.Body == nil {
+			t.Errorf("endpoint %s has no request body; endpoints = %+v", name, endpoints)
+			continue
+		}
+		checkEnumFields(t, name, ep.RequestBody.Body.Fields, want)
+	}
+
+	var names []string
+	for name := range c.Unresolved() {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if !reflect.DeepEqual(names, enumScopeUnresolved) {
+		t.Errorf("unresolved = %v, want %v", names, enumScopeUnresolved)
+	}
+}
