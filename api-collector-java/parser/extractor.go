@@ -174,7 +174,7 @@ func extractClass(node *tree_sitter.Node, source []byte) Class {
 			class.Methods = extractMethods(child, source)
 			class.Fields = extractFields(child, source)
 			if class.IsEnum {
-				class.EnumConstants = decompiledEnumConstants(child, source)
+				class.EnumConstants, class.EnumJsonProperty = decompiledEnumConstants(child, source)
 				class.EnumConstantDocs = make([]string, len(class.EnumConstants))
 				class.EnumJsonValue = declaresJsonValue(class.Methods, class.Fields)
 			}
@@ -222,8 +222,16 @@ func extendsEnum(node *tree_sitter.Node, source []byte) bool {
 // Kotlin enum are not always initialised at their declaration: CFR leaves the
 // initializer out when the class initializer assigns them. The synthetic
 // $VALUES and $ENTRIES carry no marker, so they are not constants.
-func decompiledEnumConstants(classBody *tree_sitter.Node, source []byte) []string {
-	var constants []string
+//
+// The annotations of a constant are printed before its field, and one of them may
+// give the constant a name:
+//
+//	@JsonProperty(value="pending_x")
+//	public static final /* enum */ State PENDING = new State("PENDING");
+//
+// renamed reports whether a constant is given a name by @JsonProperty, as
+// Class.EnumJsonProperty does for an enum that is declared as one.
+func decompiledEnumConstants(classBody *tree_sitter.Node, source []byte) (constants []string, renamed bool) {
 	for i := uint(0); i < classBody.ChildCount(); i++ {
 		field := classBody.Child(i)
 		if field.Kind() != "field_declaration" || !hasEnumMarker(field, source) {
@@ -232,10 +240,13 @@ func decompiledEnumConstants(classBody *tree_sitter.Node, source []byte) []strin
 		if declarator := field.ChildByFieldName("declarator"); declarator != nil {
 			if name := declarator.ChildByFieldName("name"); name != nil {
 				constants = append(constants, name.Utf8Text(source))
+				if JsonPropertyName(extractAnnotations(field, source)) != "" {
+					renamed = true
+				}
 			}
 		}
 	}
-	return constants
+	return constants, renamed
 }
 
 // hasEnumMarker reports whether a field declaration carries CFR's `/* enum */`

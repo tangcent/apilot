@@ -189,6 +189,64 @@ extends Enum<Tier> {
     }
 }
 `,
+	// Stage and Mode give a constant a name with @JsonProperty, as a Java enum and
+	// as a Kotlin enum decompiled the same way as Region: the annotation is among
+	// the modifiers of the field of the constant.
+	"com.example.lib.Stage": `/*
+ * Decompiled with CFR 0.152.
+ */
+package com.example.lib;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+public enum Stage {
+    @JsonProperty(value="first_stage")
+    FIRST,
+    SECOND;
+}
+`,
+	"com.example.lib.Mode": `/*
+ * Decompiled with CFR 0.152.
+ */
+package com.example.lib;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+import kotlin.Metadata;
+import kotlin.enums.EnumEntries;
+import kotlin.enums.EnumEntriesKt;
+import org.jetbrains.annotations.NotNull;
+
+@Metadata(mv={1, 9, 0}, k=1, xi=48)
+public final class Mode
+extends Enum<Mode> {
+    @JsonProperty(value="fast_mode")
+    public static final /* enum */ Mode FAST = new Mode();
+    public static final /* enum */ Mode SLOW = new Mode();
+    private static final /* synthetic */ Mode[] $VALUES;
+    private static final /* synthetic */ EnumEntries $ENTRIES;
+
+    private Mode() {
+    }
+
+    public static Mode[] values() {
+        return (Mode[])$VALUES.clone();
+    }
+
+    public static Mode valueOf(String value) {
+        return Enum.valueOf(Mode.class, value);
+    }
+
+    @NotNull
+    public static EnumEntries<Mode> getEntries() {
+        return $ENTRIES;
+    }
+
+    static {
+        $VALUES = modeArray = new Mode[]{Mode.FAST, Mode.SLOW};
+        $ENTRIES = EnumEntriesKt.enumEntries((Enum[])$VALUES);
+    }
+}
+`,
 }
 
 // libraryResolver answers dependency lookups from librarySources through the

@@ -180,7 +180,9 @@ func describeModel(m *model.ObjectModel) string {
 // descriptions, and so does Region, a Kotlin enum decompiled from one: the
 // decompiler prints that as a class rather than an enum. Currency declares
 // @JsonValue on its getter, and Tier, decompiled the same way as Region, does
-// too: both keep their type names, as does a class the library does not have.
+// too. Stage gives a constant a name with @JsonProperty, and Mode, decompiled the
+// same way as Region, does too, on the field of the constant. All four keep their
+// type names, as does a class the library does not have.
 //
 // The Java collector asserts the same table for the same form written in Java
 // (api-collector-java/enum_test.go): keep the two in sync.
@@ -191,12 +193,14 @@ var enumDependencyExpectation = map[string]enumField{
 	"region":   {"string", []string{"NORTH: ", "SOUTH: "}},
 	"currency": {"Currency", nil},
 	"tier":     {"Tier", nil},
+	"stage":    {"Stage", nil},
+	"mode":     {"Mode", nil},
 	"missing":  {"Missing", nil},
 }
 
 // enumDependencyUnresolved are the types of testdata/enum-dependency the
 // export reports as unresolved.
-var enumDependencyUnresolved = []string{"Currency", "Missing", "Tier"}
+var enumDependencyUnresolved = []string{"Currency", "Missing", "Mode", "Stage", "Tier"}
 
 func TestJSONViewReadsEnumsOfADependency(t *testing.T) {
 	p, err := ktparser.NewParser()
@@ -242,7 +246,7 @@ func TestJSONViewReadsEnumsOfADependency(t *testing.T) {
 	for _, name := range library.queried {
 		asked[name]++
 	}
-	for _, name := range []string{"OrderState", "PayChannel", "Region", "Currency", "Tier", "Missing"} {
+	for _, name := range []string{"OrderState", "PayChannel", "Region", "Currency", "Tier", "Stage", "Mode", "Missing"} {
 		if n := asked["com.example.lib."+name]; n != 1 {
 			t.Errorf("%s was asked for %d times, want once; asked = %v", name, n, library.queried)
 		}
