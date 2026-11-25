@@ -294,8 +294,8 @@ func TestResolve_ALibraryClassFoundByAnImportOnDemandBeatsAProjectClassTheSource
 }
 
 // A library class read through one source does not stand in for an enum of the
-// project, which the JSON view does not see: the enum is exported by its name,
-// as an opaque value.
+// project. The enum answers for the name where its package is imported on demand,
+// and nowhere else: a source that reaches it by nothing leaves the name as written.
 func TestResolve_ALibraryClassDoesNotAnswerForAProjectEnumsName(t *testing.T) {
 	library := &libraryClasses{classes: map[string]parser.Class{
 		// Not an enum, and sorts before the project's Level.
@@ -314,11 +314,11 @@ func TestResolve_ALibraryClassDoesNotAnswerForAProjectEnumsName(t *testing.T) {
 	r.SetDependencyResolver(library)
 
 	assertFieldNames(t, fieldNamesOf(t, r, imported, "Level"), []string{"rank"})
-	for _, source := range []parser.Class{bare, both} {
-		level := r.ResolveFrom(source, "Level", nil)
-		if level.Kind != model.KindSingle || level.TypeName != "Level" {
-			t.Errorf("Level from %s = %+v, want the enum's name", source.Name, level)
-		}
+	if level := r.ResolveFrom(bare, "Level", nil); level.Kind != model.KindSingle || level.TypeName != "Level" {
+		t.Errorf("Level from Bare = %+v, want the name as written", level)
+	}
+	if level := r.ResolveFrom(both, "Level", nil); level.Kind != model.KindSingle || level.TypeName != model.JsonTypeString {
+		t.Errorf("Level from Both = %+v, want the enum, a string", level)
 	}
 	for _, name := range library.asked {
 		// Both's import of the enum's package ends the search before the

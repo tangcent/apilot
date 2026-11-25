@@ -329,7 +329,8 @@ type TypeResolver struct {
 	dependencyResolver DependencyResolver
 	unresolved         *collector.UnresolvedSet
 	// bindingView is set while ResolveForBinding expands a model attribute.
-	// Enums take part in that view only (see sees).
+	// Every enum takes part in that view; the JSON view reads only some (see
+	// sees).
 	bindingView bool
 	// keepBinaryArray is set while a property is resolved whose annotations
 	// replace Jackson's serializer for a byte[] or a char[]. Those stay arrays,
@@ -581,12 +582,36 @@ func supertypeNames(c parser.Class) []string {
 }
 
 // sees reports whether the current view takes a declaration into account.
-// Enums are read for the binding view, where Spring converts a request
-// parameter to an enum by the name of a constant, so the constants are the
-// values the parameter accepts. The JSON view does not see them: it exports an
-// enum type as it does any type whose declaration was not read.
+//
+// The binding view reads every enum: Spring converts a request parameter to an
+// enum by the name of a constant, so the constants are the values the parameter
+// accepts. The JSON view reads an enum that Jackson writes as the name of its
+// constant, so that the field is a string of those constants. It leaves out an
+// enum Jackson writes in another form (see writesConstantName): the value such
+// a field takes cannot be told from the source, so the JSON view exports that
+// enum as it does any type whose declaration was not read.
 func (r *TypeResolver) sees(c parser.Class) bool {
-	return r.bindingView || !c.IsEnum
+	return r.bindingView || !c.IsEnum || writesConstantName(c)
+}
+
+// writesConstantName reports whether Jackson writes an enum as the name of its
+// constant. It does not when the enum declares @JsonValue, which writes the
+// value of a member instead, nor when @JsonFormat gives it the shape of an
+// object or a number.
+func writesConstantName(enum parser.Class) bool {
+	if enum.EnumJsonValue {
+		return false
+	}
+	for _, ann := range enum.Annotations {
+		if lastSegment(ann.Name) != "JsonFormat" {
+			continue
+		}
+		switch lastSegment(strings.TrimSpace(ann.Params["shape"])) {
+		case "OBJECT", "NUMBER", "NUMBER_INT", "NUMBER_FLOAT":
+			return false
+		}
+	}
+	return true
 }
 
 // lookup returns the declaration registered under key, if the current view
@@ -616,7 +641,7 @@ func (r *TypeResolver) enterBindingView() func() {
 
 // EnumConstants returns the constants of the enum a type name denotes as seen
 // from source, and whether it denotes an enum of the scanned sources at all.
-// Enums take part in the binding view only, so the name is looked up there.
+// Every enum takes part in the binding view, so the name is looked up there.
 func (r *TypeResolver) EnumConstants(source parser.Class, name string) ([]string, bool) {
 	c, found := r.enumClass(source, name)
 	if !found {
@@ -666,13 +691,40 @@ func (r *TypeResolver) seeOptions(source parser.Class, rawDoc string) []model.Fi
 	return nil
 }
 
-// seeEnum returns the enum a `@see` reference names as seen from source. An
-// enum the scanned sources do not declare is read from the project's
-// dependencies: the enums such a reference names usually live in a shared
-// model library. The reference goes through the scope like any other name (see
-// Class), in the view that sees enums.
+// seeEnum returns the enum a `@see` reference names as seen from source. The name
+// goes through the scope of source first (see Class). When no tier of the scope
+// declares a simple name, which is how an author writes a reference to an enum of
+// another package without importing it, the one enum of the scanned sources that
+// carries that name is taken; with two there is nothing to say which is meant. A
+// field or a parameter written so names no enum: this leniency is the doc
+// comment's alone.
+//
+// An enum the scanned sources do not declare is read from the project's
+// dependencies: the enums such a reference names usually live in a shared model
+// library. Neither a class of the dependencies nor one of the JDK is taken for a
+// name the scope does not declare.
 func (r *TypeResolver) seeEnum(source parser.Class, ref string) (parser.Class, bool) {
+	ref = strings.TrimSpace(ref)
+	if !strings.Contains(ref, ".") {
+		if _, found := r.inScope(source, ref, true); !found {
+			return r.onlyEnumNamed(ref)
+		}
+	}
 	return r.enumClass(source, ref)
+}
+
+// onlyEnumNamed returns the enum of the scanned sources that carries a simple
+// name, when there is exactly one.
+func (r *TypeResolver) onlyEnumNamed(name string) (parser.Class, bool) {
+	var found parser.Class
+	count := 0
+	for _, key := range r.bySimpleName[name] {
+		if c := r.classRegistry[key]; c.IsEnum {
+			found = c
+			count++
+		}
+	}
+	return found, count == 1
 }
 
 // dependencyClass returns the class the dependency resolver reads for name,
@@ -707,6 +759,59 @@ func (r *TypeResolver) readDependency(name string) (*parser.Class, string) {
 	key := heldKey(*class, name)
 	r.registerDependency(*class, key)
 	return class, key
+}
+
+// fieldEnum returns the enum whose constants a field takes, which is the enum
+// its type names. The JSON view looks through a collection to the enum it
+// holds, and through a type parameter to the enum it is bound to, because the
+// model of the field does: its items are strings of the constants. The values
+// of a map are strings of them as well, but the map lists none, as EasyYapi
+// does: a constraint on the map is not one on its values. A model attribute of
+// the binding view takes its options from its own type only.
+//
+// The field type has been resolved by then, so an enum of the dependencies is
+// registered.
+func (r *TypeResolver) fieldEnum(source parser.Class, typeName string, bindings map[string]string) (parser.Class, bool) {
+	if r.bindingView {
+		// A type variable is no enum, whatever class carries its name.
+		if r.isTypeVariable(source, strings.TrimSpace(typeName)) {
+			return parser.Class{}, false
+		}
+		return r.enumClass(source, typeName)
+	}
+	return r.valueEnum(source, typeName, bindings)
+}
+
+// valueEnum follows a type the way ResolveFrom does to the enum it ends in.
+func (r *TypeResolver) valueEnum(source parser.Class, typeName string, bindings map[string]string) (parser.Class, bool) {
+	typeName = strings.TrimSpace(typeName)
+	if bound, ok := bindings[typeName]; ok {
+		return r.valueEnum(source, bound, nil)
+	}
+	if isWildcard(typeName) {
+		if bound, ok := wildcardUpperBound(typeName); ok {
+			return r.valueEnum(source, bound, bindings)
+		}
+		return parser.Class{}, false
+	}
+	// An array holds its elements as a collection does (see ResolveFrom).
+	if element, ok := strings.CutSuffix(typeName, "[]"); ok {
+		return r.valueEnum(source, element, bindings)
+	}
+	// A type variable that nothing binds is no enum, whatever class carries its
+	// name (see ResolveFrom).
+	if _, marked := variableName(typeName); marked || r.isTypeVariable(source, typeName) {
+		return parser.Class{}, false
+	}
+	base, args := parseGenericType(typeName)
+	switch {
+	case base == typeName:
+		c, found := r.lookup(r.resolveName(source, typeName))
+		return c, found && c.IsEnum
+	case r.isCollectionType(source, base) && len(args) > 0:
+		return r.valueEnum(source, args[0], bindings)
+	}
+	return parser.Class{}, false
 }
 
 // ResolveForBinding expands a type the way Spring's data binder sees it when
@@ -1288,11 +1393,16 @@ func (r *TypeResolver) declaredElsewhere(name string) (string, bool) {
 // that no scope declared falls back to one only when it is the only candidate:
 // with two, nothing says which the name means, and the first would be a guess
 // that exports the fields of the wrong class.
+//
+// An enum never answers here. A name binds to an enum through the scope only:
+// an import on demand of a package the sources do not hold, java.lang and the
+// package of a class read from a library may carry the name too, and the enum
+// of some other package that happens to share it is not the type written.
 func (r *TypeResolver) pickByName(keys []string) (string, bool) {
 	nested, candidates := "", 0
 	for _, key := range keys {
 		c, found := r.lookup(key)
-		if !found {
+		if !found || c.IsEnum {
 			continue
 		}
 		if c.Outer == "" {
@@ -1758,7 +1868,8 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	}
 
 	// An enum of the scanned sources is already known; the JSON view just
-	// does not see it, and a dependency's copy of it would not be seen either.
+	// does not read it when Jackson writes it in a form the constants do not
+	// tell, and a dependency's copy of it would not be read either.
 	// A name that is still unqualified here found no class in the packages
 	// resolveName tried; it is asked as written for a resolver that knows
 	// classes by their simple names, unless it is one that cannot be a class of
@@ -1896,8 +2007,8 @@ func fillWildcardArgs(declared, inferred string) (string, bool) {
 // qualifyTypeName), and to nothing else: a parameter that no argument binds
 // stays open, as it does for a raw type.
 func (r *TypeResolver) resolveClass(class parser.Class, key string, typeArgs []string) *model.ObjectModel {
-	// Only the binding view reaches an enum: a request parameter names one
-	// of its constants.
+	// An enum is the name of one of its constants, in the binding view and in
+	// the JSON view of an enum Jackson writes that way (see sees).
 	if class.IsEnum {
 		return model.SingleModel(model.JsonTypeString)
 	}
@@ -2072,11 +2183,9 @@ func (r *TypeResolver) resolveField(source parser.Class, f parser.Field, localBi
 	// to, not with the class its name could be: the rules below read a class by the
 	// name the field is written with.
 	variable := r.isTypeVariable(source, strings.TrimSpace(f.Type))
-	// In the binding view, an enum field is one of the enum's constants.
-	if r.bindingView && !variable {
-		if enum, ok := r.enumClass(source, f.Type); ok {
-			fm.Options = EnumOptions(enum)
-		}
+	// An enum field is one of the enum's constants.
+	if enum, ok := r.fieldEnum(source, f.Type, localBindings); ok {
+		fm.Options = EnumOptions(enum)
 	}
 	// A property that holds a value or nothing may be left out, whatever the
 	// view and the constraints say about the value. A JDK enum is a string
@@ -2586,7 +2695,10 @@ func (r *TypeResolver) findImplementation(key string) (parser.Class, string, boo
 
 	for _, candidate := range keys {
 		class := r.classRegistry[candidate]
-		if class.IsInterface || !r.sees(class) {
+		// The JSON view never took an enum for the implementation of an
+		// interface, and an enum it now reads does not become one: it is one
+		// value of the interface, not the shape every value has.
+		if class.IsInterface || !r.sees(class) || (class.IsEnum && !r.bindingView) {
 			continue
 		}
 		for _, ifaceName := range class.Interfaces {

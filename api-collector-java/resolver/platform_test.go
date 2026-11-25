@@ -424,11 +424,12 @@ func TestResolve_JdkEnumsAreStringsWithTheirConstants(t *testing.T) {
 
 // Month and DayOfWeek are names a project declares as well. The bare name is
 // the JDK enum only when the source imports it; a project's enum keeps its own
-// constants, and one nothing can see is left as it was, not given the JDK's.
+// constants, and one the JSON view does not read, for it declares @JsonValue, is
+// left as it was, not given the JDK's.
 func TestResolve_BareMonthNeedsAnImportAndYieldsToAProjectEnum(t *testing.T) {
 	r := NewTypeResolver([]parser.Class{
 		{Name: "Month", Package: "com.example.fiscal", FilePath: "com/example/fiscal/Month.java",
-			IsEnum: true, EnumConstants: []string{"Q1", "Q2"}},
+			IsEnum: true, EnumConstants: []string{"Q1", "Q2"}, EnumJsonValue: true},
 	})
 	r.SetUnresolved(collector.NewUnresolvedSet())
 

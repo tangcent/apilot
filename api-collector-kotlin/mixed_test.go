@@ -25,6 +25,15 @@ func TestMixedTreeCollectsBothLanguages(t *testing.T) {
 	objectField(t, order.Response.Body, "orderNo")
 	objectField(t, order.Response.Body, "amount")
 
+	// An enum is a string of its constants whichever language the enum and the
+	// endpoint that exports it are written in.
+	checkEnumFields(t, "request body", create.RequestBody.Body.Fields, map[string]enumField{
+		"status": {"string", []string{"ACTIVE: Open for orders.", "CLOSED: "}},
+	})
+	checkEnumFields(t, "response of order", order.Response.Body.Fields, map[string]enumField{
+		"kind": {"string", []string{"RETAIL: Sold to consumers.", "WHOLESALE: "}},
+	})
+
 	if unresolved := c.Unresolved(); len(unresolved) != 0 {
 		t.Fatalf("unexpected unresolved types: %v", unresolved)
 	}

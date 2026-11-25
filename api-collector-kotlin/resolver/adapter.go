@@ -3,7 +3,6 @@
 package resolver
 
 import (
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -90,9 +89,8 @@ func NewWithAliases(classes []ktparser.Class, javaTypes []javaparser.Class, alia
 		if class.IsEnum {
 			r.enumValues[class.Name] = class.EnumValues
 			r.enumValues[key] = class.EnumValues
-			// Enums are rendered as string options, not as empty objects.
-			// The JSON view never sees the declaration; it is there for the
-			// fields whose doc points at it with @see.
+			// The type table holds the enum as the Java resolver reads one, so
+			// that a field typed with it is a string of its entries.
 			javaClasses = append(javaClasses, toJavaEnum(*class))
 			continue
 		}
@@ -131,9 +129,8 @@ func (r *Resolver) SetDependencyResolver(dr javaresolver.DependencyResolver) {
 }
 
 // projectEnumsFirst keeps the project's own enums away from the dependency
-// resolver. The Java type table does not hold them, since the adapter renders
-// them itself, so the Java resolver would otherwise ask the index for them and
-// read some installed release of the project instead.
+// resolver, so that it would not read some installed release of the project in
+// their place.
 type projectEnumsFirst struct {
 	dr javaresolver.DependencyResolver
 	r  *Resolver
@@ -186,9 +183,7 @@ func (r *Resolver) ResolveForBinding(source *ktparser.Class, rawType string, bin
 			r.bindingTR.SetRequiredFields(r.requiredFields)
 		}
 	}
-	resolved := r.bindingTR.ResolveForBinding(r.scope.toJavaClass(*source), r.scope.normalize(source, rawType), bindingsOrNil(bindings))
-	r.applyEnums(resolved)
-	return resolved
+	return r.bindingTR.ResolveForBinding(r.scope.toJavaClass(*source), r.scope.normalize(source, rawType), bindingsOrNil(bindings))
 }
 
 // bindingsOrNil returns the bindings of type parameters, or nil when there is
@@ -291,14 +286,6 @@ func (r *Resolver) IsUpload(m *model.ObjectModel) bool {
 	return r.tr.IsUpload(m) || (r.bindingTR != nil && r.bindingTR.IsUpload(m))
 }
 
-// isOpenVariable reports whether m is a model the resolver answered a type
-// variable that nothing binds with, in the JSON view or the binding view. It is
-// shown by the name of the variable, as an enum of the project that is called so
-// is.
-func (r *Resolver) isOpenVariable(m *model.ObjectModel) bool {
-	return r.tr.IsOpenVariable(m) || (r.bindingTR != nil && r.bindingTR.IsOpenVariable(m))
-}
-
 // IsEnumIn reports whether a class name written in source denotes an enum of the
 // project, by the scope of its file.
 func (r *Resolver) IsEnumIn(source *ktparser.Class, name string) bool {
@@ -320,17 +307,11 @@ func (r *Resolver) SetRequiredFields(mode string) {
 	}
 }
 
-// Unresolved returns type names the resolver could not expand, with enums
-// filtered out: an enum is intentionally rendered as a string, so it is not a
-// missing type.
+// Unresolved returns type names the resolver could not expand. An enum is among
+// them only when it is exported by its type name, as the Java resolver does for
+// an enum whose JSON form is not the name of its constant.
 func (r *Resolver) Unresolved() map[string]int {
-	counts := r.unresolved.Counts()
-	for name := range counts {
-		if _, ok := r.enumValues[lastSegment(name)]; ok {
-			delete(counts, name)
-		}
-	}
-	return counts
+	return r.unresolved.Counts()
 }
 
 // IsEnum reports whether name denotes an enum class.
@@ -349,9 +330,7 @@ func (r *Resolver) ResolveFrom(source *ktparser.Class, rawType string, bindings 
 	if rawType == "" {
 		return model.NullModel()
 	}
-	resolved := r.tr.ResolveFrom(r.scope.toJavaClass(*source), r.scope.normalize(source, rawType), bindingsOrNil(bindings))
-	r.applyEnums(resolved)
-	return resolved
+	return r.tr.ResolveFrom(r.scope.toJavaClass(*source), r.scope.normalize(source, rawType), bindingsOrNil(bindings))
 }
 
 // maxConstantHops bounds a chain of top-level constants defined by one
@@ -537,60 +516,9 @@ func (r *Resolver) findQualified(source *ktparser.Class, name string, header boo
 	return c, ok
 }
 
-func (r *Resolver) applyEnums(m *model.ObjectModel) {
-	if m == nil {
-		return
-	}
-	switch m.Kind {
-	case model.KindSingle:
-		// A type variable that nothing binds is not the enum that carries its name.
-		if !r.isOpenVariable(m) && r.IsEnum(m.TypeName) {
-			m.TypeName = model.JsonTypeString
-		}
-	case model.KindObject:
-		for _, field := range m.Fields {
-			if field == nil || field.Model == nil {
-				continue
-			}
-			if field.Model.Kind == model.KindSingle && !r.isOpenVariable(field.Model) {
-				if options := r.enumOptions(field.Model.TypeName); len(options) > 0 {
-					field.Model = model.SingleModel(model.JsonTypeString)
-					field.Options = options
-					continue
-				}
-			}
-			r.applyEnums(field.Model)
-		}
-	case model.KindArray:
-		r.applyEnums(m.Items)
-	case model.KindMap:
-		r.applyEnums(m.KeyModel)
-		r.applyEnums(m.ValueModel)
-	}
-}
-
-// enumOptions returns the values of the enum a type name denotes, by its
-// simple name as EnumValues goes, each described by the KDoc of its entry.
-func (r *Resolver) enumOptions(name string) []model.FieldOption {
-	values := r.EnumValues(name)
-	if len(values) == 0 {
-		return nil
-	}
-	for _, key := range r.bySimple[lastSegment(name)] {
-		if c := r.byKey[key]; c != nil && c.IsEnum && slices.Equal(c.EnumValues, values) {
-			return javaresolver.EnumOptions(toJavaEnum(*c))
-		}
-	}
-	options := make([]model.FieldOption, 0, len(values))
-	for _, value := range values {
-		options = append(options, model.FieldOption{Value: value})
-	}
-	return options
-}
-
 // ToJavaClasses converts Kotlin declarations to the Java model, so a Java
-// endpoint in the same tree can resolve them. An enum keeps its constants for
-// the binding view; the Java resolver's JSON view does not see enums.
+// endpoint in the same tree can resolve them. An enum keeps its constants, which
+// the Java resolver exports as the values of a field typed with it.
 //
 // javaTypes are the Java declarations of the same tree and aliases the Kotlin
 // typealiases: a name in a Kotlin file binds to them as it does in the resolver
@@ -610,7 +538,8 @@ func ToJavaClasses(classes []ktparser.Class, javaTypes []javaparser.Class, alias
 }
 
 // toJavaEnum converts an enum to the Java model: its entries, each with its
-// doc comment cleaned.
+// doc comment cleaned, and what tells how Jackson writes it, which is the
+// annotations of the enum and whether a member of it is annotated @JsonValue.
 func toJavaEnum(class ktparser.Class) javaparser.Class {
 	out := javaparser.Class{
 		Name:          class.Name,
@@ -618,8 +547,10 @@ func toJavaEnum(class ktparser.Class) javaparser.Class {
 		Outer:         class.Outer,
 		FilePath:      class.FilePath,
 		Imports:       toJavaImports(class.Imports),
+		Annotations:   toJavaAnnotations(class.Annotations),
 		IsEnum:        true,
 		EnumConstants: append([]string(nil), class.EnumValues...),
+		EnumJsonValue: declaresJsonValue(class),
 	}
 	for i := range class.EnumValues {
 		doc := ""
@@ -629,6 +560,33 @@ func toJavaEnum(class ktparser.Class) javaparser.Class {
 		out.EnumConstantDocs = append(out.EnumConstantDocs, doc)
 	}
 	return out
+}
+
+// declaresJsonValue reports whether a property or a function of an enum carries
+// @JsonValue. Only the targets that put it on the field or the getter count:
+// @param: and @set: land where Jackson does not read it as the value.
+func declaresJsonValue(class ktparser.Class) bool {
+	annotated := func(annotations []ktparser.Annotation) bool {
+		var onMember []javaparser.Annotation
+		for _, ann := range annotations {
+			switch ann.UseSiteTarget {
+			case "", "field", "get":
+				onMember = append(onMember, javaparser.Annotation{Name: ann.Name, Params: ann.Params})
+			}
+		}
+		return javaparser.HasJsonValue(onMember)
+	}
+	for _, prop := range class.Fields {
+		if annotated(prop.Annotations) {
+			return true
+		}
+	}
+	for _, fn := range class.Methods {
+		if annotated(fn.Annotations) {
+			return true
+		}
+	}
+	return false
 }
 
 // toJavaImports converts the imports of a file. A renaming import binds a name

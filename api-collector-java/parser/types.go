@@ -128,6 +128,10 @@ type Class struct {
 	// EnumConstantDocs holds the doc comment of each constant, cleaned, in
 	// the order of EnumConstants: "" for a constant without one.
 	EnumConstantDocs []string
+	// EnumJsonValue marks an enum that declares @JsonValue on a method or a
+	// field: Jackson writes the value of that member, not the name of the
+	// constant.
+	EnumJsonValue bool
 }
 
 // QualifiedName returns the name a declaration is known by: its package, the

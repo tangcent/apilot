@@ -505,8 +505,8 @@ func TestResolve_BuiltInNamesAsArgumentsKeepTheirMeaning(t *testing.T) {
 	}
 }
 
-// A type that no body is read for, an enum of the JSON view or a class nothing
-// declares, is shown as it is written wherever the caller uses it, and reported
+// A type that no body is read for, an enum the JSON view does not read or a class
+// nothing declares, is shown as it is written wherever the caller uses it, and reported
 // under that name: the argument of a generic class, of a collection or of a map
 // is no reason to show it another way, nor to report it twice. With a
 // dependency resolver, which asks for a class by its qualified name, the
@@ -514,7 +514,7 @@ func TestResolve_BuiltInNamesAsArgumentsKeepTheirMeaning(t *testing.T) {
 func TestResolve_ATypeWithoutABodyIsShownAsWrittenInATypeArgument(t *testing.T) {
 	f := typeArgField
 	classes := []parser.Class{
-		{Name: "Status", Package: "com.example.other", IsEnum: true, EnumConstants: []string{"OPEN"}},
+		{Name: "Status", Package: "com.example.other", IsEnum: true, EnumConstants: []string{"OPEN"}, EnumJsonValue: true},
 		typeArgLibraryClass("Box", []string{"T"}, "", nil, f("data", "T"), f("list", "List<T>")),
 		{Name: "Order", Package: typeArgAppPackage, FilePath: "app/Order.java",
 			Imports: []parser.Import{

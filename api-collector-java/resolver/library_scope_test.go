@@ -120,12 +120,13 @@ func TestResolve_ImportOfAnotherLibraryClassIsNotAJdkCollection(t *testing.T) {
 }
 
 // An enum of the project that bears a library name hides it as well, although
-// the JSON view does not read the enum: the name is not the JDK's.
+// the JSON view does not read the enum, which declares @JsonValue: the name is
+// not the JDK's.
 func TestResolve_ProjectEnumHidesJdkNames(t *testing.T) {
 	enum := func(name string) parser.Class {
 		return parser.Class{
 			Name: name, Package: "domain", FilePath: "src/domain/" + name + ".java",
-			IsEnum: true, EnumConstants: []string{"A", "B"},
+			IsEnum: true, EnumConstants: []string{"A", "B"}, EnumJsonValue: true,
 		}
 	}
 	source := importing("domain", "java.util.*", "java.time.*")
