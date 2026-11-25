@@ -109,8 +109,14 @@ func TestResolve_EnumWithAnotherJSONFormKeepsItsTypeName(t *testing.T) {
 		{name: "@JsonFormat shape object, imported", annotation: "@JsonFormat(shape = Shape.OBJECT)"},
 		{name: "@JsonFormat shape number", annotation: "@JsonFormat(shape = JsonFormat.Shape.NUMBER)"},
 		{name: "@JsonFormat shape number int", annotation: "@JsonFormat(shape = JsonFormat.Shape.NUMBER_INT)"},
+		{name: "@JsonFormat shape number float", annotation: "@JsonFormat(shape = JsonFormat.Shape.NUMBER_FLOAT)"},
+		{name: "@JsonFormat shape array", annotation: "@JsonFormat(shape = JsonFormat.Shape.ARRAY)"},
 		{name: "@JsonFormat shape string", annotation: "@JsonFormat(shape = JsonFormat.Shape.STRING)", asString: true},
 		{name: "@JsonFormat without a shape", annotation: `@JsonFormat(pattern = "x")`, asString: true},
+		{name: "@JsonSerialize with a serializer", annotation: "@JsonSerialize(using = Writer.class)"},
+		{name: "@JsonSerialize with a converter", annotation: "@JsonSerialize(converter = Convert.class)"},
+		{name: "@JsonSerialize without one", annotation: "@JsonSerialize(include = Include.ALWAYS)", asString: true},
+		{name: "@JsonSerialize with the serializer that stands for none", annotation: "@JsonSerialize(using = JsonSerializer.None.class)", asString: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

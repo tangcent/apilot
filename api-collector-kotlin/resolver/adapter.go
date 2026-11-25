@@ -531,8 +531,9 @@ func ToJavaClasses(classes []ktparser.Class, javaTypes []javaparser.Class, alias
 }
 
 // toJavaEnum converts an enum to the Java model: its entries, each with its
-// doc comment cleaned, and what tells how Jackson writes it, which is the
-// annotations of the enum and whether a member of it is annotated @JsonValue.
+// doc comment cleaned, and what tells how Jackson writes it: the annotations of
+// the enum, the interfaces it implements, whether a member of it is annotated
+// @JsonValue and whether an entry is given a name by @JsonProperty.
 func toJavaEnum(class ktparser.Class) javaparser.Class {
 	out := javaparser.Class{
 		Name:          class.Name,
@@ -541,9 +542,12 @@ func toJavaEnum(class ktparser.Class) javaparser.Class {
 		FilePath:      class.FilePath,
 		Imports:       toJavaImports(class.Imports),
 		Annotations:   toJavaAnnotations(class.Annotations),
+		Interfaces:    append([]string(nil), class.Interfaces...),
 		IsEnum:        true,
 		EnumConstants: append([]string(nil), class.EnumValues...),
 		EnumJsonValue: declaresJsonValue(class),
+
+		EnumJsonProperty: class.EnumJsonProperty,
 	}
 	for i := range class.EnumValues {
 		doc := ""
@@ -555,7 +559,7 @@ func toJavaEnum(class ktparser.Class) javaparser.Class {
 	return out
 }
 
-// declaresJsonValue reports whether a property or a function of an enum carries
+// declaresJsonValue reports whether a property or a function of a class carries
 // @JsonValue. Only the targets that put it on the field or the getter count:
 // @param: and @set: land where Jackson does not read it as the value.
 func declaresJsonValue(class ktparser.Class) bool {
@@ -692,7 +696,11 @@ func (s *typeScope) toJavaClass(class ktparser.Class) javaparser.Class {
 	}
 	// Methods are deliberately not copied: Kotlin data-class getters,
 	// componentN, copy and toString are compiler-generated. Properties are the
-	// only JSON fields.
+	// only JSON fields. An interface keeps one method for the @JsonValue its members
+	// carry, which an enum that implements it inherits.
+	if class.IsInterface && declaresJsonValue(class) {
+		out.Methods = append(out.Methods, javaparser.Method{Name: "jsonValue", Annotations: []javaparser.Annotation{{Name: "JsonValue"}}})
+	}
 	return out
 }
 

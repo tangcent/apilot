@@ -354,6 +354,12 @@ type TypeResolver struct {
 	// binds with: a single value named like the variable, which an enum or a class of
 	// the project that is called the same is not (see IsOpenVariable).
 	variables map[*model.ObjectModel]bool
+	// format is what the annotations of the field being resolved say about the
+	// enums it holds (see writesConstantName).
+	format fieldFormat
+	// customEnums holds whether each enum declares a form of its own, by its
+	// qualified name and its file (see writesCustomForm).
+	customEnums map[string]bool
 }
 
 // SetRequiredFields selects how resolved fields are marked required: one of
@@ -587,31 +593,11 @@ func supertypeNames(c parser.Class) []string {
 // enum by the name of a constant, so the constants are the values the parameter
 // accepts. The JSON view reads an enum that Jackson writes as the name of its
 // constant, so that the field is a string of those constants. It leaves out an
-// enum Jackson writes in another form (see writesConstantName): the value such
-// a field takes cannot be told from the source, so the JSON view exports that
-// enum as it does any type whose declaration was not read.
+// enum Jackson writes in another form (see writesConstantName): the value such a
+// field takes cannot be told, so the JSON view exports that enum as it does any
+// type whose declaration was not read.
 func (r *TypeResolver) sees(c parser.Class) bool {
-	return r.bindingView || !c.IsEnum || writesConstantName(c)
-}
-
-// writesConstantName reports whether Jackson writes an enum as the name of its
-// constant. It does not when the enum declares @JsonValue, which writes the
-// value of a member instead, nor when @JsonFormat gives it the shape of an
-// object or a number.
-func writesConstantName(enum parser.Class) bool {
-	if enum.EnumJsonValue {
-		return false
-	}
-	for _, ann := range enum.Annotations {
-		if lastSegment(ann.Name) != "JsonFormat" {
-			continue
-		}
-		switch lastSegment(strings.TrimSpace(ann.Params["shape"])) {
-		case "OBJECT", "NUMBER", "NUMBER_INT", "NUMBER_FLOAT":
-			return false
-		}
-	}
-	return true
+	return r.bindingView || !c.IsEnum || r.writesConstantName(c)
 }
 
 // lookup returns the declaration registered under key, if the current view
@@ -1395,8 +1381,13 @@ func (r *TypeResolver) declaredElsewhere(name string) (string, bool) {
 func (r *TypeResolver) pickByName(keys []string) (string, bool) {
 	nested, candidates := "", 0
 	for _, key := range keys {
+		// The declaration is not asked how it is written first: that may look
+		// names up, this one included.
+		if r.classRegistry[key].IsEnum {
+			continue
+		}
 		c, found := r.lookup(key)
-		if !found || c.IsEnum {
+		if !found {
 			continue
 		}
 		if c.Outer == "" {
@@ -1637,12 +1628,14 @@ func (r *TypeResolver) SetDependencyResolver(dr DependencyResolver) {
 	r.dependencyResolver = dr
 	r.dependencyAnswers = nil
 	r.supertypesHeld = make(map[string]bool)
+	r.customEnums = nil
 }
 
 func (r *TypeResolver) SetCollectorDependencyResolver(cdr collector.DependencyResolver) {
 	r.dependencyResolver = &collectorDependencyAdapter{resolver: cdr}
 	r.dependencyAnswers = nil
 	r.supertypesHeld = make(map[string]bool)
+	r.customEnums = nil
 }
 
 // SetUnresolved attaches a shared sink that records type names this resolver
@@ -2168,6 +2161,11 @@ func importsAnnotation(source parser.Class, qualified string) bool {
 }
 
 func (r *TypeResolver) resolveField(source parser.Class, f parser.Field, localBindings map[string]string, typeParamSet map[string]bool) *model.FieldModel {
+	// The annotations of the field say how the enums it holds are written; the
+	// fields of a class it holds say it for themselves.
+	defer func(previous fieldFormat) { r.format = previous }(r.format)
+	r.format = formatOf(f.Annotations)
+
 	fieldModel := r.resolvePropertySchema(source, f.Type, f.Annotations, localBindings)
 	fm := &model.FieldModel{
 		Model:    fieldModel,

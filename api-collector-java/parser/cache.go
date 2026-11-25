@@ -31,7 +31,8 @@ import (
 // Version 10: Class carries Outer, the classes it is nested in, Local, whether
 // it is declared in a block, and Inner, whether it is a member class that is not
 // static.
-// Version 11: an enum records whether it declares @JsonValue.
+// Version 11: an enum records whether it declares @JsonValue, whether a constant
+// is given a name by @JsonProperty, and the interfaces it implements.
 const cacheSchemaVersion = "11"
 
 // Cache provides file-level caching based on content hash.

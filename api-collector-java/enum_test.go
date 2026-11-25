@@ -404,6 +404,80 @@ func TestJSONViewTellsEnumsNestedInDifferentClassesApart(t *testing.T) {
 	}
 }
 
+// enumFormExpectation is the export of testdata/enum-forms: an enum that Jackson
+// writes as the name of its constant is a string of the names. Every other form
+// keeps the type name of the enum: a constant renamed with @JsonProperty, the value
+// of a method of an interface the enum implements, the shape ARRAY or a number of
+// @JsonFormat on the enum or on the field that holds it (a collection of them
+// too), and a serializer of the enum or of the field.
+//
+// The Kotlin collector asserts the same table for the same declarations written in
+// Kotlin (api-collector-kotlin/enum_test.go): keep the two in sync.
+var enumFormExpectation = map[string]enumField{
+	"plain":           {"string", []string{"A: ", "B: "}},
+	"renamed":         {"Renamed", nil},
+	"renamedList":     {"array<Renamed>", nil},
+	"viaCoded":        {"ViaCoded", nil},
+	"indexed":         {"Indexed", nil},
+	"arrayed":         {"Arrayed", nil},
+	"serialized":      {"Serialized", nil},
+	"fieldIndex":      {"Plain", nil},
+	"listIndex":       {"array<Plain>", nil},
+	"fieldSerialized": {"Plain", nil},
+}
+
+// enumFormBinding is the same form bound from request parameters: Spring converts a
+// parameter by the name of the constant in the source, whatever Jackson writes.
+var enumFormBinding = map[string][]string{
+	"plain":      {"A", "B"},
+	"renamed":    {"A", "B"},
+	"viaCoded":   {"A"},
+	"indexed":    {"X", "Y"},
+	"arrayed":    {"A"},
+	"serialized": {"A"},
+	"fieldIndex": {"A", "B"},
+}
+
+func TestJSONViewKeepsAnEnumOfACustomJacksonFormUnresolved(t *testing.T) {
+	abs, err := filepath.Abs("testdata/enum-forms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := New().(*JavaCollector)
+	endpoints, err := c.Collect(collector.CollectContext{SourceDir: abs, NoDeps: true})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	byName := map[string]collector.ApiEndpoint{}
+	for _, ep := range endpoints {
+		byName[ep.Name] = ep
+	}
+	create := byName["create"]
+	if create.RequestBody == nil || create.RequestBody.Body == nil {
+		t.Fatalf("endpoints = %+v, want create with a body", endpoints)
+	}
+	checkEnumFields(t, "request body", create.RequestBody.Body.Fields, enumFormExpectation)
+
+	params := map[string]collector.ApiParameter{}
+	for _, p := range byName["page"].Parameters {
+		params[p.Name] = p
+	}
+	for name, want := range enumFormBinding {
+		if got := params[name].Enum; !reflect.DeepEqual(got, want) {
+			t.Errorf("parameter %s enum = %q, want %q", name, got, want)
+		}
+	}
+
+	var names []string
+	for name := range c.Unresolved() {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if want := []string{"Arrayed", "Indexed", "Plain", "Renamed", "Serialized", "ViaCoded"}; !reflect.DeepEqual(names, want) {
+		t.Errorf("unresolved = %v, want %v", names, want)
+	}
+}
+
 // enumPackagesExpectation is the export of testdata/enum-packages: two enums named
 // Status in different packages, and a class of that name in a third that nothing
 // imports. Each name takes the enum its scope gives it, and the class is taken for

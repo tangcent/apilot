@@ -347,3 +347,133 @@ class UsesCoded { Coded coded; }
 		}
 	}
 }
+
+// The form Jackson writes an enum in, as the source tells it. A field typed with an
+// enum written as the name of a constant is a string of the names; one written as
+// anything else is the type name, as a type that was not read: a member of the enum
+// or of an interface it implements that carries @JsonValue, a name @JsonProperty
+// gives a constant, the shape OBJECT, ARRAY or a number, and a serializer. A
+// @JsonFormat or a @JsonSerialize on the field decides for the enums it holds, a
+// collection of them included. Spring binds by the name of the constant whatever
+// the form, so the binding view reads the names as they are in the source.
+func TestResolve_AnEnumOfACustomJacksonFormKeepsItsTypeName(t *testing.T) {
+	classes := parseFiles(t, map[string]string{
+		"p/PlainBodies.java": "package p; public enum PlainBodies { A { void f() {} }, B { void f() {} }; abstract void f(); }",
+		"p/WithCtor.java":    "package p; public enum WithCtor { A(\"a\"), B(\"b\"); private final String c; WithCtor(String c) { this.c = c; } public String getC() { return c; } }",
+		"p/Creator.java":     "package p; import com.fasterxml.jackson.annotation.JsonCreator; public enum Creator { A, B; @JsonCreator public static Creator of(String s) { return A; } }",
+		"p/ValM.java":        "package p; import com.fasterxml.jackson.annotation.JsonValue; public enum ValM { A, B; @JsonValue public String v() { return \"x\"; } }",
+		"p/ValOff.java":      "package p; import com.fasterxml.jackson.annotation.JsonValue; public enum ValOff { A; @JsonValue(false) public String v() { return \"x\"; } }",
+		"p/Coded.java":       "package p; import com.fasterxml.jackson.annotation.JsonValue; public interface Coded { @JsonValue String code(); }",
+		"p/ViaIface.java":    "package p; public enum ViaIface implements Coded { A; public String code() { return \"x\"; } }",
+		"p/Chain.java": `package p;
+import java.io.Serializable;
+interface Sub extends Coded { }
+public enum ViaSuper implements Serializable, Sub { A; public String code() { return "x"; } }
+interface Plain { String label(); }
+public enum ViaPlain implements Plain { A; public String label() { return "x"; } }
+`,
+		"p/Shapes.java": `package p;
+import com.fasterxml.jackson.annotation.JsonFormat;
+@JsonFormat(shape = JsonFormat.Shape.OBJECT) public enum ShapeObj { A }
+@JsonFormat(shape = JsonFormat.Shape.NUMBER_INT) public enum ShapeNum { A, B }
+@JsonFormat(shape = JsonFormat.Shape.ARRAY) public enum ShapeArr { A }
+@JsonFormat(shape = JsonFormat.Shape.STRING) public enum ShapeStr { A }
+`,
+		"p/PropConst.java": `package p;
+import com.fasterxml.jackson.annotation.JsonProperty;
+public enum PropConst { A, @JsonProperty("b_x") B, @JsonProperty("") C, @JsonProperty(value = "d_x") D }
+public enum EmptyName { A, @JsonProperty("") B }
+`,
+		"p/SerUsing.java": "package p; import com.fasterxml.jackson.databind.annotation.JsonSerialize; @JsonSerialize(using = Foo.class) public enum SerUsing { A }",
+		"p/Alias.java":    "package p; import com.fasterxml.jackson.annotation.JsonAlias; public enum Alias { @JsonAlias(\"x\") A }",
+		"p/Holder.java": `package p;
+import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import java.util.List;
+import java.util.Map;
+class Holder {
+  PlainBodies plainBodies; WithCtor withCtor; Creator creator; ValM valM; ValOff valOff;
+  ViaIface viaIface; ViaSuper viaSuper; ViaPlain viaPlain;
+  ShapeObj shapeObj; ShapeNum shapeNum; ShapeArr shapeArr; ShapeStr shapeStr;
+  PropConst propConst; List<PropConst> propConsts; EmptyName emptyName; SerUsing serUsing; Alias alias;
+  @JsonFormat(shape = JsonFormat.Shape.NUMBER) PlainBodies fieldNumber;
+  @JsonFormat(shape = JsonFormat.Shape.NUMBER_INT) List<WithCtor> listNumber;
+  @JsonFormat(shape = JsonFormat.Shape.NUMBER) WithCtor[] arrayNumber;
+  @JsonFormat(shape = JsonFormat.Shape.ARRAY) PlainBodies fieldArray;
+  @JsonFormat(shape = JsonFormat.Shape.STRING) ShapeNum fieldString;
+  @JsonFormat(shape = JsonFormat.Shape.STRING) PlainBodies fieldStringOfPlain;
+  @JsonFormat(shape = JsonFormat.Shape.NUMBER) ValM fieldNumberOfValue;
+  @JsonSerialize(using = Foo.class) PlainBodies fieldSerialized;
+  @JsonSerialize(contentUsing = Foo.class) List<PlainBodies> contentSerialized;
+  @JsonFormat(shape = JsonFormat.Shape.NUMBER) Map<String, WithCtor> mapNumber;
+  @JsonFormat(shape = JsonFormat.Shape.NUMBER) Box boxed;
+}
+class Box { PlainBodies inside; }
+`,
+	})
+	json := []scopeRead{
+		{"p.Holder", "plainBodies", "str[A,B]"},
+		{"p.Holder", "withCtor", "str[A,B]"},
+		{"p.Holder", "creator", "str[A,B]"},
+		{"p.Holder", "valM", "unres(ValM)"},
+		{"p.Holder", "valOff", "str[A]"},
+		{"p.Holder", "viaIface", "unres(ViaIface)"},
+		{"p.Holder", "viaSuper", "unres(ViaSuper)"},
+		{"p.Holder", "viaPlain", "str[A]"},
+		{"p.Holder", "shapeObj", "unres(ShapeObj)"},
+		{"p.Holder", "shapeNum", "unres(ShapeNum)"},
+		{"p.Holder", "shapeArr", "unres(ShapeArr)"},
+		{"p.Holder", "shapeStr", "str[A]"},
+		{"p.Holder", "propConst", "unres(PropConst)"},
+		{"p.Holder", "propConsts", "arr<unres(PropConst)>"},
+		{"p.Holder", "emptyName", "str[A,B]"},
+		{"p.Holder", "serUsing", "unres(SerUsing)"},
+		{"p.Holder", "alias", "str[A]"},
+		{"p.Holder", "fieldNumber", "unres(PlainBodies)"},
+		{"p.Holder", "listNumber", "arr<unres(WithCtor)>"},
+		{"p.Holder", "arrayNumber", "arr<unres(WithCtor)>"},
+		{"p.Holder", "fieldArray", "unres(PlainBodies)"},
+		// The string shape of a field does not turn back an enum that is written as
+		// something else.
+		{"p.Holder", "fieldString", "unres(ShapeNum)"},
+		{"p.Holder", "fieldStringOfPlain", "str[A,B]"},
+		{"p.Holder", "fieldNumberOfValue", "unres(ValM)"},
+		{"p.Holder", "fieldSerialized", "unres(PlainBodies)"},
+		{"p.Holder", "contentSerialized", "arr<unres(PlainBodies)>"},
+		{"p.Holder", "mapNumber", "map<str,unres(WithCtor)>"},
+		// The shape of a field is the shape of what it holds, not of the fields of an
+		// object it holds.
+		{"p.Box", "inside", "str[A,B]"},
+	}
+	binding := []scopeRead{
+		{"p.Holder", "valM", "str[A,B]"},
+		{"p.Holder", "viaIface", "str[A]"},
+		{"p.Holder", "shapeObj", "str[A]"},
+		{"p.Holder", "shapeNum", "str[A,B]"},
+		{"p.Holder", "propConst", "str[A,B,C,D]"},
+		{"p.Holder", "fieldNumber", "str[A,B]"},
+	}
+	for order, ordered := range map[string][]parser.Class{"as declared": classes, "reversed": reversed(classes)} {
+		for _, library := range []func() DependencyResolver{nil, noLibrary} {
+			checkReads(t, order, ordered, library, false, json...)
+			checkReads(t, order, ordered, library, true, binding...)
+		}
+	}
+}
+
+// An interface of a library that an enum implements carries @JsonValue on a method
+// as well: the dependencies are asked for it, and without them the enum keeps the
+// form its own source tells.
+func TestResolve_AnEnumImplementingAnInterfaceOfALibraryFollowsItsJsonValue(t *testing.T) {
+	classes := parseFiles(t, map[string]string{
+		"app/Kind.java":   "package app; import lib.Coded; public enum Kind implements Coded { A; public String code() { return null; } }",
+		"app/Holder.java": "package app; class Holder { Kind kind; }",
+	})
+	library := func() DependencyResolver {
+		return libraryOf(t, map[string]string{
+			"lib/Coded.java": "package lib; import com.fasterxml.jackson.annotation.JsonValue; public interface Coded { @JsonValue String code(); }",
+		})
+	}
+	checkReads(t, "a library interface", classes, library, false, scopeRead{"app.Holder", "kind", "unres(Kind)"})
+	checkReads(t, "no dependencies", classes, nil, false, scopeRead{"app.Holder", "kind", "str[A]"})
+}

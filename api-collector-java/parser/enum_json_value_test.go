@@ -1,6 +1,9 @@
 package parser
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 // An enum records whether it declares @JsonValue, which changes the value
 // Jackson writes for it, however the enum is printed: as an enum declaration,
@@ -170,6 +173,54 @@ func TestHasJsonValue(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := HasJsonValue(tt.annotations); got != tt.want {
 				t.Errorf("HasJsonValue = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// An enum records whether a constant is given a name by @JsonProperty, and the
+// interfaces it implements, one of which may carry @JsonValue on a method.
+func TestParser_EnumRecordsWhetherAConstantIsRenamedAndItsInterfaces(t *testing.T) {
+	tests := []struct {
+		name      string
+		constants string
+		renamed   bool
+	}{
+		{name: "no annotation", constants: "LOW, HIGH"},
+		{name: "a name on a constant", constants: `LOW, @JsonProperty("high_x") HIGH`, renamed: true},
+		{name: "a name by value, among other annotations, on a constant with a body", constants: `LOW, @Deprecated @JsonProperty(value = "mid_x") MID(1) { }`, renamed: true},
+		{name: "a qualified annotation", constants: `@com.fasterxml.jackson.annotation.JsonProperty("low_x") LOW`, renamed: true},
+		{name: "an empty name gives none", constants: `@JsonProperty("") LOW, HIGH`},
+		{name: "no name gives none", constants: `@JsonProperty LOW, HIGH`},
+		{name: "another annotation", constants: `@Deprecated LOW, HIGH`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			jp, err := NewParser(ParserOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer jp.Close()
+			classes, err := jp.ParseSource([]byte(`package a;
+import com.fasterxml.jackson.annotation.JsonProperty;
+enum Level implements Coded, Other<String> {
+    ` + tt.constants + `;
+    Level() {}
+    Level(int n) {}
+}
+`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			level := classes[0]
+			if level.EnumJsonProperty != tt.renamed {
+				t.Errorf("EnumJsonProperty = %v, want %v", level.EnumJsonProperty, tt.renamed)
+			}
+			if len(level.EnumConstants) < 1 {
+				t.Errorf("constants = %q, want the constants read", level.EnumConstants)
+			}
+			if want := []string{"Coded", "Other"}; !reflect.DeepEqual(level.Interfaces, want) {
+				t.Errorf("interfaces = %q, want %q", level.Interfaces, want)
 			}
 		})
 	}

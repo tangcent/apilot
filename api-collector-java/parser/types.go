@@ -132,6 +132,9 @@ type Class struct {
 	// field: Jackson writes the value of that member, not the name of the
 	// constant.
 	EnumJsonValue bool
+	// EnumJsonProperty marks an enum one of whose constants carries @JsonProperty
+	// with a value: Jackson writes that constant under the name it is given.
+	EnumJsonProperty bool
 }
 
 // QualifiedName returns the name a declaration is known by: its package, the

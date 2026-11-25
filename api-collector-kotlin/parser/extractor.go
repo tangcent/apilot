@@ -244,7 +244,9 @@ func extractClass(node *tree_sitter.Node, source []byte, packageName, filePath s
 	}
 
 	extractSuperTypes(node, source, &class)
-	extractEnumEntries(node, source, &class)
+	if err := extractEnumEntries(node, source, filePath, &class); err != nil {
+		return err
+	}
 
 	if primary := firstChildOfKind(node, "primary_constructor"); primary != nil {
 		if classParams := firstChildOfKind(primary, "class_parameters"); classParams != nil {
@@ -491,10 +493,10 @@ func extractTypeParameters(node *tree_sitter.Node, source []byte) []string {
 	return out
 }
 
-func extractEnumEntries(node *tree_sitter.Node, source []byte, class *Class) {
+func extractEnumEntries(node *tree_sitter.Node, source []byte, filePath string, class *Class) error {
 	body := firstChildOfKind(node, "enum_class_body")
 	if body == nil {
-		return
+		return nil
 	}
 	for i := uint(0); i < body.ChildCount(); i++ {
 		child := body.Child(i)
@@ -502,10 +504,35 @@ func extractEnumEntries(node *tree_sitter.Node, source []byte, class *Class) {
 			continue
 		}
 		if id := firstChildOfKind(child, "identifier"); id != nil {
+			anns, _, err := parseModifiers(firstChildOfKind(child, "modifiers"), source, filePath)
+			if err != nil {
+				return err
+			}
 			class.EnumValues = append(class.EnumValues, id.Utf8Text(source))
 			class.EnumValueKDocs = append(class.EnumValueKDocs, leadingKDoc(child, source))
+			if entryJsonName(anns) != "" {
+				class.EnumJsonProperty = true
+			}
 		}
 	}
+	return nil
+}
+
+// entryJsonName returns the name an @JsonProperty on an enum entry gives it, or ""
+// when there is none or it gives no name. Of the use-site targets only the entry
+// itself and its field carry the annotation to where Jackson reads it.
+func entryJsonName(annotations []Annotation) string {
+	for _, ann := range annotations {
+		switch ann.UseSiteTarget {
+		case "", "field":
+		default:
+			continue
+		}
+		if ann.Name == "JsonProperty" {
+			return strings.TrimSpace(ann.Params["value"])
+		}
+	}
+	return ""
 }
 
 func extractClassParameter(node *tree_sitter.Node, source []byte, filePath string) (Property, bool, error) {

@@ -679,6 +679,45 @@ func TestResolveFromEnumsInheritedAsMemberTypes(t *testing.T) {
 	}
 }
 
+// An enum is written as the member of an interface that carries @JsonValue, whether
+// the member is a function or a property whose getter carries it, and not as one
+// whose annotation lands elsewhere; an enum with an entry that @JsonProperty gives
+// a name is not written as the names of its entries either. Both keep their type
+// name.
+func TestResolveFromEnumsWrittenByAnInterfaceAndRenamedEntries(t *testing.T) {
+	function := ktparser.Function{Name: "code", Annotations: []ktparser.Annotation{testAnnotation("JsonValue", nil)}}
+	property := testProperty("wire", "String", ktparser.Annotation{Name: "JsonValue", UseSiteTarget: "get"})
+	elsewhere := testProperty("other", "String", ktparser.Annotation{Name: "JsonValue", UseSiteTarget: "param"})
+	classes := []ktparser.Class{
+		{Name: "ByFunction", Package: "p", IsInterface: true, Methods: []ktparser.Function{function}},
+		{Name: "ByProperty", Package: "p", IsInterface: true, Fields: []ktparser.Property{property}},
+		{Name: "ByNothing", Package: "p", IsInterface: true, Fields: []ktparser.Property{elsewhere}},
+		{Name: "Deeper", Package: "p", IsInterface: true, Interfaces: []string{"ByFunction"}},
+		{Name: "A", Package: "p", IsEnum: true, EnumValues: []string{"X"}, Interfaces: []string{"ByFunction"}},
+		{Name: "B", Package: "p", IsEnum: true, EnumValues: []string{"X"}, Interfaces: []string{"ByProperty"}},
+		{Name: "C", Package: "p", IsEnum: true, EnumValues: []string{"X"}, Interfaces: []string{"ByNothing"}},
+		{Name: "D", Package: "p", IsEnum: true, EnumValues: []string{"X"}, Interfaces: []string{"Deeper"}},
+		{Name: "E", Package: "p", IsEnum: true, EnumValues: []string{"X", "Y"}, EnumJsonProperty: true},
+		{Name: "Holder", Package: "p", FilePath: "p/Holder.kt", Fields: []ktparser.Property{
+			mutableProperty("a", "A"), mutableProperty("b", "B"), mutableProperty("c", "C"), mutableProperty("d", "D"), mutableProperty("e", "E"),
+		}},
+	}
+	r := New(classes)
+	holder := r.ResolveFrom(&classes[len(classes)-1], "Holder", nil)
+	for name, want := range map[string]string{"a": "A", "b": "B", "d": "D", "e": "E"} {
+		if got := objectField(t, holder, name); got.Model.TypeName != want || len(got.Options) != 0 {
+			t.Errorf("%s = %+v, options %v, want the type name %s of an enum written in a form of its own", name, got.Model, got.Options, want)
+		}
+	}
+	if c := objectField(t, holder, "c"); c.Model.TypeName != model.JsonTypeString || len(c.Options) != 1 {
+		t.Errorf("c = %+v, options %v, want a string of X: @JsonValue on the parameter is not read as the value", c.Model, c.Options)
+	}
+	bound := r.ResolveForBinding(&classes[len(classes)-1], "Holder", nil)
+	if got := objectField(t, bound, "e"); len(got.Options) != 2 || got.Options[1].Value != "Y" {
+		t.Errorf("binding e options = %v, want X and Y", got.Options)
+	}
+}
+
 // libraryEnums answers the dependency lookups of a Kotlin resolver with the classes
 // it holds, by qualified name.
 type libraryEnums map[string]javaparser.Class

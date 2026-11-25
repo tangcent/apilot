@@ -285,11 +285,14 @@ func extractInterface(node *tree_sitter.Node, source []byte) Class {
 // extractEnum reads an enum declaration: its name and its constants. The
 // fields and methods of its body are not read: Spring binds a request
 // parameter to an enum by the name of a constant, so the constants are the
-// values it accepts. Only whether a member of the body carries @JsonValue is
-// kept, because that changes the value Jackson writes (see Class.EnumJsonValue).
+// values it accepts. Only what changes the value Jackson writes is kept besides:
+// whether a member of the body carries @JsonValue (see Class.EnumJsonValue),
+// whether a constant is given a name by @JsonProperty (see Class.EnumJsonProperty),
+// and the interfaces the enum implements, which may carry @JsonValue on a method.
 func extractEnum(node *tree_sitter.Node, source []byte) Class {
 	enum := Class{IsEnum: true, JavaDoc: extractLeadingJavaDoc(node, source), RawJavaDoc: rawLeadingJavaDoc(node, source)}
 	enum.Annotations = extractAnnotations(node, source)
+	enum.Interfaces = extractInterfaces(node, source)
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Kind() {
@@ -305,6 +308,9 @@ func extractEnum(node *tree_sitter.Node, source []byte) Class {
 					if name := member.ChildByFieldName("name"); name != nil {
 						enum.EnumConstants = append(enum.EnumConstants, name.Utf8Text(source))
 						enum.EnumConstantDocs = append(enum.EnumConstantDocs, extractLeadingJavaDoc(member, source))
+						if JsonPropertyName(extractAnnotations(member, source)) != "" {
+							enum.EnumJsonProperty = true
+						}
 					}
 				case "enum_body_declarations":
 					enum.EnumJsonValue = membersDeclareJsonValue(member, source)
@@ -344,6 +350,21 @@ func declaresJsonValue(methods []Method, fields []Field) bool {
 		}
 	}
 	return false
+}
+
+// JsonPropertyName returns the name an @JsonProperty among annotations gives its
+// target, or "" when there is none or it gives no name.
+func JsonPropertyName(annotations []Annotation) string {
+	for _, ann := range annotations {
+		name := ann.Name
+		if i := strings.LastIndex(name, "."); i >= 0 {
+			name = name[i+1:]
+		}
+		if name == "JsonProperty" {
+			return strings.TrimSpace(ann.Params["value"])
+		}
+	}
+	return ""
 }
 
 // HasJsonValue reports whether annotations include an @JsonValue that is
