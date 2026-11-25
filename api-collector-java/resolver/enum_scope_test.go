@@ -229,3 +229,121 @@ func TestResolve_AClassOfALibraryDoesNotTakeTheEnumsOfTheProject(t *testing.T) {
 		}
 	}
 }
+
+// A member type the class inherits, from a superclass or an interface, however far
+// up, shadows what the package declares, as one it declares itself does (JLS 6.4.1,
+// 8.5): inside Sub, Status is the Status nested in Outer, not the one of the
+// package. The classes around a class lend their member types too, with the ones
+// they inherit. The supertypes of a class are named in the scope around its header,
+// where its own member types are not in scope.
+func TestResolve_AMemberTypeThatIsInheritedShadowsTheTypesOfThePackage(t *testing.T) {
+	classes := parseFiles(t, map[string]string{
+		"p/Status.java":   "package p; public enum Status { TOP }",
+		"p/Outer.java":    "package p; public class Outer { public enum Status { OUTER } }",
+		"p/Sub.java":      "package p; class Sub extends Outer { Status s; }",
+		"q/Sub2.java":     "package q; import p.Outer; class Sub2 extends Outer { Status s; }",
+		"p/GrandSub.java": `package p; class GrandSub extends Sub { Status s; }`,
+		"p/Ifaces.java": `package p;
+interface HasStatus { enum Status { IFACE } }
+interface Deeper extends HasStatus { }
+class ViaIface implements HasStatus { Status s; }
+class ViaDeeper implements Deeper { Status s; }
+`,
+		"p/Around.java": `package p;
+class Wrapper extends Outer { class Inner { Status s; } }
+class Own extends Outer { enum Status { OWN } Status s; }
+`,
+		"p/Header.java": `package p;
+class Parent { enum Status { PARENT } }
+class Header extends Parent { enum Parent { X } Status s; }
+`,
+	})
+	reads := []scopeRead{
+		{"p.Sub", "s", "str[OUTER]"},
+		{"q.Sub2", "s", "str[OUTER]"},
+		{"p.GrandSub", "s", "str[OUTER]"},
+		{"p.ViaIface", "s", "str[IFACE]"},
+		{"p.ViaDeeper", "s", "str[IFACE]"},
+		{"p.Wrapper.Inner", "s", "str[OUTER]"},
+		{"p.Own", "s", "str[OWN]"},
+		{"p.Header", "s", "str[PARENT]"},
+	}
+	for order, ordered := range map[string][]parser.Class{"as declared": classes, "reversed": reversed(classes)} {
+		for _, library := range []func() DependencyResolver{nil, noLibrary} {
+			checkReads(t, order, ordered, library, false, reads...)
+			checkReads(t, order, ordered, library, true, reads...)
+		}
+	}
+}
+
+// A member type that is a class and not an enum shadows the types of the package
+// too: inside Outer, the nested Code is the class Outer declares, never the
+// top-level enum or class of the package that carries the name, nor the class
+// nested in another class that carries it as well.
+func TestResolve_AMemberClassIsNeverReplacedByAnotherDeclarationOfItsName(t *testing.T) {
+	classes := parseFiles(t, map[string]string{
+		"d/Code.java":  "package d; public enum Code { E1 }",
+		"d/Outer.java": "package d; public class Outer { public static class Code { String v; } Code inner; }",
+		"d/Item.java":  "package d; public class Item { String top; }",
+		"d/Holder.java": `package d;
+class Holder { Item item; Code code; }
+class Box { static class Item { String nested; } Item item; }
+`,
+		"d/A.java": "package d; class A { static class Entry { String a; } Entry entry; }",
+		"d/B.java": "package d; class B { static class Entry { String b; } Entry entry; }",
+	})
+	for order, ordered := range map[string][]parser.Class{"as declared": classes, "reversed": reversed(classes)} {
+		for _, library := range []func() DependencyResolver{nil, noLibrary} {
+			checkReads(t, order, ordered, library, false,
+				scopeRead{"d.Holder", "item", "obj(Item:top)"},
+				scopeRead{"d.Holder", "code", "str[E1]"},
+				scopeRead{"d.Outer", "inner", "obj(Code:v)"},
+				scopeRead{"d.Box", "item", "obj(Item:nested)"},
+				// Two classes nested in different classes are two classes.
+				scopeRead{"d.A", "entry", "obj(Entry:a)"},
+				scopeRead{"d.B", "entry", "obj(Entry:b)"},
+			)
+		}
+	}
+}
+
+// An enum of the package of the source is the enum the name denotes, whether the
+// current view reads it or not, and a class of another package that carries the
+// name and that nothing imports is not taken for it: not for the name written
+// directly, in a collection, or as a type argument (which is qualified where it is
+// written).
+func TestResolve_AnEnumOfThePackageIsNotReplacedByAnUnrelatedClassOfItsName(t *testing.T) {
+	classes := parseFiles(t, map[string]string{
+		"com/ex/unrelated/Status.java": "package com.ex.unrelated; public class Status { private String unrelatedLabel; }",
+		"com/ex/gen/Box.java":          "package com.ex.gen; public class Box<T> { public T data; }",
+		"com/ex/app/dto/Status.java":   "package com.ex.app.dto; public enum Status { OPEN, CLOSED }",
+		"com/ex/app/dto/Ctl.java": `package com.ex.app.dto;
+import com.ex.gen.Box;
+import java.util.List;
+class Ctl { Status direct; List<Status> list; Box<Status> boxed; }
+`,
+		"com/ex/app/dto/Coded.java": `package com.ex.app.dto;
+import com.fasterxml.jackson.annotation.JsonValue;
+public enum Coded { X; @JsonValue String v() { return null; } }
+class UsesCoded { Coded coded; }
+`,
+	})
+	for order, ordered := range map[string][]parser.Class{"as declared": classes, "reversed": reversed(classes)} {
+		for _, binding := range []bool{false, true} {
+			checkReads(t, order, ordered, noLibrary, binding,
+				scopeRead{"com.ex.app.dto.Ctl", "direct", "str[OPEN,CLOSED]"},
+			)
+		}
+		checkReads(t, order, ordered, nil, false,
+			scopeRead{"com.ex.app.dto.Ctl", "list", "arr<str>[OPEN,CLOSED]"},
+			// An enum that the JSON view leaves out is no less the enum the name denotes.
+			scopeRead{"com.ex.app.dto.UsesCoded", "coded", "unres(Coded)"},
+		)
+		r := NewTypeResolver(ordered)
+		r.SetDependencyResolver(&libraryClasses{})
+		boxed := r.Resolve("com.ex.app.dto.Ctl", nil).Fields["boxed"]
+		if got := describeField(boxed.Model.Fields["data"]); got != "str[OPEN,CLOSED]" {
+			t.Errorf("%s: Ctl.boxed.data = %s, want str[OPEN,CLOSED], not the class of com.ex.unrelated", order, got)
+		}
+	}
+}

@@ -643,3 +643,37 @@ func TestResolveFromEnumsNestedInDifferentClassesOfOneFile(t *testing.T) {
 		}
 	}
 }
+
+// A member type a class inherits from a superclass or an interface shadows the
+// enum of the package that carries its name, as one the class declares does, and an
+// enum that a name written in a class of an unrelated package does not bind to is
+// not taken for it.
+func TestResolveFromEnumsInheritedAsMemberTypes(t *testing.T) {
+	classes := []ktparser.Class{
+		{Name: "Status", Package: "p", FilePath: "p/Status.kt", IsEnum: true, EnumValues: []string{"TOP"}},
+		{Name: "Outer", Package: "p", FilePath: "p/Outer.kt"},
+		{Name: "Status", Outer: "Outer", Package: "p", FilePath: "p/Outer.kt", IsEnum: true, EnumValues: []string{"OUTER"}},
+		{Name: "HasStatus", Package: "p", FilePath: "p/HasStatus.kt", IsInterface: true},
+		{Name: "Status", Outer: "HasStatus", Package: "p", FilePath: "p/HasStatus.kt", IsEnum: true, EnumValues: []string{"IFACE"}},
+		{Name: "Sub", Package: "p", FilePath: "p/Sub.kt", SuperClass: "Outer", Fields: []ktparser.Property{testProperty("s", "Status")}},
+		{Name: "ViaIface", Package: "p", FilePath: "p/ViaIface.kt", Interfaces: []string{"HasStatus"}, Fields: []ktparser.Property{testProperty("s", "Status")}},
+		{Name: "Plain", Package: "p", FilePath: "p/Plain.kt", Fields: []ktparser.Property{testProperty("s", "Status")}},
+		{Name: "Stranger", Package: "q", FilePath: "q/Stranger.kt", Fields: []ktparser.Property{testProperty("s", "Status")}},
+	}
+	r := New(classes)
+	want := map[string][]string{"Sub": {"OUTER"}, "ViaIface": {"IFACE"}, "Plain": {"TOP"}, "Stranger": nil}
+	for i := range classes {
+		expected, ok := want[classes[i].Name]
+		if !ok {
+			continue
+		}
+		field := objectField(t, r.ResolveFrom(&classes[i], classes[i].Name, nil), "s")
+		var got []string
+		for _, option := range field.Options {
+			got = append(got, option.Value.(string))
+		}
+		if !reflect.DeepEqual(got, expected) {
+			t.Errorf("%s.s options = %v, want %v", classes[i].Name, got, expected)
+		}
+	}
+}
