@@ -55,6 +55,94 @@ func extractImports(root *tree_sitter.Node, source []byte) []Import {
 	return imports
 }
 
+// enclosingTypes returns the dotted path of the types a declaration is nested
+// in, outermost first: "Outer.Mid" for a class declared in Mid, which is
+// declared in Outer. It is empty for a top-level declaration.
+//
+// A class declared in a method body is read as one of the types around the
+// method, and is marked local (see isLocalType).
+func enclosingTypes(node *tree_sitter.Node, source []byte) string {
+	var names []string
+	for parent := node.Parent(); parent != nil; parent = parent.Parent() {
+		switch parent.Kind() {
+		case "class_declaration", "interface_declaration", "enum_declaration", "record_declaration", "annotation_type_declaration":
+			if name := declaredName(parent, source); name != "" {
+				names = append(names, name)
+			}
+		}
+	}
+	for i, j := 0, len(names)-1; i < j; i, j = i+1, j-1 {
+		names[i], names[j] = names[j], names[i]
+	}
+	return strings.Join(names, ".")
+}
+
+// isInnerClass reports whether a class declaration is an inner class: a member of
+// a class, an enum or a record, without the modifier static (see Class.Inner). A
+// member of an interface or an annotation type is static, and a class declared in
+// a block is not a member.
+func isInnerClass(node *tree_sitter.Node) bool {
+	if node.Kind() != "class_declaration" || isLocalType(node) {
+		return false
+	}
+	if parent := node.Parent(); parent == nil || (parent.Kind() != "class_body" && parent.Kind() != "enum_body_declarations") {
+		return false
+	}
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() != "modifiers" {
+			continue
+		}
+		for j := uint(0); j < child.ChildCount(); j++ {
+			if child.Child(j).Kind() == "static" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// isLocalType reports whether a type declaration is local: declared anywhere but
+// as a member of a type, in a block, a lambda, an anonymous class or the body of
+// an enum constant. Its name is in scope in that block only (JLS 6.3), so no
+// other class names it, and it takes no part in the scope of the types around it.
+// A member of a local class is local too.
+func isLocalType(node *tree_sitter.Node) bool {
+	for parent := node.Parent(); parent != nil; parent = parent.Parent() {
+		switch parent.Kind() {
+		case "class_declaration", "interface_declaration", "enum_declaration", "record_declaration",
+			"annotation_type_declaration", "class_body", "interface_body", "enum_body",
+			"enum_body_declarations", "annotation_type_body", "ERROR":
+			// A member of a type, or the text the grammar could not place.
+		case "program":
+			return false
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+// declaredName returns the name a type declaration gives itself.
+func declaredName(node *tree_sitter.Node, source []byte) string {
+	if name := node.ChildByFieldName("name"); name != nil {
+		return name.Utf8Text(source)
+	}
+	for i := uint(0); i < node.ChildCount(); i++ {
+		if child := node.Child(i); child.Kind() == "identifier" {
+			return child.Utf8Text(source)
+		}
+	}
+	return ""
+}
+
+// qualifiedTypeText returns a qualified type name as written, without the
+// white space the source may put between its parts and without the annotations
+// inside it (see typeText): `Outer.Inner`.
+func qualifiedTypeText(node *tree_sitter.Node, source []byte) string {
+	return strings.Join(strings.Fields(typeText(node, source)), "")
+}
+
 // extractClass extracts class information including annotations and methods.
 func extractClass(node *tree_sitter.Node, source []byte) Class {
 	class := Class{}
@@ -176,6 +264,9 @@ func extractInterface(node *tree_sitter.Node, source []byte) Class {
 
 	// Extract interface annotations
 	class.Annotations = extractAnnotations(node, source)
+
+	// An interface inherits the member types of the interfaces it extends.
+	class.Interfaces = extractInterfaces(node, source)
 
 	// Extract methods and constants from interface body
 	for i := uint(0); i < node.ChildCount(); i++ {
@@ -606,14 +697,18 @@ func extractParameter(node *tree_sitter.Node, source []byte) Parameter {
 // typeNodeText spells a type node as written, except that an array type is
 // always its element type followed by one `[]` per dimension: `String []`
 // and `String[]` are the same type, and the resolver reads the brackets off
-// the end of the spelling.
+// the end of the spelling. A qualified name has no white space between its
+// parts (see qualifiedTypeText).
 func typeNodeText(node *tree_sitter.Node, source []byte) string {
-	if node.Kind() == "array_type" {
+	switch node.Kind() {
+	case "array_type":
 		element := node.ChildByFieldName("element")
 		dimensions := node.ChildByFieldName("dimensions")
 		if element != nil && dimensions != nil {
 			return typeNodeText(element, source) + dimensionSuffix(dimensions)
 		}
+	case "scoped_type_identifier":
+		return qualifiedTypeText(node, source)
 	}
 	return typeText(node, source)
 }
@@ -756,6 +851,8 @@ func extractSuperClass(node *tree_sitter.Node, source []byte) (string, []string)
 				switch scChild.Kind() {
 				case "type_identifier":
 					return scChild.Utf8Text(source), nil
+				case "scoped_type_identifier":
+					return qualifiedTypeText(scChild, source), nil
 				case "generic_type":
 					return extractGenericBaseAndArgs(scChild, source)
 				}
@@ -765,17 +862,20 @@ func extractSuperClass(node *tree_sitter.Node, source []byte) (string, []string)
 	return "", nil
 }
 
-// extractInterfaces extracts interface names from a class declaration's implements clause.
+// extractInterfaces extracts interface names from a class declaration's implements
+// clause, or from the extends clause of an interface declaration.
 func extractInterfaces(node *tree_sitter.Node, source []byte) []string {
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
-		if child.Kind() == "super_interfaces" {
+		if child.Kind() == "super_interfaces" || child.Kind() == "extends_interfaces" {
 			var ifaces []string
 			for j := uint(0); j < child.ChildCount(); j++ {
 				ifaceChild := child.Child(j)
 				switch ifaceChild.Kind() {
 				case "type_identifier":
 					ifaces = append(ifaces, ifaceChild.Utf8Text(source))
+				case "scoped_type_identifier":
+					ifaces = append(ifaces, qualifiedTypeText(ifaceChild, source))
 				case "generic_type":
 					baseName, _ := extractGenericBaseAndArgs(ifaceChild, source)
 					ifaces = append(ifaces, baseName)
@@ -785,6 +885,8 @@ func extractInterfaces(node *tree_sitter.Node, source []byte) []string {
 						switch listChild.Kind() {
 						case "type_identifier":
 							ifaces = append(ifaces, listChild.Utf8Text(source))
+						case "scoped_type_identifier":
+							ifaces = append(ifaces, qualifiedTypeText(listChild, source))
 						case "generic_type":
 							baseName, _ := extractGenericBaseAndArgs(listChild, source)
 							ifaces = append(ifaces, baseName)
@@ -808,6 +910,8 @@ func extractGenericBaseAndArgs(node *tree_sitter.Node, source []byte) (string, [
 		switch child.Kind() {
 		case "type_identifier":
 			baseName = child.Utf8Text(source)
+		case "scoped_type_identifier":
+			baseName = qualifiedTypeText(child, source)
 		case "type_arguments":
 			typeArgs = extractTypeArguments(child, source)
 		}
@@ -825,6 +929,8 @@ func extractTypeArguments(node *tree_sitter.Node, source []byte) []string {
 		switch child.Kind() {
 		case "type_identifier", "generic_type", "annotated_type", "array_type":
 			args = append(args, typeText(child, source))
+		case "scoped_type_identifier":
+			args = append(args, qualifiedTypeText(child, source))
 		}
 	}
 

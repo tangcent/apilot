@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	collector "github.com/tangcent/apilot/api-collector"
@@ -98,14 +97,17 @@ func (c *JavaCollector) Collect(ctx collector.CollectContext) ([]collector.ApiEn
 // sources of another JVM language, such as a Kotlin service with a few Java
 // classes left in it.
 //
-// types holds the other language's declarations converted to the Java model.
-// They join the type table of every framework parser, so a Java controller can
-// resolve a request or response class written in that language; they never
-// contribute endpoints of their own. The Java declarations parsed from the tree
-// are returned alongside the endpoints, so the caller can resolve its own
-// endpoints against them without parsing the tree a second time.
-func (c *JavaCollector) CollectWithTypes(ctx collector.CollectContext, types []parser.Class) ([]collector.ApiEndpoint, []parser.Class, error) {
-	return c.collect(ctx, types)
+// convert is given the Java declarations parsed from the tree and returns the
+// other language's declarations converted to the Java model. They join the type
+// table of every framework parser, so a Java controller can resolve a request or
+// response class written in that language; they never contribute endpoints of
+// their own. The conversion takes the Java declarations because the names the
+// other language writes bind to them: a class of the package that is called
+// Number hides the standard Number there, as it does in Java. The Java
+// declarations are returned alongside the endpoints too, so the caller can
+// resolve its own endpoints against them without parsing the tree a second time.
+func (c *JavaCollector) CollectWithTypes(ctx collector.CollectContext, convert func(javaTypes []parser.Class) []parser.Class) ([]collector.ApiEndpoint, []parser.Class, error) {
+	return c.collect(ctx, convert)
 }
 
 // ShareDependencies makes the next Collect call resolve dependency types
@@ -116,7 +118,7 @@ func (c *JavaCollector) ShareDependencies(deps *Dependencies) {
 	c.shared = deps
 }
 
-func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Class) ([]collector.ApiEndpoint, []parser.Class, error) {
+func (c *JavaCollector) collect(ctx collector.CollectContext, convert func(javaTypes []parser.Class) []parser.Class) ([]collector.ApiEndpoint, []parser.Class, error) {
 	requiredFields, err := ctx.RequiredFields()
 	if err != nil {
 		return nil, nil, err
@@ -174,8 +176,10 @@ func (c *JavaCollector) collect(ctx collector.CollectContext, types []parser.Cla
 			parsed = append(parsed, r.Classes...)
 		}
 	}
-	if len(types) > 0 {
-		results = append(results, parser.ParseResult{Classes: types})
+	if convert != nil {
+		if types := convert(parsed); len(types) > 0 {
+			results = append(results, parser.ParseResult{Classes: types})
+		}
 	}
 
 	frameworks := resolveFrameworks(ctx)
@@ -523,7 +527,7 @@ func springmvcEndpointToAPI(ep springmvc.Endpoint, folder string) collector.ApiE
 	for _, p := range ep.Parameters {
 		if p.ParamType == "body" {
 			out.RequestBody = &collector.ApiBody{Name: p.Name, MediaType: "application/json"}
-		} else if isMultipartFile(p.Type) {
+		} else if p.File {
 			out.Parameters = append(out.Parameters, collector.ApiParameter{
 				Name:        p.Name,
 				Type:        "file",
@@ -585,7 +589,7 @@ func jaxrsEndpointToAPI(ep jaxrs.Endpoint, folder string) collector.ApiEndpoint 
 	for _, p := range ep.Parameters {
 		if p.ParamType == "body" {
 			out.RequestBody = &collector.ApiBody{Name: p.Name, MediaType: firstMediaType(ep.Consumes)}
-		} else if isMultipartFile(p.Type) {
+		} else if p.File {
 			out.Parameters = append(out.Parameters, collector.ApiParameter{
 				Name:        p.Name,
 				Type:        "file",
@@ -645,7 +649,7 @@ func feignEndpointToAPI(ep feign.Endpoint, folder string) collector.ApiEndpoint 
 	for _, p := range ep.Parameters {
 		if p.ParamType == "body" {
 			out.RequestBody = &collector.ApiBody{Name: p.Name, MediaType: "application/json"}
-		} else if isMultipartFile(p.Type) {
+		} else if p.File {
 			out.Parameters = append(out.Parameters, collector.ApiParameter{
 				Name:        p.Name,
 				Type:        "file",
@@ -689,16 +693,6 @@ func feignEndpointToAPI(ep feign.Endpoint, folder string) collector.ApiEndpoint 
 		}
 	}
 	return out
-}
-
-// isMultipartFile reports whether a declared Java type is a multipart file
-// part. The parameter travels in a multipart form body, so it is a form
-// parameter: documenting it under Query would tell a reader to send ?file=.
-// isMultipartFile reports whether a parameter of this type is uploaded as
-// file parts: a MultipartFile, or a collection or array of them.
-func isMultipartFile(javaType string) bool {
-	element := springmvc.ElementType(javaType)
-	return element == "MultipartFile" || strings.HasSuffix(element, ".MultipartFile")
 }
 
 // firstMediaType returns the first declared media type, or fallback when the

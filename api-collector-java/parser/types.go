@@ -89,6 +89,28 @@ type Class struct {
 	SuperClassTypeArgs []string
 	TypeParameters     []string
 	Interfaces         []string
+	// Outer is the dotted path of the classes this declaration is nested in,
+	// outermost first: "Outer" for Outer.Inner, "Outer.Mid" for Deep in
+	// Outer.Mid.Deep. Empty for a top-level declaration. A nested class is a
+	// declaration of its own, and this is all that says where it belongs.
+	Outer string
+	// Local marks a class declared in a method, a constructor, an initializer or a
+	// lambda, or inside an anonymous class or the body of an enum constant. Its
+	// name is in scope in the block that declares it and nowhere else, so it is
+	// neither a member type of the class around it nor a class of its package.
+	// Outer still names the types around it.
+	Local bool
+	// Inner marks a member class that is not static. Only an inner class sees the
+	// type parameters of the classes around it: `class Outer<T> { class Inner { T
+	// value; } }` reads the T of Outer, and a static member class has no such T. A
+	// member of an interface is static whether or not it says so, and an
+	// interface, an enum and a record are never inner.
+	Inner bool
+	// Decompiled marks a class read from a source that a decompiler printed from
+	// bytecode, as against one a developer wrote. Bytecode spells the class Inner
+	// of Outer as `Outer$Inner`, its binary name, and a decompiler may keep that
+	// spelling; written by hand, a `$` is a character of an identifier.
+	Decompiled bool
 	// FilePath is the compilation unit that declared this class. Simple-name
 	// resolution needs it to tell a declaration in the same file apart from
 	// one that is merely imported (JLS 6.5.5.1). Empty for sources parsed
@@ -106,6 +128,21 @@ type Class struct {
 	// EnumConstantDocs holds the doc comment of each constant, cleaned, in
 	// the order of EnumConstants: "" for a constant without one.
 	EnumConstantDocs []string
+}
+
+// QualifiedName returns the name a declaration is known by: its package, the
+// classes it is nested in and its own name, dot-separated, as in
+// com.example.Outer.Inner. Two declarations that share a simple name still
+// differ here, whether they sit in different packages or in different classes.
+func (c Class) QualifiedName() string {
+	name := c.Name
+	if c.Outer != "" {
+		name = c.Outer + "." + name
+	}
+	if c.Package == "" {
+		return name
+	}
+	return c.Package + "." + name
 }
 
 // ParseResult contains the parsing result for a single file.

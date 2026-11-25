@@ -16,8 +16,13 @@ const (
 
 // EndpointParameter represents a parameter in an API endpoint
 type EndpointParameter struct {
-	Name         string
-	Type         string
+	Name string
+	Type string
+	// File marks a parameter that is uploaded as file parts: Spring's
+	// MultipartFile, or a collection or an array of them, held by a
+	// java.util.Optional or not. The parser decides it where the type is
+	// written, so that the scope of its names is known.
+	File         bool
 	ParamType    string
 	Required     bool
 	DefaultValue string

@@ -11,7 +11,6 @@ import (
 	collector "github.com/tangcent/apilot/api-collector"
 	javacollector "github.com/tangcent/apilot/api-collector-java"
 	javaparser "github.com/tangcent/apilot/api-collector-java/parser"
-	javaspringmvc "github.com/tangcent/apilot/api-collector-java/springmvc"
 	ktparser "github.com/tangcent/apilot/api-collector-kotlin/parser"
 	"github.com/tangcent/apilot/api-collector-kotlin/resolver"
 	"github.com/tangcent/apilot/api-collector-kotlin/springmvc"
@@ -169,6 +168,7 @@ func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 	}
 
 	classes := flattenClasses(results)
+	aliases := flattenAliases(results)
 	warnings = append(warnings, collectWarnings(results, classes, selection)...)
 
 	// One dependency resolution serves both halves of a mixed tree.
@@ -195,7 +195,9 @@ func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 		if selection != nil {
 			javaCtx.SourceFiles = javaSelected
 		}
-		javaEndpoints, javaTypes, err = java.CollectWithTypes(javaCtx, resolver.ToJavaClasses(classes))
+		javaEndpoints, javaTypes, err = java.CollectWithTypes(javaCtx, func(parsed []javaparser.Class) []javaparser.Class {
+			return resolver.ToJavaClasses(classes, parsed, aliases)
+		})
 		if err != nil {
 			return nil, fmt.Errorf("collecting the Java sources of %s: %w", ctx.SourceDir, err)
 		}
@@ -212,7 +214,7 @@ func (c *KotlinCollector) Collect(ctx collector.CollectContext) ([]collector.Api
 		endpoints = nil
 		unresolved = map[string]int{}
 	} else {
-		typeResolver := resolver.NewWithJavaTypes(classes, javaTypes)
+		typeResolver := resolver.NewWithAliases(classes, javaTypes, aliases)
 		if dr := deps.Resolver(); dr != nil {
 			typeResolver.SetDependencyResolver(dr)
 		}
@@ -299,6 +301,17 @@ func containsString(values []string, value string) bool {
 	return false
 }
 
+func flattenAliases(results []ktparser.ParseResult) []ktparser.TypeAlias {
+	var aliases []ktparser.TypeAlias
+	for _, result := range results {
+		if result.Error != nil {
+			continue
+		}
+		aliases = append(aliases, result.TypeAliases...)
+	}
+	return aliases
+}
+
 func flattenClasses(results []ktparser.ParseResult) []ktparser.Class {
 	var classes []ktparser.Class
 	for _, result := range results {
@@ -361,7 +374,7 @@ func springMVCEndpointToAPI(ep springmvc.Endpoint, folder string) collector.ApiE
 		switch {
 		case p.ParamType == "body":
 			out.RequestBody = &collector.ApiBody{Name: p.Name, MediaType: "application/json"}
-		case isMultipartFile(p.Type):
+		case p.File:
 			out.Parameters = append(out.Parameters, collector.ApiParameter{
 				Name:        p.Name,
 				Type:        "file",
@@ -405,11 +418,4 @@ func springMVCEndpointToAPI(ep springmvc.Endpoint, folder string) collector.ApiE
 		}
 	}
 	return out
-}
-
-// isMultipartFile reports whether a parameter of this type is uploaded as
-// file parts: a MultipartFile, or a collection or array of them.
-func isMultipartFile(kotlinType string) bool {
-	element := javaspringmvc.ElementType(resolver.NormalizeModelType(kotlinType))
-	return element == "MultipartFile" || strings.HasSuffix(element, ".MultipartFile")
 }

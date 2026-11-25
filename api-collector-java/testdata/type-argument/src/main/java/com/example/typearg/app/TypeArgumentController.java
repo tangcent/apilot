@@ -1,0 +1,114 @@
+package com.example.typearg.app;
+
+import com.example.typearg.dto.Item;
+import com.example.typearg.lib.Bag;
+import com.example.typearg.lib.Box;
+import com.example.typearg.lib.Holder;
+import com.example.typearg.lib.Named;
+import com.example.typearg.lib.Node;
+import com.example.typearg.lib.Outer;
+import com.example.typearg.lib.Pairs;
+import java.time.Period;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/type-args")
+public class TypeArgumentController {
+
+    @PostMapping("/box")
+    public Box<Item> box(@RequestBody Box<Item> body) {
+        return body;
+    }
+
+    @GetMapping("/outer")
+    public Outer<Item> outer() {
+        return null;
+    }
+
+    @GetMapping("/outer-int")
+    public Outer<Integer> outerInt() {
+        return null;
+    }
+
+    @GetMapping("/box-list")
+    public Box<List<Item>> boxList() {
+        return null;
+    }
+
+    @GetMapping("/box-array")
+    public Box<Item[]> boxArray() {
+        return null;
+    }
+
+    @GetMapping("/box-map")
+    public Box<Map<String, Item>> boxMap() {
+        return null;
+    }
+
+    @GetMapping("/box-bounded")
+    public Box<? extends Item> boxBounded() {
+        return null;
+    }
+
+    @GetMapping("/box-period")
+    public Box<Period> boxPeriod() {
+        return null;
+    }
+
+    @GetMapping("/box-date")
+    public Box<Date> boxDate() {
+        return null;
+    }
+
+    @GetMapping("/box-date-list")
+    public Box<List<Date>> boxDateList() {
+        return null;
+    }
+
+    @GetMapping("/box-string")
+    public Box<String> boxString() {
+        return null;
+    }
+
+    @GetMapping("/box-box")
+    public Box<Box<Item>> boxBox() {
+        return null;
+    }
+
+    @GetMapping("/outer-outer")
+    public Outer<Outer<Item>> outerOuter() {
+        return null;
+    }
+
+    @GetMapping("/node")
+    public Node<Item> node() {
+        return null;
+    }
+
+    @GetMapping("/bag")
+    public Bag<Item> bag() {
+        return null;
+    }
+
+    @GetMapping("/named")
+    public Named named() {
+        return null;
+    }
+
+    @GetMapping("/pairs")
+    public Pairs<String, Item> pairs() {
+        return null;
+    }
+
+    @GetMapping("/holder")
+    public Holder holder() {
+        return null;
+    }
+}

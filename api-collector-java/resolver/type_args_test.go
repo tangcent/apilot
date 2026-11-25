@@ -74,17 +74,210 @@ func TestQualifyTypeArgs(t *testing.T) {
 		Imports: []parser.Import{{Path: "com.example.lib.PageData"}, {Path: "java.util.List"}, {Path: "kotlin.collections.Map"}},
 	}
 	r := NewTypeResolver(nil)
-	got := r.qualifyTypeArgs(source, []string{"PageData<Unknown>", "List<PageData>", "Map<String, PageData[]>", "?", "T", "? extends PageData"})
+	// A class of a dependency can only be asked for by its qualified name.
+	r.SetDependencyResolver(&libraryClasses{})
+	got := r.qualifyTypeArgs(source, nil, []string{"PageData<Unknown>", "List<PageData>", "Map<String, PageData[]>", "?", "T", "? extends PageData"})
 	want := []string{
 		"com.example.lib.PageData<Unknown>",
-		"List<com.example.lib.PageData>",
-		"Map<String, com.example.lib.PageData[]>",
+		"java.util.List<com.example.lib.PageData>",
+		"java.util.Map<java.lang.String, com.example.lib.PageData[]>",
 		"?",
 		"T",
 		"? extends com.example.lib.PageData",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("qualifyTypeArgs:\n got  %q\n want %q", got, want)
+	}
+}
+
+// A name that an import gives is written as the class it denotes, in full,
+// whether or not a body is read for it and whether or not a dependency resolver
+// asks for classes by their qualified names: the spelling names the identity. A
+// name that nothing in scope declares is left as written.
+func TestQualifyTypeName_AnImportedNameIsWrittenInFull(t *testing.T) {
+	source := parser.Class{
+		Name: "Holder", Package: "com.example.app",
+		Imports: []parser.Import{{Path: "com.example.lib.Lost"}, {Path: "com.example.lib.Shared"}},
+	}
+	classes := []parser.Class{
+		{Name: "Shared", Package: "com.example.other"},
+		{Name: "Status", Package: "com.example.lib", IsEnum: true, EnumConstants: []string{"OPEN"}},
+	}
+	for name, tc := range map[string]struct {
+		dependencies bool
+		want         map[string]string
+	}{
+		"without a dependency resolver": {false, map[string]string{
+			"Lost":   "com.example.lib.Lost",   // nothing else is called Lost
+			"Shared": "com.example.lib.Shared", // the class of another package is called Shared too
+			"Status": "Status",                 // not imported: nothing in scope names it
+		}},
+		"with a dependency resolver": {true, map[string]string{
+			"Lost":   "com.example.lib.Lost",
+			"Shared": "com.example.lib.Shared",
+			"Status": "Status",
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := NewTypeResolver(classes)
+			if tc.dependencies {
+				r.SetDependencyResolver(&libraryClasses{})
+			}
+			for typeName, want := range tc.want {
+				if got := r.qualifyTypeName(source, nil, typeName); got != want {
+					t.Errorf("qualifyTypeName(%q) = %q, want %q", typeName, got, want)
+				}
+			}
+		})
+	}
+}
+
+// An argument is spelled so that it means the same wherever it is read: the
+// classes it names are written in full, those of java.lang and the rest of the
+// JDK among them, and what the resolver answers for by the spelling alone (the
+// primitive keywords, collections, maps) is left as written.
+func TestQualifyTypeName_Shapes(t *testing.T) {
+	source := parser.Class{
+		Name: "Holder", Package: typeArgAppPackage,
+		Imports: []parser.Import{{Path: typeArgDtoPackage + ".Item"}, {Path: "java.util.List"}},
+	}
+	r := NewTypeResolver([]parser.Class{typeArgItem(typeArgDtoPackage, "name")})
+	for typeName, want := range map[string]string{
+		"Item":                      "com.example.app.dto.Item",
+		"Item[]":                    "com.example.app.dto.Item[]",
+		"Item[][]":                  "com.example.app.dto.Item[][]",
+		"List<Item>":                "java.util.List<com.example.app.dto.Item>",
+		"List<Item>[]":              "java.util.List<com.example.app.dto.Item>[]",
+		"Map<String,Item>":          "java.util.Map<java.lang.String,com.example.app.dto.Item>", // as written: no space
+		"Map<String, Item>":         "java.util.Map<java.lang.String, com.example.app.dto.Item>",
+		"Map<String, List<Item[]>>": "java.util.Map<java.lang.String, java.util.List<com.example.app.dto.Item[]>>",
+		"? extends Item":            "? extends com.example.app.dto.Item",
+		"? super Item":              "? super com.example.app.dto.Item",
+		"?":                         "?",
+		"com.example.lib.Item":      "com.example.lib.Item",
+		"Integer":                   "java.lang.Integer",
+		"String":                    "java.lang.String",
+		"Void":                      "java.lang.Void",
+		"String[]":                  "java.lang.String[]",
+		"List<String>":              "java.util.List<java.lang.String>",
+		"Object[]":                  "java.lang.Object[]",
+		"Date":                      "Date", // nothing in scope names it
+		"int[]":                     "int[]",
+		"boolean":                   "boolean",
+		"Unknown":                   "Unknown",
+		"Unknown<Item>":             "Unknown<com.example.app.dto.Item>",
+	} {
+		if got := r.qualifyTypeName(source, nil, typeName); got != want {
+			t.Errorf("qualifyTypeName(%q) = %q, want %q", typeName, got, want)
+		}
+	}
+}
+
+// Every class of java.lang that the resolver answers for by itself is answered
+// the same when it is written in full, without a scope or the dependencies being
+// consulted: that is how a type argument passes it on.
+func TestResolve_AJavaLangClassWrittenInFullIsTheBareOne(t *testing.T) {
+	library := &libraryClasses{}
+	r := NewTypeResolver(nil)
+	r.SetDependencyResolver(library)
+	for name := range javaLangScalars {
+		qualified := "java.lang." + name
+		bare, full := r.Resolve(name, nil), r.Resolve(qualified, nil)
+		if bare.Kind != model.KindSingle || bare.TypeName != full.TypeName || full.Kind != model.KindSingle {
+			t.Errorf("%s = %+v, but %s = %+v", name, bare, qualified, full)
+		}
+		if array := r.Resolve(qualified+"[]", nil); !array.IsArray() || array.Items.TypeName != bare.TypeName {
+			t.Errorf("%s[] = %+v", qualified, array)
+		}
+		// A scope that declares a class of that name does not change what the
+		// qualified spelling means.
+		own := parser.Class{Name: name, Package: "com.example.app", FilePath: "app/" + name + ".java", Fields: []parser.Field{{Name: "own", Type: "int"}}}
+		scoped := NewTypeResolver([]parser.Class{own})
+		source := parser.Class{Name: "Caller", Package: "com.example.app", FilePath: "app/Caller.java"}
+		if got := scoped.ResolveFrom(source, qualified, nil); got.Kind != model.KindSingle || got.TypeName != bare.TypeName {
+			t.Errorf("%s beside a class of that name = %+v, want %s", qualified, got, bare.TypeName)
+		}
+	}
+	if len(library.asked) != 0 {
+		t.Errorf("the dependencies were asked for %v", library.asked)
+	}
+}
+
+// A type of the JDK that the caller imports is written in full, whether or not
+// another class could take its simple name. The qualified name answers like the
+// bare one.
+func TestQualifyTypeName_ATypeOfTheJdkIsWrittenInFull(t *testing.T) {
+	source := parser.Class{
+		Name: "Holder", Package: "com.example.app",
+		Imports: []parser.Import{{Path: "java.time.Period"}, {Path: "java.util.Date"}, {Path: "java.util.List"}},
+	}
+	classes := []parser.Class{{Name: "Period", Package: "com.example.other"}}
+	for name, tc := range map[string]struct {
+		dependencies bool
+		want         map[string]string
+	}{
+		"without a dependency resolver": {false, map[string]string{
+			"Period":       "java.time.Period", // a class of the project is called Period too
+			"Date":         "java.util.Date",   // nothing else is called Date
+			"List<Period>": "java.util.List<java.time.Period>",
+			"Period[]":     "java.time.Period[]",
+		}},
+		"with a dependency resolver": {true, map[string]string{
+			"Period": "java.time.Period",
+			"Date":   "java.util.Date",
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := NewTypeResolver(classes)
+			if tc.dependencies {
+				r.SetDependencyResolver(&libraryClasses{})
+			}
+			for typeName, want := range tc.want {
+				if got := r.qualifyTypeName(source, nil, typeName); got != want {
+					t.Errorf("qualifyTypeName(%q) = %q, want %q", typeName, got, want)
+				}
+			}
+		})
+	}
+}
+
+// A type variable of the caller is replaced by what it is bound to, once: the
+// binding is an argument already spelled in full. One that nothing binds is
+// spelled as an open variable, whatever class shares its name.
+func TestQualifyTypeName_TypeVariablesOfTheCaller(t *testing.T) {
+	r := NewTypeResolver([]parser.Class{typeArgItem(typeArgDtoPackage, "name")})
+	caller := parser.Class{Name: "Result", Package: typeArgAppPackage, TypeParameters: []string{"T", "Item"}}
+	got := r.qualifyTypeArgs(caller, map[string]string{"T": "com.example.app.dto.Item[]"}, []string{"T", "List<T>", "Item", "Map<String, T[]>"})
+	want := []string{"com.example.app.dto.Item[]", "java.util.List<com.example.app.dto.Item[]>", "'Item", "java.util.Map<java.lang.String, com.example.app.dto.Item[][]>"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("qualifyTypeArgs:\n got  %q\n want %q", got, want)
+	}
+}
+
+// The bindings a controller applies to the methods it inherits are the
+// superclass's parameters bound to the arguments of the extends clause, spelled
+// so that the superclass can resolve them.
+func TestSuperClassBindings(t *testing.T) {
+	r := NewTypeResolver(append(typeArgApplication(), typeArgLibrary()...))
+	base := typeArgClass("Base")
+	for _, tc := range []struct {
+		class    string
+		bindings map[string]string
+		want     map[string]string
+	}{
+		{"Sub", nil, map[string]string{"B": "com.example.app.dto.Item"}},
+		{"SubQualified", nil, map[string]string{"B": "com.example.app.dto.Item"}},
+		{"SubArray", nil, map[string]string{"B": "com.example.app.dto.Item[]"}},
+		{"SubList", nil, map[string]string{"B": "java.util.List<com.example.app.dto.Item>"}},
+		{"SubInt", nil, map[string]string{"B": "java.lang.Integer"}},
+		{"SubGeneric", map[string]string{"S": "com.example.lib.Item"}, map[string]string{"B": "java.util.List<com.example.lib.Item>"}},
+		// A parameter nobody bound stays a variable, spelled as an open one.
+		{"SubGeneric", nil, map[string]string{"B": "java.util.List<'S>"}},
+	} {
+		got := r.SuperClassBindings(typeArgClass(tc.class), base, tc.bindings)
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("SuperClassBindings(%s, %v) = %v, want %v", tc.class, tc.bindings, got, tc.want)
+		}
 	}
 }
 

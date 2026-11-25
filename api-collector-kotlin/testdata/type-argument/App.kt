@@ -1,0 +1,83 @@
+package com.example.typearg.app
+
+import com.example.typearg.dto.Item
+import com.example.typearg.lib.Bag
+import com.example.typearg.lib.BaseController
+import com.example.typearg.lib.Box
+import com.example.typearg.lib.Holder
+import com.example.typearg.lib.MidController
+import com.example.typearg.lib.Named
+import com.example.typearg.lib.Node
+import com.example.typearg.lib.Outer
+import com.example.typearg.lib.Pairs
+import java.time.Period
+import java.util.Date
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestBody
+import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RestController
+
+@RestController
+@RequestMapping("/type-args")
+class TypeArgumentController {
+
+    @PostMapping("/box")
+    fun box(@RequestBody body: Box<Item>): Box<Item> = body
+
+    @GetMapping("/outer")
+    fun outer(): Outer<Item> = TODO()
+
+    @GetMapping("/outer-int")
+    fun outerInt(): Outer<Int> = TODO()
+
+    @GetMapping("/box-list")
+    fun boxList(): Box<List<Item>> = TODO()
+
+    @GetMapping("/box-array")
+    fun boxArray(): Box<Array<Item>> = TODO()
+
+    @GetMapping("/box-map")
+    fun boxMap(): Box<Map<String, Item>> = TODO()
+
+    @GetMapping("/box-period")
+    fun boxPeriod(): Box<Period> = TODO()
+
+    @GetMapping("/box-date")
+    fun boxDate(): Box<Date> = TODO()
+
+    @GetMapping("/box-date-list")
+    fun boxDateList(): Box<List<Date>> = TODO()
+
+    @GetMapping("/box-string")
+    fun boxString(): Box<String> = TODO()
+
+    @GetMapping("/box-box")
+    fun boxBox(): Box<Box<Item>> = TODO()
+
+    @GetMapping("/outer-outer")
+    fun outerOuter(): Outer<Outer<Item>> = TODO()
+
+    @GetMapping("/node")
+    fun node(): Node<Item> = TODO()
+
+    @GetMapping("/bag")
+    fun bag(): Bag<Item> = TODO()
+
+    @GetMapping("/named")
+    fun named(): Named = TODO()
+
+    @GetMapping("/pairs")
+    fun pairs(): Pairs<String, Item> = TODO()
+
+    @GetMapping("/holder")
+    fun holder(): Holder = TODO()
+}
+
+@RestController
+@RequestMapping("/items")
+class ItemController : BaseController<Item>()
+
+@RestController
+@RequestMapping("/lists")
+class ItemListController : MidController<Item>()

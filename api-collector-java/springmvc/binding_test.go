@@ -1,13 +1,67 @@
 package springmvc
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/tangcent/apilot/api-collector-java/parser"
+	"github.com/tangcent/apilot/api-collector-java/resolver"
+	model "github.com/tangcent/apilot/api-model"
 )
 
+// handlerScope is the scope of a handler's compilation unit: the package it is
+// in, the classes it imports, and the classes of the project that its package
+// and the others declare. It gives ClassifyImplicit the identity of the names the
+// handler writes.
+type handlerScope struct {
+	source   parser.Class
+	resolver *resolver.TypeResolver
+}
+
+func newHandlerScope(pkg string, imports []parser.Import, project ...parser.Class) handlerScope {
+	source := parser.Class{Name: "Handler", Package: pkg, FilePath: pkg + "/Handler.java", Imports: imports}
+	return handlerScope{source: source, resolver: resolver.NewTypeResolver(append(project, source))}
+}
+
+func (s handlerScope) identity(name string) string { return s.resolver.Identity(s.source, name) }
+
+func (s handlerScope) isEnum(name string) bool {
+	_, ok := s.resolver.EnumConstants(s.source, name)
+	return ok
+}
+
+func (s handlerScope) classify(typeName string, annotations ...string) (ImplicitKind, string) {
+	return ClassifyImplicit(typeName, annotations, s.isEnum, s.identity)
+}
+
+func importing(paths ...string) []parser.Import {
+	imports := make([]parser.Import, 0, len(paths))
+	for _, path := range paths {
+		imports = append(imports, parser.Import{Path: path})
+	}
+	return imports
+}
+
+func projectClass(pkg, name string) parser.Class {
+	return parser.Class{
+		Name: name, Package: pkg, FilePath: pkg + "/" + name + ".java",
+		Fields: []parser.Field{{Name: "own", Type: "int"}},
+	}
+}
+
+func projectEnum(pkg, name string) parser.Class {
+	return parser.Class{
+		Name: name, Package: pkg, FilePath: pkg + "/" + name + ".java",
+		IsEnum: true, EnumConstants: []string{"ONE", "TWO"},
+	}
+}
+
 func TestClassifyImplicit(t *testing.T) {
-	isEnum := func(t string) bool { return t == "Status" }
+	scope := newHandlerScope("com.example.api", importing(
+		"java.util.List", "java.util.Map", "java.time.LocalDate", "java.math.BigDecimal",
+		"jakarta.servlet.http.HttpServletRequest", "org.springframework.data.domain.Pageable",
+		"org.springframework.data.domain.Sort", "org.springframework.web.multipart.MultipartFile",
+	), projectEnum("com.example.api", "Status"), projectClass("com.example.api", "OrderQuery"))
 	for _, tc := range []struct {
 		typeName    string
 		annotations []string
@@ -18,6 +72,7 @@ func TestClassifyImplicit(t *testing.T) {
 		{"Status", nil, ImplicitParam, ""},
 		{"List<Status>", nil, ImplicitParam, ""},
 		{"Long[]", nil, ImplicitParam, ""},
+		{"long", nil, ImplicitParam, ""},
 		{"OrderQuery", nil, ImplicitModel, ""},
 		{"HttpServletRequest", nil, ImplicitNone, ""},
 		{"Map<String,String>", nil, ImplicitNone, ""},
@@ -27,6 +82,17 @@ func TestClassifyImplicit(t *testing.T) {
 		{"MultipartFile", nil, ImplicitFile, ""},
 		{"List<MultipartFile>", nil, ImplicitFile, ""},
 		{"MultipartFile[]", nil, ImplicitFile, ""},
+		// The type is read as written. An Optional is a bean until the scope of
+		// its name says it is java.util.Optional, which the caller looks
+		// through before it asks (see TestParser_JavaUtilOptionalIsBoundAsItsValue).
+		{"Optional<String>", nil, ImplicitModel, ""},
+		{"java.util.Optional<Long>", nil, ImplicitModel, ""},
+		// What an Optional holds is classified like the type on its own.
+		{"String", nil, ImplicitParam, ""},
+		{"List<Long>", nil, ImplicitParam, ""},
+		{"OrderQuery", nil, ImplicitModel, ""},
+		{"List<MultipartFile>", nil, ImplicitFile, ""},
+		{"HttpServletRequest", nil, ImplicitNone, ""},
 		// Annotations that format or default a value do not change the binding.
 		{"LocalDate", []string{"DateTimeFormat"}, ImplicitParam, ""},
 		{"BigDecimal", []string{"NumberFormat"}, ImplicitParam, ""},
@@ -40,13 +106,12 @@ func TestClassifyImplicit(t *testing.T) {
 		{"OrderFilter", []string{"Audit", "ModelAttribute"}, ImplicitModel, ""},
 		{"OrderFilter", []string{"ModelAttribute", "Audit"}, ImplicitModel, ""},
 	} {
-		kind, blocker := ClassifyImplicit(tc.typeName, tc.annotations, isEnum)
+		kind, blocker := scope.classify(tc.typeName, tc.annotations...)
 		if kind != tc.want || blocker != tc.blocker {
 			t.Errorf("ClassifyImplicit(%q, %v) = %v, %q; want %v, %q", tc.typeName, tc.annotations, kind, blocker, tc.want, tc.blocker)
 		}
 	}
 }
-
 func TestParser_ImplicitBinding(t *testing.T) {
 	jp, err := parser.NewParser(parser.ParserOptions{})
 	if err != nil {
@@ -183,23 +248,83 @@ func TestOptionalArgument(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		paramType   string
-		typeName    string
 		annotations []string
 		optional    bool
 		want        bool
 	}{
-		{"plain query parameter", "query", "String", nil, false, false},
-		{"Optional", "query", "Optional<String>", nil, false, true},
-		{"qualified Optional", "header", "java.util.Optional<Long>", nil, false, true},
-		{"a type merely named like it", "query", "OptionalFeature", nil, false, false},
-		{"@Nullable", "header", "String", []string{"RequestHeader", "Nullable"}, false, true},
-		{"Kotlin nullable or default", "form", "String", nil, true, true},
-		{"a constraint keeps it mandatory", "query", "Long", []string{"RequestParam", "NotNull"}, true, false},
-		{"path variable", "path", "Optional<String>", nil, true, false},
-		{"request body", "body", "String", []string{"Nullable"}, true, false},
+		{"plain query parameter", "query", nil, false, false},
+		{"an Optional, or a Kotlin nullable or default", "query", nil, true, true},
+		{"@Nullable", "header", []string{"RequestHeader", "Nullable"}, false, true},
+		{"a constraint keeps it mandatory", "query", []string{"RequestParam", "NotNull"}, true, false},
+		{"path variable", "path", nil, true, false},
+		{"request body", "body", []string{"Nullable"}, true, false},
 	} {
-		if got := OptionalArgument(tc.paramType, tc.typeName, tc.annotations, tc.optional); got != tc.want {
+		if got := OptionalArgument(tc.paramType, tc.annotations, tc.optional); got != tc.want {
 			t.Errorf("%s: OptionalArgument = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// The element of a parameter that holds a list of files is the file. The type is
+// read as written: an Optional is looked through by the caller, once the scope
+// of its name says it is java.util.Optional.
+func TestElementType_ReadsTheTypeAsWritten(t *testing.T) {
+	scope := newHandlerScope("com.example.api", importing("java.util.List", "org.springframework.web.multipart.MultipartFile"))
+	for typeName, want := range map[string]string{
+		"List<MultipartFile>":     "MultipartFile",
+		"MultipartFile[]":         "MultipartFile",
+		"MultipartFile":           "MultipartFile",
+		"List<Long>":              "Long",
+		"Optional<MultipartFile>": "Optional",
+	} {
+		if got := ElementType(typeName, scope.identity); got != want {
+			t.Errorf("ElementType(%q) = %q, want %q", typeName, got, want)
+		}
+	}
+	// A List that is not java.util.List holds nothing the binding looks into.
+	other := newHandlerScope("com.example.api", nil, projectClass("com.example.api", "List"))
+	if got := ElementType("List<Long>", other.identity); got != "List" {
+		t.Errorf("ElementType of a project class called List = %q, want the class itself", got)
+	}
+}
+
+// A property that holds files is one of the request's parts. The resolver
+// answers a MultipartFile with a single value named after it, and the type
+// that reaches the parameter must still say it is a file, for one file and for
+// a collection or an array of them.
+func TestModelAttributeFields_FilesKeepTheirType(t *testing.T) {
+	file := model.SingleModel("MultipartFile")
+	// A property whose type is some other class called MultipartFile has the
+	// same name and is no file.
+	other := model.SingleModel("MultipartFile")
+	isUpload := func(m *model.ObjectModel) bool { return m == file }
+	upload := model.NewObjectModelBuilder().
+		StringField("title").
+		Field("cover", file).
+		ArrayField("attachments", file).
+		Field("lookalike", other).
+		ArrayField("tags", model.SingleModel(model.JsonTypeString)).
+		Build()
+
+	got := map[string]string{}
+	files := map[string]bool{}
+	for _, field := range ModelAttributeFields(upload, isUpload) {
+		got[field.Name] = field.TypeName
+		if field.File {
+			files[field.Name] = true
+		}
+	}
+	want := map[string]string{
+		"title":       "string",
+		"cover":       "MultipartFile",
+		"attachments": "MultipartFile[]",
+		"lookalike":   "MultipartFile",
+		"tags":        "array",
+	}
+	if wantFiles := map[string]bool{"cover": true, "attachments": true}; !reflect.DeepEqual(files, wantFiles) {
+		t.Errorf("file properties = %v, want %v", files, wantFiles)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("types of the bound properties = %v, want %v", got, want)
 	}
 }

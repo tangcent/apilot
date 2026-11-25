@@ -42,7 +42,7 @@ func extractFile(root *tree_sitter.Node, source []byte, filePath string, result 
 					skip(child)
 					continue
 				}
-				if err := extractClass(child, source, packageName, filePath, imports, result); err != nil {
+				if err := extractClass(child, source, packageName, filePath, imports, "", result); err != nil {
 					result.Error = err
 					return
 				}
@@ -71,13 +71,53 @@ func extractFile(root *tree_sitter.Node, source []byte, filePath string, result 
 				// A declaration can be wrapped in annotation expressions at
 				// file scope. Descend so the class is not missed.
 				visit(child)
-			case "typealias":
-				result.Warnings = append(result.Warnings,
-					filePath+": typealias declarations are not expanded; references to the alias stay unresolved")
+			case "type_alias":
+				if skipDamaged && declarationDamaged(child, source) {
+					skip(child)
+					continue
+				}
+				if alias, ok := extractTypeAlias(child, source, packageName, filePath, imports); ok {
+					result.TypeAliases = append(result.TypeAliases, alias)
+				}
 			}
 		}
 	}
 	visit(root)
+}
+
+// extractTypeAlias reads `typealias Name<T> = Target`. An alias whose name or
+// target cannot be read is left out.
+func extractTypeAlias(node *tree_sitter.Node, source []byte, packageName, filePath string, imports []Import) (TypeAlias, bool) {
+	nameNode := node.ChildByFieldName("type")
+	if nameNode == nil {
+		return TypeAlias{}, false
+	}
+	var target *tree_sitter.Node
+	sawEquals := false
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "=" {
+			sawEquals = true
+			continue
+		}
+		if sawEquals && isTypeNode(child.Kind()) {
+			target = child
+			break
+		}
+	}
+	spelling := extractTypeNode(target, source)
+	if spelling == "" {
+		return TypeAlias{}, false
+	}
+	return TypeAlias{
+		Name:           nameNode.Utf8Text(source),
+		Package:        packageName,
+		FilePath:       filePath,
+		Target:         spelling,
+		TypeParameters: extractTypeParameters(node, source),
+		Imports:        imports,
+		IsPrivate:      hasModifier(node, "private"),
+	}, true
 }
 
 // addFileConstant records a top-level const val in the file facade of its
@@ -142,7 +182,11 @@ func extractImports(root *tree_sitter.Node, source []byte) []Import {
 		}
 		text := strings.TrimSpace(child.Utf8Text(source))
 		text = strings.TrimSpace(strings.TrimPrefix(text, "import"))
+		// A semicolon may end the import, as it ends a Java one.
+		text = strings.TrimSpace(strings.TrimSuffix(text, ";"))
+		alias := ""
 		if idx := strings.Index(text, " as "); idx >= 0 {
+			alias = strings.Trim(strings.TrimSpace(text[idx+len(" as "):]), "`")
 			text = strings.TrimSpace(text[:idx])
 		}
 		if text == "" {
@@ -152,12 +196,15 @@ func extractImports(root *tree_sitter.Node, source []byte) []Import {
 			imports = append(imports, Import{Path: strings.TrimSuffix(text, ".*"), OnDemand: true})
 			continue
 		}
-		imports = append(imports, Import{Path: text})
+		imports = append(imports, Import{Path: text, Alias: alias})
 	}
 	return imports
 }
 
-func extractClass(node *tree_sitter.Node, source []byte, packageName, filePath string, imports []Import, result *ParseResult) error {
+// extractClass reads a class declaration, and the classes nested in it, into
+// result. outer is the dotted path of the classes it is nested in, empty for a
+// top-level class.
+func extractClass(node *tree_sitter.Node, source []byte, packageName, filePath string, imports []Import, outer string, result *ParseResult) error {
 	modifiers := firstChildOfKind(node, "modifiers")
 	anns, flags, err := parseModifiers(modifiers, source, filePath)
 	if err != nil {
@@ -181,6 +228,9 @@ func extractClass(node *tree_sitter.Node, source []byte, packageName, filePath s
 	class := Class{
 		Name:           nameNode.Utf8Text(source),
 		Package:        packageName,
+		Outer:          outer,
+		IsInner:        flags["inner"],
+		IsPrivate:      flags["private"],
 		FilePath:       filePath,
 		KDoc:           kdoc,
 		Annotations:    anns,
@@ -252,7 +302,11 @@ func extractClassBody(body *tree_sitter.Node, source []byte, filePath string, cl
 				class.Methods = append(class.Methods, *fn)
 			}
 		case "class_declaration", "object_declaration":
-			if err := extractClass(child, source, class.Package, class.FilePath, class.Imports, result); err != nil {
+			nestedIn := class.Name
+			if class.Outer != "" {
+				nestedIn = class.Outer + "." + class.Name
+			}
+			if err := extractClass(child, source, class.Package, class.FilePath, class.Imports, nestedIn, result); err != nil {
 				return err
 			}
 		case "companion_object":
@@ -527,10 +581,10 @@ func extractFunction(node *tree_sitter.Node, source []byte, filePath string) (*F
 			// source-only collector must not guess.
 			fn.ReturnType = ""
 		} else {
-			fn.ReturnType = "Unit"
+			fn.ReturnType = inferredUnit
 		}
 	} else {
-		fn.ReturnType = "Unit"
+		fn.ReturnType = inferredUnit
 	}
 
 	if body := firstChildOfKind(node, "function_body"); body != nil {
@@ -538,6 +592,12 @@ func extractFunction(node *tree_sitter.Node, source []byte, filePath string) (*F
 	}
 	return fn, nil
 }
+
+// inferredUnit is the return type of a function written without one and with a
+// block body: Unit, by the language. It is the class of the standard library
+// itself, written in full, since it was not written in the file and a class of
+// the project that is called Unit has no part in it.
+const inferredUnit = "kotlin.Unit"
 
 func extractParameter(node *tree_sitter.Node, source []byte, annotations []Annotation) (Parameter, error) {
 	nameNode := firstChildOfKind(node, "identifier")

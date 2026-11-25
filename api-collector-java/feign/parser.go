@@ -94,35 +94,22 @@ func flattenClasses(results []parser.ParseResult) []parser.Class {
 	return classes
 }
 
-func buildTypeBindings(class parser.Class, typeResolver *resolver.TypeResolver) map[string]string {
+// buildTypeBindings binds the type parameters of class's superclass to the
+// arguments of its extends clause. bindings binds the type parameters of class
+// itself, for an argument that mentions them. Each argument is spelled so that
+// the superclass, which resolves it in its own scope, reads the type class
+// named (see TypeResolver.SuperClassBindings).
+func buildTypeBindings(class parser.Class, bindings map[string]string, typeResolver *resolver.TypeResolver) map[string]string {
 	if class.SuperClass == "" {
 		return nil
 	}
 
-	superClass, found := typeResolver.Class(class, class.SuperClass)
+	superClass, found := typeResolver.Supertype(class, class.SuperClass)
 	if !found {
 		return nil
 	}
 
-	bindings := make(map[string]string)
-	for i, tp := range superClass.TypeParameters {
-		if i < len(class.SuperClassTypeArgs) {
-			bindings[tp] = class.SuperClassTypeArgs[i]
-		}
-	}
-
-	return bindings
-}
-
-func mergeBindings(parent, child map[string]string) map[string]string {
-	merged := make(map[string]string)
-	for k, v := range parent {
-		merged[k] = v
-	}
-	for k, v := range child {
-		merged[k] = v
-	}
-	return merged
+	return typeResolver.SuperClassBindings(class, superClass, bindings)
 }
 
 func (p *Parser) extractClient(class parser.Class, typeResolver *resolver.TypeResolver) *FeignClient {
@@ -133,7 +120,7 @@ func (p *Parser) extractClient(class parser.Class, typeResolver *resolver.TypeRe
 			name = ann.Params["value"]
 		}
 
-		typeBindings := buildTypeBindings(class, typeResolver)
+		typeBindings := buildTypeBindings(class, nil, typeResolver)
 
 		var endpoints []Endpoint
 		for _, method := range class.Methods {
@@ -155,7 +142,7 @@ func (p *Parser) extractClient(class parser.Class, typeResolver *resolver.TypeRe
 	}
 
 	if class.IsInterface && p.hasRequestLineMethods(class) {
-		typeBindings := buildTypeBindings(class, typeResolver)
+		typeBindings := buildTypeBindings(class, nil, typeResolver)
 
 		var endpoints []Endpoint
 		for _, method := range class.Methods {
@@ -179,18 +166,19 @@ func (p *Parser) extractClient(class parser.Class, typeResolver *resolver.TypeRe
 	return nil
 }
 
+// extractInheritedEndpoints extracts the endpoints class inherits. typeBindings
+// binds the type parameters of class's superclass; the endpoints of that
+// superclass resolve their types with it, and its own superclass is bound in
+// turn from what the extends clause of the superclass says.
 func (p *Parser) extractInheritedEndpoints(class parser.Class, typeResolver *resolver.TypeResolver, typeBindings map[string]string) []Endpoint {
 	if class.SuperClass == "" {
 		return nil
 	}
 
-	superClass, found := typeResolver.Class(class, class.SuperClass)
+	superClass, found := typeResolver.Supertype(class, class.SuperClass)
 	if !found {
 		return nil
 	}
-
-	parentTypeBindings := buildTypeBindings(superClass, typeResolver)
-	mergedBindings := mergeBindings(parentTypeBindings, typeBindings)
 
 	var inherited []Endpoint
 	for _, method := range superClass.Methods {
@@ -199,12 +187,13 @@ func (p *Parser) extractInheritedEndpoints(class parser.Class, typeResolver *res
 		}
 		// The method is declared in the superclass's compilation unit, so its
 		// parameter and return types resolve in that unit's scope.
-		if ep := p.extractEndpoint(method, class, superClass, typeResolver, mergedBindings); ep != nil {
+		if ep := p.extractEndpoint(method, class, superClass, typeResolver, typeBindings); ep != nil {
 			inherited = append(inherited, *ep)
 		}
 	}
 
-	grandparentEndpoints := p.extractInheritedEndpoints(superClass, typeResolver, mergedBindings)
+	grandparentBindings := buildTypeBindings(superClass, typeBindings, typeResolver)
+	grandparentEndpoints := p.extractInheritedEndpoints(superClass, typeResolver, grandparentBindings)
 	inherited = append(inherited, grandparentEndpoints...)
 
 	return inherited
@@ -248,7 +237,8 @@ func (p *Parser) extractSpringStyleEndpoint(method parser.Method, class, source 
 	var params []EndpointParameter
 	var requestBodyType string
 	for _, param := range method.Parameters {
-		if ep := p.extractSpringParameter(param, method.JavaDocParams); ep != nil {
+		if ep := p.extractSpringParameter(param, method.JavaDocParams, source, typeResolver); ep != nil {
+			ep.File = typeResolver.IsMultipartFile(source, param.Type)
 			params = append(params, *ep)
 			if ep.ParamType == "body" {
 				requestBodyType = param.Type
@@ -277,7 +267,7 @@ func (p *Parser) extractSpringStyleEndpoint(method parser.Method, class, source 
 		endpoint.RequestBodySchema = typeResolver.ResolveFrom(source, requestBodyType, typeBindings)
 	}
 
-	if method.ReturnType != "" && method.ReturnType != "void" && method.ReturnType != "Void" {
+	if method.ReturnType != "" && !typeResolver.IsVoid(source, method.ReturnType) {
 		// A ResponseEntity<T> wrapper is unwrapped by the type resolver, the
 		// same way it handles a reactor publisher.
 		endpoint.ResponseSchema = typeResolver.ResolveFrom(source, method.ReturnType, typeBindings)
@@ -337,13 +327,13 @@ func extractSpringRequestMappingMethod(ann parser.Annotation) HTTPMethod {
 
 // extractSpringParameter resolves the Spring MVC binding of a Feign method
 // parameter and layers any documented metadata on top of it.
-func (p *Parser) extractSpringParameter(param parser.Parameter, methodJavaDocParams map[string]string) *EndpointParameter {
+func (p *Parser) extractSpringParameter(param parser.Parameter, methodJavaDocParams map[string]string, source parser.Class, typeResolver *resolver.TypeResolver) *EndpointParameter {
 	paramType, required := detectSpringParameterType(param.Annotations)
 	if paramType == "" {
 		// SpringMvcContract binds a parameter with no Spring annotation as the
 		// body, the same way the default contract does: a scalar payload is a
 		// body too, and dropping it exported the endpoint without a request.
-		if isRequestTarget(param.Type) {
+		if isRequestTarget(source, typeResolver, param.Type) {
 			return nil
 		}
 		paramType, required = "body", true
@@ -446,7 +436,8 @@ func (p *Parser) extractRequestLineEndpoint(method parser.Method, class, source 
 	var params []EndpointParameter
 	var requestBodyType string
 	for _, param := range method.Parameters {
-		if ep := p.extractFeignParam(param, methodPath, method.JavaDocParams); ep != nil {
+		if ep := p.extractFeignParam(param, methodPath, method.JavaDocParams, source, typeResolver); ep != nil {
+			ep.File = typeResolver.IsMultipartFile(source, param.Type)
 			params = append(params, *ep)
 			if ep.ParamType == "body" {
 				requestBodyType = param.Type
@@ -475,7 +466,7 @@ func (p *Parser) extractRequestLineEndpoint(method parser.Method, class, source 
 		endpoint.RequestBodySchema = typeResolver.ResolveFrom(source, requestBodyType, typeBindings)
 	}
 
-	if method.ReturnType != "" && method.ReturnType != "void" && method.ReturnType != "Void" {
+	if method.ReturnType != "" && !typeResolver.IsVoid(source, method.ReturnType) {
 		endpoint.ResponseSchema = typeResolver.ResolveFrom(source, method.ReturnType, typeBindings)
 	}
 
@@ -507,7 +498,7 @@ func parseRequestLine(value string) (HTTPMethod, string) {
 	}
 }
 
-func (p *Parser) extractFeignParam(param parser.Parameter, methodPath string, methodJavaDocParams map[string]string) *EndpointParameter {
+func (p *Parser) extractFeignParam(param parser.Parameter, methodPath string, methodJavaDocParams map[string]string, source parser.Class, typeResolver *resolver.TypeResolver) *EndpointParameter {
 	ann := findAnnotation(param.Annotations, "Param")
 	if ann == nil {
 		// Feign binds an unannotated parameter as the request body whatever its
@@ -515,7 +506,7 @@ func (p *Parser) extractFeignParam(param parser.Parameter, methodPath string, me
 		// body too, and dropping it exported the endpoint without a request at
 		// all. Feign rejects a second unannotated parameter, so at most one
 		// parameter reaches this branch as the body.
-		if isRequestTarget(param.Type) {
+		if isRequestTarget(source, typeResolver, param.Type) {
 			return nil
 		}
 		return documentedParameter(param, methodJavaDocParams, "body", true, "")
@@ -542,11 +533,11 @@ func (p *Parser) extractFeignParam(param parser.Parameter, methodPath string, me
 // isRequestTarget reports whether a parameter supplies the target URI of the
 // call rather than the body. Feign accepts an unannotated URI argument that
 // overrides the client url, and that argument is not part of the payload.
-func isRequestTarget(typ string) bool {
+func isRequestTarget(source parser.Class, typeResolver *resolver.TypeResolver, typ string) bool {
 	if typ == "" {
 		return true
 	}
-	return typ == "URI" || typ == "java.net.URI"
+	return typeResolver.IsClass(source, typ, "java.net.URI")
 }
 
 func findAnnotation(annotations []parser.Annotation, name string) *parser.Annotation {

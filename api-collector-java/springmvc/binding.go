@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/tangcent/apilot/api-collector-java/parser"
+	"github.com/tangcent/apilot/api-collector-java/resolver"
 	model "github.com/tangcent/apilot/api-model"
 )
 
@@ -46,7 +47,17 @@ const (
 // The rules follow Spring's default argument resolution: framework types are
 // resolved from the request context, simple values become request parameters,
 // and any other object is a model attribute.
-func ClassifyImplicit(typeName string, annotations []string, isEnum func(string) bool) (ImplicitKind, string) {
+//
+// typeName is read as written, and every class it names is the class its scope
+// gives it: identity returns the qualified name a class name denotes where the
+// type is written (see resolver.TypeResolver.Identity). A framework type, a
+// simple value, a collection, a Pageable, a Sort or a MultipartFile is one by
+// that identity, not by its simple name, so a class or an enum of the project
+// that bears such a name is not. Spring binds a java.util.Optional parameter as
+// the type it holds, but only the scope of the name says whether an `Optional`
+// is that class or the project's own, so the caller looks through it first (see
+// resolver.TypeResolver.UnwrapOptional).
+func ClassifyImplicit(typeName string, annotations []string, isEnum func(string) bool, identity func(string) string) (ImplicitKind, string) {
 	// Every annotation is looked at before deciding, so the outcome does not
 	// depend on the order they are written in: an explicit @ModelAttribute wins
 	// wherever it stands.
@@ -63,29 +74,39 @@ func ClassifyImplicit(typeName string, annotations []string, isEnum func(string)
 		return ImplicitNone, unknown
 	}
 
+	if identity == nil {
+		identity = func(name string) string { return name }
+	}
+	// is reports whether the class a name denotes is one of table's: a class of
+	// the JDK or of a library the resolver knows, and a class of the same simple
+	// name that is not one of them is not.
+	is := func(name string, table map[string]bool) bool {
+		denoted := identity(name)
+		return table[simpleName(denoted)] && resolver.IsLibraryClass(denoted)
+	}
 	simpleOrEnum := func(t string) bool {
-		return simpleValueTypes[simpleName(t)] || (isEnum != nil && isEnum(t))
+		t = strings.TrimSpace(t)
+		return primitiveKeywords[t] || is(t, simpleValueTypes) || (isEnum != nil && isEnum(t))
 	}
 	base, args := splitType(typeName)
-	simple := simpleName(base)
 	element := ""
 	switch {
 	case strings.HasSuffix(base, "[]"):
 		element = strings.TrimSpace(strings.TrimSuffix(base, "[]"))
-	case collectionTypes[simple] && len(args) == 1:
+	case is(base, collectionTypes) && len(args) == 1:
 		element, _ = splitType(args[0])
 	}
 
 	switch {
-	case frameworkTypes[simple]:
+	case is(base, frameworkTypes):
 		return ImplicitNone, ""
-	case simple == "MultipartFile", element != "" && simpleName(element) == "MultipartFile":
+	case identity(base) == resolver.MultipartFileClass, element != "" && identity(element) == resolver.MultipartFileClass:
 		// Spring binds a collection or an array of files as parts, as it binds
 		// a single one.
 		return ImplicitFile, ""
-	case simple == "Pageable":
+	case identity(base) == pageableClass:
 		return ImplicitPageable, ""
-	case simple == "Sort":
+	case identity(base) == sortClass:
 		return ImplicitSort, ""
 	case simpleOrEnum(base):
 		return ImplicitParam, ""
@@ -94,20 +115,28 @@ func ClassifyImplicit(typeName string, annotations []string, isEnum func(string)
 			return ImplicitParam, ""
 		}
 		return ImplicitNone, ""
-	case collectionTypes[simple]:
+	case is(base, collectionTypes):
 		return ImplicitNone, ""
 	}
 	return ImplicitModel, ""
 }
 
+// pageableClass and sortClass are the identities of the Spring Data types a
+// handler parameter binds from the page, size and sort request parameters.
+const (
+	pageableClass = "org.springframework.data.domain.Pageable"
+	sortClass     = "org.springframework.data.domain.Sort"
+)
+
 // ElementType returns the element type of a collection or array type, or the
-// type itself when it is neither.
-func ElementType(typeName string) string {
+// type itself when it is neither. identity is the one ClassifyImplicit takes: a
+// collection is the JDK's by the class its name denotes.
+func ElementType(typeName string, identity func(string) string) string {
 	base, args := splitType(typeName)
 	switch {
 	case strings.HasSuffix(base, "[]"):
 		return strings.TrimSpace(strings.TrimSuffix(base, "[]"))
-	case collectionTypes[simpleName(base)] && len(args) == 1:
+	case len(args) == 1 && identity != nil && collectionTypes[simpleName(identity(base))] && resolver.IsLibraryClass(identity(base)):
 		element, _ := splitType(args[0])
 		return element
 	}
@@ -196,10 +225,11 @@ func ImplicitRequired(annotations []string) bool {
 // MethodParameter.isOptional, which holds for a java.util.Optional, for a
 // parameter annotated @Nullable (any annotation of that simple name), and in
 // Kotlin for a nullable type or a parameter with a default value; the
-// collector passes the last two as optional. A validation constraint such as
-// @NotNull still makes the value mandatory: binding leaves it null, and
-// validation rejects the request.
-func OptionalArgument(paramType, typeName string, annotations []string, optional bool) bool {
+// collector passes a java.util.Optional (see resolver.TypeResolver.IsOptionalType,
+// which reads the class its name denotes), and the last two, as optional. A
+// validation constraint such as @NotNull still makes the value mandatory:
+// binding leaves it null, and validation rejects the request.
+func OptionalArgument(paramType string, annotations []string, optional bool) bool {
 	switch paramType {
 	case "query", "header", "form":
 	default:
@@ -208,7 +238,7 @@ func OptionalArgument(paramType, typeName string, annotations []string, optional
 	if ImplicitRequired(annotations) {
 		return false
 	}
-	if optional || isOptionalType(typeName) {
+	if optional {
 		return true
 	}
 	for _, name := range annotations {
@@ -219,18 +249,13 @@ func OptionalArgument(paramType, typeName string, annotations []string, optional
 	return false
 }
 
-func isOptionalType(typeName string) bool {
-	base := strings.TrimSpace(typeName)
-	if i := strings.Index(base, "<"); i >= 0 {
-		base = base[:i]
-	}
-	return base == "Optional" || base == "java.util.Optional"
-}
-
 // BoundField is one request parameter a model attribute is bound from.
 type BoundField struct {
-	Name        string
-	TypeName    string
+	Name     string
+	TypeName string
+	// File marks a property that is uploaded as a part of a multipart request: a
+	// MultipartFile, or a collection or an array of them.
+	File        bool
 	Required    bool
 	Default     string
 	Description string
@@ -242,9 +267,9 @@ type BoundField struct {
 // attribute from: one per property, in declaration order. A nested object's
 // properties are bound with a dotted path (address.city), which is how Spring's
 // data binder addresses them.
-func ModelAttributeFields(m *model.ObjectModel) []BoundField {
+func ModelAttributeFields(m *model.ObjectModel, isUpload func(*model.ObjectModel) bool) []BoundField {
 	var out []BoundField
-	appendModelFields(&out, "", m, 0)
+	appendModelFields(&out, "", m, 0, isUpload)
 	return out
 }
 
@@ -254,12 +279,12 @@ func ModelAttributeFields(m *model.ObjectModel) []BoundField {
 // one parameter named after the handler parameter. A type left unresolved
 // yields nothing here: the resolver has recorded it, and the unresolved-types
 // report names it, which is better than inventing a parameter for it.
-func ResolvedModelFields(paramName string, resolved *model.ObjectModel) []BoundField {
+func ResolvedModelFields(paramName string, resolved *model.ObjectModel, isUpload func(*model.ObjectModel) bool) []BoundField {
 	if resolved == nil {
 		return nil
 	}
 	if resolved.Kind == model.KindObject {
-		return ModelAttributeFields(resolved)
+		return ModelAttributeFields(resolved, isUpload)
 	}
 	if resolved.Kind == model.KindSingle && jsonPrimitive[resolved.TypeName] {
 		return []BoundField{{Name: paramName, TypeName: resolved.TypeName}}
@@ -301,11 +326,22 @@ func SortFields() []BoundField {
 	return PageableFields()[2:]
 }
 
+// isFile reports whether a resolved property is a multipart file, or a
+// collection or an array of them. isUpload is the resolver's answer to whether a
+// model is the one it gave Spring's MultipartFile: neither a class of the
+// project that is called MultipartFile nor a name that cannot be resolved is.
+func isFile(m *model.ObjectModel, isUpload func(*model.ObjectModel) bool) bool {
+	if m.IsArray() {
+		m = m.Items
+	}
+	return isUpload != nil && isUpload(m)
+}
+
 // maxModelDepth bounds how deep nested objects are flattened; a type that
 // refers back to itself would otherwise expand forever.
 const maxModelDepth = 3
 
-func appendModelFields(out *[]BoundField, prefix string, m *model.ObjectModel, depth int) {
+func appendModelFields(out *[]BoundField, prefix string, m *model.ObjectModel, depth int, isUpload func(*model.ObjectModel) bool) {
 	if m == nil || m.Kind != model.KindObject {
 		return
 	}
@@ -316,7 +352,7 @@ func appendModelFields(out *[]BoundField, prefix string, m *model.ObjectModel, d
 		}
 		path := prefix + name
 		if field.Model.Kind == model.KindObject && len(field.Model.Fields) > 0 && depth < maxModelDepth {
-			appendModelFields(out, path+".", field.Model, depth+1)
+			appendModelFields(out, path+".", field.Model, depth+1, isUpload)
 			continue
 		}
 		var enum []string
@@ -325,14 +361,25 @@ func appendModelFields(out *[]BoundField, prefix string, m *model.ObjectModel, d
 				enum = append(enum, value)
 			}
 		}
+		typeName := field.Model.TypeName
+		file := isFile(field.Model, isUpload)
+		if file {
+			// A file is shown by its simple name, a collection or an array of
+			// them as the array of that: `array` would hide what they hold.
+			typeName = "MultipartFile"
+			if field.Model.IsArray() {
+				typeName = "MultipartFile[]"
+			}
+		}
 		*out = append(*out, BoundField{
 			Name:        path,
-			TypeName:    field.Model.TypeName,
+			TypeName:    typeName,
 			Required:    field.Required,
 			Default:     field.DefaultValue,
 			Description: field.Comment,
 			Example:     field.Demo,
 			Enum:        enum,
+			File:        file,
 		})
 	}
 }
@@ -374,10 +421,19 @@ var frameworkTypes = map[string]bool{
 	"Continuation": true,
 }
 
+// primitiveKeywords name the types no declaration can hide.
+var primitiveKeywords = map[string]bool{
+	"int": true, "long": true, "short": true, "byte": true, "double": true, "float": true, "boolean": true, "char": true,
+}
+
+// The three tables below hold simple names, and a name is one of them only when
+// the class it denotes is a class of the JDK or of a library the resolver knows
+// (see resolver.IsLibraryClass): the names are the keys of the table of those
+// classes, which lists their packages.
+
 // simpleValueTypes are bound from a single request parameter value.
 var simpleValueTypes = map[string]bool{
 	"String": true, "CharSequence": true,
-	"int": true, "long": true, "short": true, "byte": true, "double": true, "float": true, "boolean": true, "char": true,
 	"Integer": true, "Long": true, "Short": true, "Byte": true, "Double": true, "Float": true, "Boolean": true,
 	"Character": true, "Number": true, "BigDecimal": true, "BigInteger": true,
 	"Date": true, "LocalDate": true, "LocalDateTime": true, "LocalTime": true, "Instant": true,

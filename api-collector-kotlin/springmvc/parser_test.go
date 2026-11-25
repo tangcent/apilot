@@ -297,17 +297,57 @@ func TestPathHelpers(t *testing.T) {
 }
 
 func TestIsVoidReturn(t *testing.T) {
+	source := &ktparser.Class{Name: "Controller", Package: "com.example.app"}
+	p := NewParser(resolver.New(nil))
 	voidReturns := []string{"", "Unit", "kotlin.Unit", "Void", "java.lang.Void", "Nothing", "kotlin.Nothing", " Unit "}
 	for _, typ := range voidReturns {
-		if !isVoidReturn(typ) {
+		if !p.isVoidReturn(source, typ) {
 			t.Errorf("isVoidReturn(%q) = false, want true", typ)
 		}
 	}
 
 	nonVoid := []string{"Result<Void>", "String", "List<Unit>", "Result<Unit>"}
 	for _, typ := range nonVoid {
-		if isVoidReturn(typ) {
+		if p.isVoidReturn(source, typ) {
 			t.Errorf("isVoidReturn(%q) = true, want false", typ)
+		}
+	}
+}
+
+// A class of the project that is called Unit, Void or Nothing is a class, in the
+// package that declares it and where it is imported; elsewhere the name is the
+// type that returns nothing.
+func TestIsVoidReturn_AProjectClassOfThatNameIsNotVoid(t *testing.T) {
+	unit := ktparser.Class{Name: "Unit", Package: "com.example.model", IsEnum: true, EnumValues: []string{"PIECE"}}
+	void := ktparser.Class{Name: "Void", Package: "com.example.model"}
+	p := NewParser(resolver.New([]ktparser.Class{unit, void}))
+
+	same := &ktparser.Class{Name: "Controller", Package: "com.example.model"}
+	imported := &ktparser.Class{
+		Name: "Controller", Package: "com.example.web",
+		Imports: []ktparser.Import{{Path: "com.example.model.Unit"}, {Path: "com.example.model.Void"}},
+	}
+	starred := &ktparser.Class{
+		Name: "Controller", Package: "com.example.web",
+		Imports: []ktparser.Import{{Path: "com.example.model", OnDemand: true}},
+	}
+	other := &ktparser.Class{Name: "Controller", Package: "com.example.web"}
+	for name, source := range map[string]*ktparser.Class{"same package": same, "imported": imported, "star-imported": starred} {
+		for _, typ := range []string{"Unit", "Void"} {
+			if p.isVoidReturn(source, typ) {
+				t.Errorf("%s: isVoidReturn(%q) = true, want false: the project declares it", name, typ)
+			}
+		}
+		// The names of the standard library written in full stay what they are.
+		for _, typ := range []string{"kotlin.Unit", "java.lang.Void"} {
+			if !p.isVoidReturn(source, typ) {
+				t.Errorf("%s: isVoidReturn(%q) = false, want true", name, typ)
+			}
+		}
+	}
+	for _, typ := range []string{"Unit", "Void"} {
+		if !p.isVoidReturn(other, typ) {
+			t.Errorf("isVoidReturn(%q) = false, want true where nothing declares it", typ)
 		}
 	}
 }
@@ -458,24 +498,38 @@ func TestBuildTypeBindings(t *testing.T) {
 	}
 	p := NewParser(resolver.New([]ktparser.Class{parent, child}))
 
-	bindings := p.buildTypeBindings(&child)
+	bindings := p.buildTypeBindings(&child, nil)
 	if bindings["T"] != "User" {
 		t.Fatalf("bindings = %#v", bindings)
 	}
 
-	if got := p.buildTypeBindings(&parent); got != nil {
+	if got := p.buildTypeBindings(&parent, nil); got != nil {
 		t.Errorf("class without a superclass should have no bindings: %#v", got)
 	}
 }
 
-func TestMergeBindings(t *testing.T) {
-	if got := mergeBindings(nil, nil); got != nil {
-		t.Errorf("empty merge = %#v, want nil", got)
+// Each level binds the parameters of its own superclass and nothing else: a
+// parameter that two levels name alike is bound once for each of them, and an
+// argument that mentions a parameter of its class is spelled with its binding.
+func TestBuildTypeBindings_BindsEachLevelOnItsOwn(t *testing.T) {
+	base := ktparser.Class{Name: "Base", Package: "com.example", TypeParameters: []string{"T"}}
+	mid := ktparser.Class{
+		Name: "Mid", Package: "com.example", TypeParameters: []string{"T"},
+		SuperClass: "Base", SuperClassTypeArgs: []string{"List<T>"},
 	}
+	leaf := ktparser.Class{
+		Name: "Leaf", Package: "com.example",
+		SuperClass: "Mid", SuperClassTypeArgs: []string{"User"},
+	}
+	p := NewParser(resolver.New([]ktparser.Class{base, mid, leaf}))
 
-	merged := mergeBindings(map[string]string{"T": "Parent"}, map[string]string{"T": "Child", "U": "User"})
-	if merged["T"] != "Child" || merged["U"] != "User" {
-		t.Errorf("merged = %#v", merged)
+	midBindings := p.buildTypeBindings(&leaf, nil)
+	if midBindings["T"] != "User" {
+		t.Fatalf("bindings of Mid = %#v, want T=User", midBindings)
+	}
+	baseBindings := p.buildTypeBindings(&mid, midBindings)
+	if baseBindings["T"] != "java.util.List<User>" {
+		t.Errorf("bindings of Base = %#v, want T=java.util.List<User>", baseBindings)
 	}
 }
 

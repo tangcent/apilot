@@ -728,7 +728,10 @@ func TestResolve_TypeBindings(t *testing.T) {
 		"Res": "OrderVO",
 	}
 
-	result := r.Resolve("BaseController", typeBindings)
+	// The bindings are those of the class the type is written in, whose type
+	// variables the arguments name. A type written without arguments is a raw
+	// type, whose parameters stay open whatever the caller binds.
+	result := r.Resolve("BaseController<Req, Res>", typeBindings)
 
 	if result.Kind != model.KindObject {
 		t.Fatalf("Expected KindObject, got %s", result.Kind)

@@ -56,7 +56,10 @@ func TestResolve_SameCompilationUnitShadowsImportOnDemand(t *testing.T) {
 			Name:     "OrderClient",
 			Package:  "com.example.client",
 			FilePath: orderClientFile,
-			Imports:  []parser.Import{{Path: "com.example.apidto", OnDemand: true}},
+			Imports: []parser.Import{
+				{Path: "com.example.apidto", OnDemand: true}, {Path: "reactor.core.publisher.Mono"},
+				{Path: "reactor.core.publisher.Flux"}, {Path: "org.springframework.http.ResponseEntity"},
+			},
 		},
 		{
 			Name:     "RefundVO",
@@ -212,7 +215,10 @@ func TestResolve_WrapperKeepsCompilationUnitScope(t *testing.T) {
 			Name:     "OrderClient",
 			Package:  "com.example.client",
 			FilePath: orderClientFile,
-			Imports:  []parser.Import{{Path: "com.example.apidto", OnDemand: true}},
+			Imports: []parser.Import{
+				{Path: "com.example.apidto", OnDemand: true}, {Path: "reactor.core.publisher.Mono"},
+				{Path: "reactor.core.publisher.Flux"}, {Path: "org.springframework.http.ResponseEntity"},
+			},
 		},
 		{
 			Name:     "RefundVO",

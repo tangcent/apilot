@@ -284,21 +284,30 @@ func extractAllClasses(tree *tree_sitter.Tree, source []byte) ([]Class, error) {
 		case "class_declaration":
 			class := extractClass(node, source)
 			class.Package = packageName
+			class.Outer = enclosingTypes(node, source)
+			class.Local = isLocalType(node)
+			class.Inner = isInnerClass(node)
 			class.Imports = imports
 			classes = append(classes, class)
 		case "interface_declaration":
 			iface := extractInterface(node, source)
 			iface.Package = packageName
+			iface.Outer = enclosingTypes(node, source)
+			iface.Local = isLocalType(node)
 			iface.Imports = imports
 			classes = append(classes, iface)
 		case "record_declaration":
 			rec := extractRecord(node, source)
 			rec.Package = packageName
+			rec.Outer = enclosingTypes(node, source)
+			rec.Local = isLocalType(node)
 			rec.Imports = imports
 			classes = append(classes, rec)
 		case "enum_declaration":
 			enum := extractEnum(node, source)
 			enum.Package = packageName
+			enum.Outer = enclosingTypes(node, source)
+			enum.Local = isLocalType(node)
 			enum.Imports = imports
 			classes = append(classes, enum)
 		}

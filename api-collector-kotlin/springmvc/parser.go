@@ -72,7 +72,7 @@ func (p *Parser) extractController(class *ktparser.Class) *Controller {
 		return nil
 	}
 	basePath := extractBasePath(class.Annotations)
-	bindings := p.buildTypeBindings(class)
+	bindings := p.buildTypeBindings(class, nil)
 
 	var endpoints []Endpoint
 	for i := range class.Methods {
@@ -95,26 +95,30 @@ func (p *Parser) extractController(class *ktparser.Class) *Controller {
 	}
 }
 
-func (p *Parser) buildTypeBindings(class *ktparser.Class) map[string]string {
+// buildTypeBindings binds the type parameters of class's superclass to the
+// arguments of its extends clause. bindings binds the type parameters of class
+// itself, for an argument that mentions them. Each argument is spelled so that
+// the superclass, which resolves it in its own scope, reads the type class
+// named (see Resolver.SuperClassBindings).
+func (p *Parser) buildTypeBindings(class *ktparser.Class, bindings map[string]string) map[string]string {
 	if class.SuperClass == "" {
 		return nil
 	}
-	superClass, found := p.typeResolver.FindClass(class, class.SuperClass)
+	superClass, found := p.typeResolver.FindSupertype(class, class.SuperClass)
 	if !found {
 		return nil
 	}
-	bindings := map[string]string{}
-	for i, typeParam := range superClass.TypeParameters {
-		if i < len(class.SuperClassTypeArgs) {
-			bindings[typeParam] = class.SuperClassTypeArgs[i]
-		}
-	}
-	if len(bindings) == 0 {
+	superBindings := p.typeResolver.SuperClassBindings(class, superClass, bindings)
+	if len(superBindings) == 0 {
 		return nil
 	}
-	return bindings
+	return superBindings
 }
 
+// extractInheritedEndpoints extracts the endpoints class inherits. bindings
+// binds the type parameters of class's superclass; the endpoints of that
+// superclass resolve their types with it, and its own superclass is bound in
+// turn from what the extends clause of the superclass says.
 func (p *Parser) extractInheritedEndpoints(class *ktparser.Class, basePath string, bindings map[string]string, visited map[string]bool) []Endpoint {
 	if class.SuperClass == "" {
 		return nil
@@ -125,13 +129,10 @@ func (p *Parser) extractInheritedEndpoints(class *ktparser.Class, basePath strin
 	}
 	visited[key] = true
 
-	superClass, found := p.typeResolver.FindClass(class, class.SuperClass)
+	superClass, found := p.typeResolver.FindSupertype(class, class.SuperClass)
 	if !found {
 		return nil
 	}
-
-	parentBindings := p.buildTypeBindings(superClass)
-	mergedBindings := mergeBindings(parentBindings, bindings)
 
 	parentBasePath := extractBasePath(superClass.Annotations)
 	effectiveBasePath := basePath
@@ -148,26 +149,13 @@ func (p *Parser) extractInheritedEndpoints(class *ktparser.Class, basePath strin
 		if isMethodOverridden(method.Name, class) {
 			continue
 		}
-		if endpoint := p.extractEndpoint(method, effectiveBasePath, class, superClass, mergedBindings); endpoint != nil {
+		if endpoint := p.extractEndpoint(method, effectiveBasePath, class, superClass, bindings); endpoint != nil {
 			inherited = append(inherited, *endpoint)
 		}
 	}
-	inherited = append(inherited, p.extractInheritedEndpoints(superClass, effectiveBasePath, mergedBindings, visited)...)
+	grandparentBindings := p.buildTypeBindings(superClass, bindings)
+	inherited = append(inherited, p.extractInheritedEndpoints(superClass, effectiveBasePath, grandparentBindings, visited)...)
 	return inherited
-}
-
-func mergeBindings(parent, child map[string]string) map[string]string {
-	if len(parent) == 0 && len(child) == 0 {
-		return nil
-	}
-	merged := map[string]string{}
-	for key, value := range parent {
-		merged[key] = value
-	}
-	for key, value := range child {
-		merged[key] = value
-	}
-	return merged
 }
 
 func isEndpointMethod(method *ktparser.Function) bool {
@@ -272,7 +260,7 @@ func (p *Parser) extractEndpoint(method *ktparser.Function, basePath string, cla
 		endpoint.RequestBodySchema = p.typeResolver.ResolveFrom(source, requestBodyType, bindings)
 	}
 
-	if isVoidReturn(method.ReturnType) {
+	if p.isVoidReturn(source, method.ReturnType) {
 		if !method.HasDeclaredReturn && method.ReturnType == "" {
 			p.warnings = append(p.warnings, class.FilePath+": endpoint "+class.Name+"."+method.Name+
 				" uses an expression body without a declared return type; its response schema is not exported")
@@ -284,12 +272,13 @@ func (p *Parser) extractEndpoint(method *ktparser.Function, basePath string, cla
 	return endpoint
 }
 
-func isVoidReturn(returnType string) bool {
-	switch strings.TrimSpace(returnType) {
-	case "", "Unit", "kotlin.Unit", "Void", "java.lang.Void", "Nothing", "kotlin.Nothing":
-		return true
-	}
-	return false
+// isVoidReturn reports whether a function's declared return type, as written in
+// source, says it returns nothing: Unit, Nothing or java.lang.Void, which the
+// scope of the name decides. A class of the project that is called Unit, an
+// enum for one, is a class like any other.
+func (p *Parser) isVoidReturn(source *ktparser.Class, returnType string) bool {
+	returnType = strings.TrimSpace(returnType)
+	return returnType == "" || p.typeResolver.NormalizeType(source, returnType) == "java.lang.Void"
 }
 
 func extractMethodInfo(annotations []ktparser.Annotation) (HTTPMethod, string, []string, []string) {
@@ -382,6 +371,7 @@ func (p *Parser) extractParameter(param *ktparser.Parameter, methodDocParams map
 	ep := &EndpointParameter{
 		Name:        param.Name,
 		Type:        param.Type,
+		File:        p.typeResolver != nil && p.typeResolver.IsMultipartFile(source, param.Type),
 		ParamType:   paramType,
 		Required:    true,
 		Description: doc.Description,
@@ -405,7 +395,7 @@ func (p *Parser) extractParameter(param *ktparser.Parameter, methodDocParams map
 	for _, ann := range param.Annotations {
 		names = append(names, ann.Name)
 	}
-	if javaspringmvc.OptionalArgument(paramType, param.Type, names, param.Nullable || param.HasDefault) {
+	if javaspringmvc.OptionalArgument(paramType, names, (p.typeResolver != nil && p.typeResolver.IsOptionalType(source, param.Type)) || param.Nullable || param.HasDefault) {
 		ep.Required = false
 	}
 	if doc.Default != "" {
@@ -446,8 +436,12 @@ func (p *Parser) implicitParameters(param *ktparser.Parameter, in, methodName st
 	for _, ann := range param.Annotations {
 		names = append(names, ann.Name)
 	}
-	typeName := resolver.NormalizeModelType(param.Type)
-	kind, blocker := javaspringmvc.ClassifyImplicit(typeName, names, p.typeResolver.IsEnum)
+	// Spring binds a java.util.Optional parameter as the type it holds, and
+	// leaves it empty when the request has no value for it.
+	typeName := p.valueType(source, param.Type)
+	isEnum := func(name string) bool { return p.typeResolver.IsEnumIn(source, name) }
+	identity := func(name string) string { return p.typeResolver.Identity(source, name) }
+	kind, blocker := javaspringmvc.ClassifyImplicit(typeName, names, isEnum, identity)
 	if blocker != "" {
 		p.warnings = append(p.warnings, javaspringmvc.ImplicitNoneWarning(source.Name, methodName, param.Name, blocker))
 		return nil
@@ -458,7 +452,7 @@ func (p *Parser) implicitParameters(param *ktparser.Parameter, in, methodName st
 	case javaspringmvc.ImplicitParam:
 		enum := doc.Enum
 		if len(enum) == 0 {
-			enum = p.typeResolver.EnumValues(javaspringmvc.ElementType(typeName))
+			enum = p.typeResolver.EnumValues(javaspringmvc.ElementType(typeName, identity))
 		}
 		return []EndpointParameter{{
 			Name:         param.Name,
@@ -474,6 +468,7 @@ func (p *Parser) implicitParameters(param *ktparser.Parameter, in, methodName st
 		return []EndpointParameter{{
 			Name:        param.Name,
 			Type:        param.Type,
+			File:        true,
 			ParamType:   "form",
 			Required:    javaspringmvc.ImplicitRequired(names),
 			Description: doc.Description,
@@ -484,9 +479,19 @@ func (p *Parser) implicitParameters(param *ktparser.Parameter, in, methodName st
 		return boundParameters(javaspringmvc.SortFields(), in)
 	case javaspringmvc.ImplicitModel:
 		resolved := p.typeResolver.ResolveForBinding(source, param.Type, bindings)
-		return boundParameters(javaspringmvc.ResolvedModelFields(param.Name, resolved), in)
+		return boundParameters(javaspringmvc.ResolvedModelFields(param.Name, resolved, p.typeResolver.IsUpload), in)
 	}
 	return nil
+}
+
+// valueType returns the type a parameter holds in the spelling the shared
+// resolver reads: the type inside a java.util.Optional, and the type itself
+// otherwise.
+func (p *Parser) valueType(source *ktparser.Class, rawType string) string {
+	if p.typeResolver == nil {
+		return p.typeResolver.NormalizeType(source, rawType)
+	}
+	return p.typeResolver.UnwrapOptional(source, rawType)
 }
 
 func boundParameters(fields []javaspringmvc.BoundField, in string) []EndpointParameter {
@@ -495,6 +500,7 @@ func boundParameters(fields []javaspringmvc.BoundField, in string) []EndpointPar
 		out = append(out, EndpointParameter{
 			Name:         f.Name,
 			Type:         f.TypeName,
+			File:         f.File,
 			ParamType:    in,
 			Required:     f.Required,
 			DefaultValue: f.Default,

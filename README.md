@@ -221,6 +221,39 @@ For Java and Kotlin, a class from a library written in Kotlin is read from its
 Kotlin sources; a class without a sources JAR, such as a locally built
 SNAPSHOT, is decompiled.
 
+A library class is found by the name the source gives it: a single-type import,
+the package of the source, or an import-on-demand (`import com.example.model.*`).
+Each qualified name that the package of the source or an import-on-demand could
+give an unimported name is asked of the indexer once, the package of the source
+first and then the imports in the order they are written. A package that the
+project's own sources declare is not asked, so a library class that sits in a
+package of the project is not found by its simple name from a source of the
+project (it can still be written in full). Which class a simple name denotes
+follows the scope of the source, tier by tier, whatever the class comes from: a
+class declared in the same file, a single-type import, the package of the source,
+then the imports on demand. A class of the project that the source reaches by none
+of these answers only when no tier does, and never for a class read from a library:
+the library was built without the project, so a name it writes that no tier
+declares stays unresolved.
+
+A class nested in another is a class of its own, known by the classes it is
+nested in: `Order.Item` and `Cart.Item` are two classes. Inside `Order`, and in
+a class nested in it or one that extends it, a bare `Item` is the `Item` nested
+in `Order`; elsewhere it is named `Order.Item`, by an import of
+`com.example.Order.Item`, or by `import com.example.Order.*`. A bare name that no
+scope declares is not guessed between two nested classes of that name, and it
+is reported as unresolved. The indexer holds top-level classes only, so a class
+nested in a library class is read from the source of the class that declares
+it, in one call for the class and all that is nested in it.
+
+A name written with a `$` is read as the binary name of a nested class
+(`Outer$Inner`) and, when that finds no class, as the name of a class that has a
+`$` in it (`Price$Value`); the indexer is asked for it as written, so it can say
+which. A superclass is read like any other class, a library's included, whether it
+is imported, imported on demand, a neighbour in the package or written in full, and
+the arguments of its `extends` clause are read in the header of the subclass, where
+the subclass's own nested classes are not in scope.
+
 With maven-indexer-cli 1.2.0 or later, APilot asks the indexer to pin each
 class to the version the project's dependency tree names (`--project-path`),
 but on released CLIs up to 1.2.1 most types are still read from the version

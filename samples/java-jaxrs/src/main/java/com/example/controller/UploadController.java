@@ -7,6 +7,7 @@ import javax.ws.rs.Path;
 import javax.ws.rs.Produces;
 import javax.ws.rs.core.MediaType;
 import com.example.model.Result;
+import org.springframework.web.multipart.MultipartFile;
 
 /**
  * Multipart upload: the class declares the media types its methods inherit,
