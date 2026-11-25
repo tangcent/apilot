@@ -571,11 +571,13 @@ func (s *typeScope) expand(use *ktparser.Class, alias *ktparser.TypeAlias, args 
 	return s.spell(declaring, alias.Target, spelling{subst: subst, depth: sp.depth + 1, qualify: true})
 }
 
-// receivedType returns the type of a parameter of a function written in unit, as
-// the function receives it. It is the type as written, except for a vararg:
-// Kotlin types `vararg n: Byte` as a ByteArray and `vararg c: Char` as a
-// CharArray, the primitive arrays, and so for every primitive type, where
-// `vararg n: Byte?` and `vararg s: String` are an `Array` of the element.
+// receivedType returns the type of a parameter of a function, or of a property of
+// a primary constructor, written in unit, as the function receives it and the
+// class holds it. It is the type as written, except for a vararg: Kotlin types
+// `vararg n: Byte` as a ByteArray and `vararg c: Char` as a CharArray, the
+// primitive arrays, and so for every primitive type, where `vararg n: Byte?` and
+// `vararg s: String` are an `Array` of the element. A vararg is written `Array<T>`
+// by the parser, with elementNullable set for a `T?`.
 //
 // The primitive is the type the element stands for (see primitiveOf): what its
 // name denotes where it is written (see bind), so a class of the project that is
@@ -583,21 +585,21 @@ func (s *typeScope) expand(use *ktparser.Class, alias *ktparser.TypeAlias, args 
 // `vararg o: Octet` of `typealias Octet = Byte` is a ByteArray and one of
 // `typealias MaybeByte = Byte?`, or of a chain of aliases that is nullable at any
 // level, an `Array` of the alias.
-func (s *typeScope) receivedType(unit *ktparser.Class, param ktparser.Parameter) string {
-	if !param.Vararg || param.ElementNullable {
-		return param.Type
+func (s *typeScope) receivedType(unit *ktparser.Class, written string, vararg, elementNullable bool) string {
+	if !vararg || elementNullable {
+		return written
 	}
-	element, ok := strings.CutPrefix(param.Type, "Array<")
+	element, ok := strings.CutPrefix(written, "Array<")
 	if !ok {
-		return param.Type
+		return written
 	}
 	element, ok = strings.CutSuffix(element, ">")
 	if !ok {
-		return param.Type
+		return written
 	}
 	b := s.primitiveOf(unit, strings.TrimSpace(element), 0)
 	if b == nil || b.array == "" {
-		return param.Type
+		return written
 	}
 	// The array is written by its simple name where that name still means
 	// it, so that the parameter is listed as `ByteArray` like one declared so.

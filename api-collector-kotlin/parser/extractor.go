@@ -446,7 +446,7 @@ func extractEnumEntries(node *tree_sitter.Node, source []byte, class *Class) {
 
 func extractClassParameter(node *tree_sitter.Node, source []byte, filePath string) (Property, bool, error) {
 	modifiers := firstChildOfKind(node, "modifiers")
-	anns, _, err := parseModifiers(modifiers, source, filePath)
+	anns, flags, err := parseModifiers(modifiers, source, filePath)
 	if err != nil {
 		return Property{}, false, err
 	}
@@ -469,6 +469,12 @@ func extractClassParameter(node *tree_sitter.Node, source []byte, filePath strin
 		KDoc:        leadingKDoc(node, source),
 
 		InConstructor: true,
+	}
+	// `vararg val ids: String` is declared with the type of one element; the
+	// property holds an array of them, and the array itself is never null.
+	if flags["vararg"] && prop.Type != "" {
+		prop.Type = "Array<" + prop.Type + ">"
+		prop.Vararg, prop.ElementNullable = true, nullableTypeAfterColon(node, source)
 	}
 	if eq := directIndexOf(node, "="); eq >= 0 && eq+1 < int(node.ChildCount()) {
 		prop.HasDefault = true

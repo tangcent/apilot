@@ -220,9 +220,9 @@ func (r *Resolver) NormalizeType(source *ktparser.Class, rawType string) string 
 // typeScope.receivedType).
 func (r *Resolver) ParameterType(source *ktparser.Class, param ktparser.Parameter) string {
 	if r == nil {
-		return (*typeScope)(nil).receivedType(source, param)
+		return (*typeScope)(nil).receivedType(source, param.Type, param.Vararg, param.ElementNullable)
 	}
-	return r.scope.receivedType(source, param)
+	return r.scope.receivedType(source, param.Type, param.Vararg, param.ElementNullable)
 }
 
 // SuperClassBindings binds each type parameter of super to the argument that
@@ -645,6 +645,14 @@ func toJavaImports(imports []ktparser.Import) []javaparser.Import {
 	return out
 }
 
+// propertyType spells the type of a property of class the way the shared resolver
+// reads it. A property of the primary constructor declared `vararg val` holds
+// the array its elements make: a primitive array for a primitive type (see
+// receivedType).
+func (s *typeScope) propertyType(class *ktparser.Class, prop ktparser.Property) string {
+	return s.normalize(class, s.receivedType(class, prop.Type, prop.Vararg, prop.ElementNullable))
+}
+
 // toBindingClass converts a declaration for the binding view: every property
 // Spring can set, under its Kotlin name.
 func (s *typeScope) toBindingClass(class ktparser.Class) javaparser.Class {
@@ -661,7 +669,7 @@ func (s *typeScope) toBindingClass(class ktparser.Class) javaparser.Class {
 		}
 		out.Fields = append(out.Fields, javaparser.Field{
 			Name:        prop.Name,
-			Type:        s.normalize(&class, prop.Type),
+			Type:        s.propertyType(&class, prop),
 			Annotations: fieldAnnotations(prop.Annotations),
 			JavaDoc:     javadoc.CleanJavaDoc(prop.KDoc),
 			IsFinal:     !prop.IsMutable,
@@ -721,7 +729,7 @@ func (s *typeScope) toJavaClass(class ktparser.Class) javaparser.Class {
 		}
 		out.Fields = append(out.Fields, javaparser.Field{
 			Name:        name,
-			Type:        s.normalize(&class, prop.Type),
+			Type:        s.propertyType(&class, prop),
 			Annotations: fieldAnnotations(prop.Annotations),
 			JavaDoc:     javadoc.CleanJavaDoc(prop.KDoc),
 			IsFinal:     !prop.IsMutable,

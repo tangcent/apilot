@@ -71,6 +71,13 @@ type Property struct {
 	IsMutable    bool
 	// InConstructor marks a property declared in the primary constructor.
 	InConstructor bool
+	// Vararg marks a property of the primary constructor declared
+	// `vararg val name: T`. Type is then `Array<T>`, the array the property
+	// holds, as it is for a vararg parameter (see Parameter.Vararg).
+	Vararg bool
+	// ElementNullable marks a vararg property of `T?`, which is an Array of boxed
+	// values whatever T is.
+	ElementNullable bool
 	// IsConst marks a const val. On the JVM it is a static field of its class,
 	// not instance state; a const val of a companion object is read onto the
 	// class the companion belongs to, where Java and annotations see it.
