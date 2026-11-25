@@ -87,7 +87,7 @@ func NewWithAliases(classes []ktparser.Class, javaTypes []javaparser.Class, alia
 		if class.IsEnum {
 			// The type table holds the enum as the Java resolver reads one, so
 			// that a field typed with it is a string of its entries.
-			javaClasses = append(javaClasses, toJavaEnum(*class))
+			javaClasses = append(javaClasses, scope.toJavaEnum(*class))
 			continue
 		}
 		javaClasses = append(javaClasses, r.scope.toJavaClass(*class))
@@ -163,7 +163,7 @@ func (r *Resolver) ResolveForBinding(source *ktparser.Class, rawType string, bin
 		var javaClasses []javaparser.Class
 		for _, class := range r.classes {
 			if class.IsEnum {
-				javaClasses = append(javaClasses, toJavaEnum(class))
+				javaClasses = append(javaClasses, r.scope.toJavaEnum(class))
 			} else {
 				javaClasses = append(javaClasses, r.scope.toBindingClass(class))
 			}
@@ -522,7 +522,7 @@ func ToJavaClasses(classes []ktparser.Class, javaTypes []javaparser.Class, alias
 	out := make([]javaparser.Class, 0, len(classes))
 	for _, class := range classes {
 		if class.IsEnum {
-			out = append(out, toJavaEnum(class))
+			out = append(out, scope.toJavaEnum(class))
 			continue
 		}
 		out = append(out, scope.toJavaClass(class))
@@ -534,7 +534,11 @@ func ToJavaClasses(classes []ktparser.Class, javaTypes []javaparser.Class, alias
 // doc comment cleaned, and what tells how Jackson writes it: the annotations of
 // the enum, the interfaces it implements, whether a member of it is annotated
 // @JsonValue and whether an entry is given a name by @JsonProperty.
-func toJavaEnum(class ktparser.Class) javaparser.Class {
+//
+// The interfaces are spelled as those of a class are (see toJavaClass): the
+// shared resolver reads them to find a @JsonValue an enum inherits, through the
+// imports it holds, and a renaming import is not among them.
+func (s *typeScope) toJavaEnum(class ktparser.Class) javaparser.Class {
 	out := javaparser.Class{
 		Name:          class.Name,
 		Package:       class.Package,
@@ -542,12 +546,15 @@ func toJavaEnum(class ktparser.Class) javaparser.Class {
 		FilePath:      class.FilePath,
 		Imports:       toJavaImports(class.Imports),
 		Annotations:   toJavaAnnotations(class.Annotations),
-		Interfaces:    append([]string(nil), class.Interfaces...),
 		IsEnum:        true,
 		EnumConstants: append([]string(nil), class.EnumValues...),
 		EnumJsonValue: declaresJsonValue(class),
 
 		EnumJsonProperty: class.EnumJsonProperty,
+	}
+	// The supertype list is outside the body of the enum.
+	for _, iface := range class.Interfaces {
+		out.Interfaces = append(out.Interfaces, s.normalizeHeader(&class, iface))
 	}
 	for i := range class.EnumValues {
 		doc := ""

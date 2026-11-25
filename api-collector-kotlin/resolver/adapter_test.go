@@ -354,18 +354,79 @@ func TestToJavaEnumJsonValue(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.class.IsEnum = true
-			if got := toJavaEnum(tt.class).EnumJsonValue; got != tt.want {
+			if got := newTypeScope(nil, nil).toJavaEnum(tt.class).EnumJsonValue; got != tt.want {
 				t.Errorf("EnumJsonValue = %v, want %v", got, tt.want)
 			}
 		})
 	}
 
-	shaped := toJavaEnum(ktparser.Class{
+	shaped := newTypeScope(nil, nil).toJavaEnum(ktparser.Class{
 		IsEnum:      true,
 		Annotations: []ktparser.Annotation{testAnnotation("JsonFormat", map[string]string{"shape": "JsonFormat.Shape.OBJECT"})},
 	})
 	if len(shaped.Annotations) != 1 || shaped.Annotations[0].Params["shape"] != "JsonFormat.Shape.OBJECT" {
 		t.Errorf("the annotations of the enum are not carried over: %+v", shaped.Annotations)
+	}
+}
+
+// The interfaces of an enum reach the shared resolver spelled the way the file of
+// the enum binds them, as those of a class do: it reads the names through the
+// imports of the enum, and a renaming import is not among them.
+func TestToJavaClassesSpellsTheInterfacesOfAnEnumAsItsFileBindsThem(t *testing.T) {
+	tests := []struct {
+		name       string
+		imports    []ktparser.Import
+		interfaces []string
+		declared   []ktparser.Class
+		aliases    []ktparser.TypeAlias
+		want       []string
+	}{
+		{name: "none"},
+		{name: "a renaming import", imports: []ktparser.Import{{Path: "p.Valued", Alias: "V"}}, interfaces: []string{"V"}, want: []string{"p.Valued"}},
+		{name: "a renaming import with a type argument", imports: []ktparser.Import{{Path: "p.Valued", Alias: "V"}}, interfaces: []string{"V<String>"}, want: []string{"p.Valued<java.lang.String>"}},
+		{name: "a renaming import of a nested interface", imports: []ktparser.Import{{Path: "p.Outer.Valued", Alias: "V"}}, interfaces: []string{"V"}, want: []string{"p.Outer.Valued"}},
+		{name: "a plain import", imports: []ktparser.Import{{Path: "p.Valued"}}, interfaces: []string{"Valued"}, want: []string{"Valued"}},
+		{name: "an import on demand", imports: []ktparser.Import{{Path: "p", OnDemand: true}}, interfaces: []string{"Valued"}, want: []string{"Valued"}},
+		{name: "a nested interface through its outer class", imports: []ktparser.Import{{Path: "p.Outer"}}, interfaces: []string{"Outer.Valued"}, want: []string{"Outer.Valued"}},
+		{name: "a name written in full", interfaces: []string{"p.Valued"}, want: []string{"p.Valued"}},
+		{name: "a name no file binds", interfaces: []string{"Valued"}, want: []string{"Valued"}},
+		{
+			name:       "an alias of the name of a declaration of the package",
+			imports:    []ktparser.Import{{Path: "p.Valued", Alias: "Valued"}},
+			interfaces: []string{"Valued"},
+			declared:   []ktparser.Class{{Name: "Valued", Package: "app", IsInterface: true}},
+			want:       []string{"p.Valued"},
+		},
+		{
+			name:       "a typealias",
+			interfaces: []string{"V"},
+			aliases:    []ktparser.TypeAlias{{Name: "V", Package: "app", Target: "p.Valued"}},
+			want:       []string{"p.Valued"},
+		},
+		{
+			name:       "the order of the interfaces",
+			imports:    []ktparser.Import{{Path: "p.Valued", Alias: "V"}, {Path: "q.Named", Alias: "N"}},
+			interfaces: []string{"N", "java.io.Serializable", "V"},
+			want:       []string{"q.Named", "java.io.Serializable", "p.Valued"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			enum := ktparser.Class{
+				Name: "State", Package: "app", FilePath: "State.kt", IsEnum: true, EnumValues: []string{"A"},
+				Imports: tt.imports, Interfaces: tt.interfaces,
+			}
+			classes := append([]ktparser.Class{enum}, tt.declared...)
+			var got []string
+			for _, class := range ToJavaClasses(classes, nil, tt.aliases) {
+				if class.Name == "State" {
+					got = class.Interfaces
+				}
+			}
+			if len(got) != len(tt.want) || (len(got) > 0 && !reflect.DeepEqual(got, tt.want)) {
+				t.Errorf("interfaces = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

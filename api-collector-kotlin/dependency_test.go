@@ -79,6 +79,25 @@ enum class Currency(@get:JsonValue val symbol: String) {
     EUR("eur"),
 }
 `,
+	// Valued and Coded declare the same member, and only Valued carries
+	// @JsonValue on it: an enum of the project that implements Valued is written
+	// as what the member returns, one that implements Coded as its entry's name
+	// (see enum_alias_test.go).
+	"com.example.lib.Valued": `package com.example.lib
+
+import com.fasterxml.jackson.annotation.JsonValue
+
+interface Valued {
+    @get:JsonValue
+    val wire: String get() = ""
+}
+`,
+	"com.example.lib.Coded": `package com.example.lib
+
+interface Coded {
+    val wire: String get() = ""
+}
+`,
 }
 
 // decompiledLibrarySources are classes of the same library that the indexer
