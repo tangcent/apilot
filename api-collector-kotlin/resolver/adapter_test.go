@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	javaparser "github.com/tangcent/apilot/api-collector-java/parser"
 	ktparser "github.com/tangcent/apilot/api-collector-kotlin/parser"
 	model "github.com/tangcent/apilot/api-model"
 )
@@ -675,5 +676,85 @@ func TestResolveFromEnumsInheritedAsMemberTypes(t *testing.T) {
 		if !reflect.DeepEqual(got, expected) {
 			t.Errorf("%s.s options = %v, want %v", classes[i].Name, got, expected)
 		}
+	}
+}
+
+// libraryEnums answers the dependency lookups of a Kotlin resolver with the classes
+// it holds, by qualified name.
+type libraryEnums map[string]javaparser.Class
+
+func (l libraryEnums) ResolveClass(name string) *javaparser.Class {
+	if c, ok := l[name]; ok {
+		return &c
+	}
+	return nil
+}
+
+func entries(field *model.FieldModel) []string {
+	var got []string
+	for _, option := range field.Options {
+		got = append(got, option.Value.(string))
+	}
+	return got
+}
+
+// Two enums of one simple name in different packages: each name takes the entries
+// of the enum its scope gives it, in whatever order the declarations come in. An enum
+// of the package of the source is the one the name denotes, and a class of another
+// package that carries the name and that nothing imports is not taken for it, for
+// the name written directly, in a collection or as a type argument.
+func TestResolveFromEnumsOfOneNameInPackagesAreToldInAnyOrder(t *testing.T) {
+	dto := ktparser.Class{Name: "Status", Package: "com.ex.app.dto", FilePath: "app/dto/Status.kt", IsEnum: true, EnumValues: []string{"OPEN", "CLOSED"}}
+	lib := ktparser.Class{Name: "Status", Package: "com.ex.lib", FilePath: "lib/Status.kt", IsEnum: true, EnumValues: []string{"ON", "OFF"}}
+	unrelated := ktparser.Class{Name: "Status", Package: "com.ex.unrelated", FilePath: "unrelated/Status.kt", Fields: []ktparser.Property{testProperty("unrelatedLabel", "String")}}
+	box := ktparser.Class{Name: "Box", Package: "com.ex.gen", FilePath: "gen/Box.kt", TypeParameters: []string{"T"}, Fields: []ktparser.Property{testProperty("data", "T")}}
+	holder := ktparser.Class{
+		Name: "Holder", Package: "com.ex.app.dto", FilePath: "app/dto/Holder.kt",
+		Imports: []ktparser.Import{{Path: "com.ex.gen.Box"}},
+		Fields: []ktparser.Property{
+			testProperty("own", "Status"), testProperty("ownLib", "com.ex.lib.Status"), testProperty("many", "List<Status>"),
+			testProperty("boxed", "Box<Status>"), testProperty("boxedLib", "Box<com.ex.lib.Status>"),
+		},
+	}
+	for name, classes := range map[string][]ktparser.Class{
+		"as declared": {dto, lib, unrelated, box, holder},
+		"reversed":    {holder, box, unrelated, lib, dto},
+	} {
+		r := New(classes)
+		r.SetDependencyResolver(libraryEnums{})
+		got := r.ResolveFrom(&holder, "Holder", nil)
+		for field, want := range map[string][]string{"own": {"OPEN", "CLOSED"}, "ownLib": {"ON", "OFF"}, "many": {"OPEN", "CLOSED"}} {
+			f := objectField(t, got, field)
+			if !reflect.DeepEqual(entries(f), want) || (f.Model.Kind != model.KindArray && f.Model.TypeName != model.JsonTypeString) {
+				t.Errorf("%s: Holder.%s = %+v, options %v, want a string of %v", name, field, f.Model, entries(f), want)
+			}
+		}
+		for field, want := range map[string][]string{"boxed": {"OPEN", "CLOSED"}, "boxedLib": {"ON", "OFF"}} {
+			f := objectField(t, objectField(t, got, field).Model, "data")
+			if !reflect.DeepEqual(entries(f), want) {
+				t.Errorf("%s: Holder.%s.data options = %v, want %v", name, field, entries(f), want)
+			}
+		}
+	}
+}
+
+// An enum of the dependencies is not turned away because the project nests an enum
+// of the same name in a class of the package the dependency declares it in: the
+// enum nested in a class is not the enum of the package.
+func TestResolveFromADependencyEnumIsNotTurnedAwayByANestedEnumOfItsName(t *testing.T) {
+	classes := []ktparser.Class{
+		{Name: "Outer", Package: "p", FilePath: "p/Outer.kt"},
+		{Name: "Status", Outer: "Outer", Package: "p", FilePath: "p/Outer.kt", IsEnum: true, EnumValues: []string{"NESTED"}},
+		{
+			Name: "Holder", Package: "h", FilePath: "h/Holder.kt",
+			Imports: []ktparser.Import{{Path: "p.Status"}},
+			Fields:  []ktparser.Property{testProperty("status", "Status")},
+		},
+	}
+	r := New(classes)
+	r.SetDependencyResolver(libraryEnums{"p.Status": {Name: "Status", Package: "p", IsEnum: true, EnumConstants: []string{"LIB"}}})
+	got := objectField(t, r.ResolveFrom(&classes[2], "Holder", nil), "status")
+	if !reflect.DeepEqual(entries(got), []string{"LIB"}) {
+		t.Errorf("Holder.status = %+v, options %v, want the enum of the dependencies, not the one nested in Outer", got.Model, entries(got))
 	}
 }
