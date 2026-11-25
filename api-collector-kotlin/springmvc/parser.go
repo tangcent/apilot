@@ -459,7 +459,7 @@ func (p *Parser) implicitParameters(param *ktparser.Parameter, in, methodName st
 	case javaspringmvc.ImplicitParam:
 		enum := doc.Enum
 		if len(enum) == 0 {
-			enum = p.typeResolver.EnumValues(javaspringmvc.ElementType(typeName, identity))
+			enum, _ = p.typeResolver.EnumValuesFrom(source, javaspringmvc.ElementType(typeName, identity))
 		}
 		return []EndpointParameter{{
 			Name:         param.Name,

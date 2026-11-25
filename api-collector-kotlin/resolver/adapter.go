@@ -314,15 +314,26 @@ func (r *Resolver) Unresolved() map[string]int {
 	return r.unresolved.Counts()
 }
 
-// IsEnum reports whether name denotes an enum class.
+// IsEnum reports whether name denotes an enum class. It goes by the simple
+// name, with no scope to tell two enums of that name apart; EnumValuesFrom
+// resolves the name as source sees it.
 func (r *Resolver) IsEnum(name string) bool {
 	_, ok := r.enumValues[lastSegment(name)]
 	return ok
 }
 
-// EnumValues returns the entries of an enum class.
+// EnumValues returns the entries of an enum class by its simple name (see
+// IsEnum).
 func (r *Resolver) EnumValues(name string) []string {
 	return r.enumValues[lastSegment(name)]
+}
+
+// EnumValuesFrom returns the entries of the enum a type name denotes as seen
+// from source, and whether it denotes an enum of the project at all. The name is
+// resolved as any other type name is, so the Status of source's own package is
+// not mistaken for the Status of another.
+func (r *Resolver) EnumValuesFrom(source *ktparser.Class, name string) ([]string, bool) {
+	return r.tr.EnumConstants(r.javaClass(source), r.scope.normalize(source, name))
 }
 
 // ResolveFrom expands a Kotlin type spelling from the given source class.
