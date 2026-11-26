@@ -24,10 +24,11 @@ func TestSeeOptions_ALibraryClassDoesNotShadowAProjectEnum(t *testing.T) {
 			Imports: []parser.Import{{Path: "com.example.lib.Level"}},
 			Fields:  []parser.Field{{Name: "level", Type: "String", RawJavaDoc: "/** @see Level */"}},
 		},
-		// Imports no Level: the name falls back to the declaration carrying it.
+		// Imports the package of the project's Level on demand.
 		{
 			Name: "Bare", Package: "com.example.web", FilePath: "Bare.java",
-			Fields: []parser.Field{{Name: "level", Type: "String", RawJavaDoc: "/** @see Level */"}},
+			Imports: []parser.Import{{Path: "com.example.web.enums", OnDemand: true}},
+			Fields:  []parser.Field{{Name: "level", Type: "String", RawJavaDoc: "/** @see Level */"}},
 		},
 	})
 	r.SetDependencyResolver(library)
@@ -45,5 +46,37 @@ func TestSeeOptions_ALibraryClassDoesNotShadowAProjectEnum(t *testing.T) {
 	r.Resolve("com.example.web.Imported", nil)
 	if !reflect.DeepEqual(library.asked, []string{"com.example.lib.Level"}) {
 		t.Errorf("asked = %v, want the library's Level once", library.asked)
+	}
+}
+
+// A `@see` tag names an enum as the scope of its source gives the name, as a type
+// does: the enum of the source's own package, and the enum nested in the outer
+// class that scope gives, whatever other enum carries the same simple name.
+func TestSeeOptions_NamesAreResolvedInTheScopeOfTheSource(t *testing.T) {
+	fields := []parser.Field{
+		{Name: "code", Type: "String", RawJavaDoc: "/** @see Code */"},
+		{Name: "status", Type: "String", RawJavaDoc: "/** @see Order.Status */"},
+	}
+	r := NewTypeResolver([]parser.Class{
+		{Name: "Code", Package: "a", FilePath: "a/Code.java", IsEnum: true, EnumConstants: []string{"A"}, EnumJsonValue: true},
+		{Name: "Code", Package: "b", FilePath: "b/Code.java", IsEnum: true, EnumConstants: []string{"B"}},
+		{Name: "Order", Package: "a", FilePath: "a/Order.java"},
+		{Name: "Status", Package: "a", Outer: "Order", FilePath: "a/Order.java", IsEnum: true, EnumConstants: []string{"A1"}},
+		{Name: "Order", Package: "b", FilePath: "b/Order.java"},
+		{Name: "Status", Package: "b", Outer: "Order", FilePath: "b/Order.java", IsEnum: true, EnumConstants: []string{"B1"}},
+		{Name: "Holder", Package: "a", FilePath: "a/Holder.java", Fields: fields},
+		{Name: "Holder", Package: "b", FilePath: "b/Holder.java", Fields: fields},
+	})
+
+	for holder, want := range map[string]map[string][]any{
+		"a.Holder": {"code": {"A"}, "status": {"A1"}},
+		"b.Holder": {"code": {"B"}, "status": {"B1"}},
+	} {
+		got := r.Resolve(holder, nil)
+		for name, values := range want {
+			if options := optionValues(got.Fields[name].Options); !reflect.DeepEqual(options, values) {
+				t.Errorf("%s.%s options = %v, want %v", holder, name, options, values)
+			}
+		}
 	}
 }

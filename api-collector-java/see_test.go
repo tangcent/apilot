@@ -262,6 +262,122 @@ public class PageQuery {
     private int size;
 }
 `,
+	// Currency and Tier declare @JsonValue, so a field typed with either takes
+	// what the annotated member returns, not the name of a constant (see
+	// enum_test.go). Tier is how the decompiler prints a Kotlin enum.
+	"com.example.lib.Currency": `package com.example.lib;
+
+import com.fasterxml.jackson.annotation.JsonValue;
+
+public enum Currency {
+    USD("usd"),
+    EUR("eur");
+
+    private final String symbol;
+
+    Currency(String symbol) {
+        this.symbol = symbol;
+    }
+
+    @JsonValue
+    public String getSymbol() {
+        return symbol;
+    }
+}
+`,
+	"com.example.lib.Tier": `/*
+ * Decompiled with CFR 0.152.
+ */
+package com.example.lib;
+
+import com.fasterxml.jackson.annotation.JsonValue;
+import kotlin.Metadata;
+import org.jetbrains.annotations.NotNull;
+
+@Metadata(mv={1, 9, 0}, k=1, xi=48)
+public final class Tier
+extends Enum<Tier> {
+    public static final /* enum */ Tier GOLD = new Tier("gold");
+    public static final /* enum */ Tier SILVER = new Tier("silver");
+    private static final /* synthetic */ Tier[] $VALUES;
+    @NotNull
+    private final String code;
+
+    private Tier(String code) {
+        this.code = code;
+    }
+
+    @JsonValue
+    @NotNull
+    public final String getCode() {
+        return this.code;
+    }
+
+    static {
+        $VALUES = tierArray = new Tier[]{Tier.GOLD, Tier.SILVER};
+    }
+}
+`,
+	// Stage and Mode give a constant a name with @JsonProperty, so a field typed
+	// with either takes that name, not the name of the constant (see
+	// enum_test.go). Stage is how the decompiler prints a Java enum and Mode how it
+	// prints a Kotlin one: the annotation is among the modifiers of the constant's
+	// field.
+	"com.example.lib.Stage": `/*
+ * Decompiled with CFR 0.152.
+ */
+package com.example.lib;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+public enum Stage {
+    @JsonProperty(value="first_stage")
+    FIRST,
+    SECOND;
+}
+`,
+	"com.example.lib.Mode": `/*
+ * Decompiled with CFR 0.152.
+ */
+package com.example.lib;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+import kotlin.Metadata;
+import kotlin.enums.EnumEntries;
+import kotlin.enums.EnumEntriesKt;
+import org.jetbrains.annotations.NotNull;
+
+@Metadata(mv={1, 9, 0}, k=1, xi=48)
+public final class Mode
+extends Enum<Mode> {
+    @JsonProperty(value="fast_mode")
+    public static final /* enum */ Mode FAST = new Mode();
+    public static final /* enum */ Mode SLOW = new Mode();
+    private static final /* synthetic */ Mode[] $VALUES;
+    private static final /* synthetic */ EnumEntries $ENTRIES;
+
+    private Mode() {
+    }
+
+    public static Mode[] values() {
+        return (Mode[])$VALUES.clone();
+    }
+
+    public static Mode valueOf(String value) {
+        return Enum.valueOf(Mode.class, value);
+    }
+
+    @NotNull
+    public static EnumEntries<Mode> getEntries() {
+        return $ENTRIES;
+    }
+
+    static {
+        $VALUES = modeArray = new Mode[]{Mode.FAST, Mode.SLOW};
+        $ENTRIES = EnumEntriesKt.enumEntries((Enum[])$VALUES);
+    }
+}
+`,
 }
 
 // seeLibrary answers dependency lookups from seeLibrarySources by qualified
@@ -318,15 +434,16 @@ func TestSeeTagReadsAnEnumOfADependency(t *testing.T) {
 	}
 
 	body := checkSeeTables(t, endpoints, seeDependencyExpectation, seeDependencyQueryExpectation)
-	// The JSON view exports a field typed with an enum by the enum's name,
-	// whether the project or a library declares it.
-	if typed := body["typed"]; typed == nil || typed.Model.TypeName != "OrderState" || len(typed.Options) != 0 {
-		t.Errorf("body field typed = %+v, want the enum's name without options", typed)
+	// The JSON view exports a field typed with an enum as a string of its
+	// constants, whether the project or a library declares it (see
+	// enum_test.go).
+	if typed := body["typed"]; typed == nil || typed.Model.TypeName != model.JsonTypeString || !reflect.DeepEqual(describeOptions(typed.Options), seeExpectation["state"]) {
+		t.Errorf("body field typed = %+v, want a string of the enum's constants", typed)
 	}
 	// A Kotlin enum decompiled to a class is an enum all the same: not an
 	// object of its properties.
-	if typed := body["kotlinEnum"]; typed == nil || typed.Model.TypeName != "Region" || typed.Model.Kind != model.KindSingle || len(typed.Options) != 0 {
-		t.Errorf("body field kotlinEnum = %+v, want the enum's name without options", typed)
+	if typed := body["kotlinEnum"]; typed == nil || typed.Model.TypeName != model.JsonTypeString || typed.Model.Kind != model.KindSingle || !reflect.DeepEqual(describeOptions(typed.Options), []string{"NORTH: ", "SOUTH: "}) {
+		t.Errorf("body field kotlinEnum = %+v, want a string of the enum's constants", typed)
 	}
 
 	// The library is asked for each name once, however many fields refer to
@@ -344,12 +461,9 @@ func TestSeeTagReadsAnEnumOfADependency(t *testing.T) {
 	if len(asked) != len(wantAsked) {
 		t.Errorf("asked = %v, want only %v", library.asked, wantAsked)
 	}
-	// The `@see` lookups report nothing; the enum-typed fields are reported by
-	// the JSON view as before.
-	for name := range unresolved.Counts() {
-		if name != "OrderState" && name != "Region" {
-			t.Errorf("unresolved %s; unresolved = %v", name, unresolved.Counts())
-		}
+	// The `@see` lookups report nothing, and the enum-typed fields are strings.
+	if counts := unresolved.Counts(); len(counts) != 0 {
+		t.Errorf("unresolved = %v, want none", counts)
 	}
 	if warnings := sm.Warnings(); len(warnings) != 0 {
 		t.Errorf("warnings = %q", warnings)

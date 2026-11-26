@@ -78,10 +78,14 @@ type Import struct {
 
 // Class represents a Java class or interface with annotations and methods.
 type Class struct {
-	Name               string
-	Package            string
-	JavaDoc            string
-	IsInterface        bool
+	Name        string
+	Package     string
+	JavaDoc     string
+	IsInterface bool
+	// IsAnnotation marks an annotation type. It is not a class a name can
+	// denote: name lookup, @see and the search for an implementation never see
+	// it. A composed annotation is the only reader.
+	IsAnnotation       bool
 	Annotations        []Annotation
 	Methods            []Method
 	Fields             []Field
@@ -89,6 +93,14 @@ type Class struct {
 	SuperClassTypeArgs []string
 	TypeParameters     []string
 	Interfaces         []string
+	// JsonValueMethods and JsonValueFields are members a declaration converted
+	// from Kotlin hands over only to decide how Jackson writes an enum: those
+	// annotated @JsonValue, on or off, or with an annotation that may wrap it,
+	// under their JVM names. They are not members for anything else, so an
+	// endpoint parser, which reads Methods, never sees them. A class the Java
+	// parser reads leaves them empty.
+	JsonValueMethods []Method
+	JsonValueFields  []Field
 	// Outer is the dotted path of the classes this declaration is nested in,
 	// outermost first: "Outer" for Outer.Inner, "Outer.Mid" for Deep in
 	// Outer.Mid.Deep. Empty for a top-level declaration. A nested class is a
@@ -128,6 +140,22 @@ type Class struct {
 	// EnumConstantDocs holds the doc comment of each constant, cleaned, in
 	// the order of EnumConstants: "" for a constant without one.
 	EnumConstantDocs []string
+	// EnumJsonValue marks an enum that declares @JsonValue on a method or a
+	// field: Jackson writes the value of that member, not the name of the
+	// constant.
+	EnumJsonValue bool
+	// EnumConstantValue marks an enum one of whose constants has a class body
+	// with @JsonValue switched on. Jackson writes that constant as the value
+	// the member returns, so the enum is not reported as a string of names.
+	EnumConstantValue bool
+	// EnumJsonProperty marks an enum one of whose constants carries @JsonProperty
+	// with a value: Jackson writes that constant under the name it is given.
+	EnumJsonProperty bool
+	// AnnotationRetention is the retention of an annotation type: RUNTIME, CLASS
+	// or SOURCE. Empty when this declaration is not an annotation type. Jackson
+	// reads a composed annotation only when it is RUNTIME; a Java annotation
+	// type that does not say is CLASS.
+	AnnotationRetention string
 }
 
 // QualifiedName returns the name a declaration is known by: its package, the

@@ -317,20 +317,20 @@ func TestResolve_AnImportOfANestedClassOfALibraryNamesIt(t *testing.T) {
 }
 
 // An enum is a declaration like any other: as a type argument it stays the enum its
-// caller names, and the JSON view, which does not read an enum, exports it by that
-// name in full rather than by a simple name that the generic class's package may
-// give to another enum. It holds one and two levels down, through a superclass
-// argument, and for an enum nested in a class.
+// caller names, and the JSON view, which does not read an enum that declares
+// @JsonValue, exports it by that name in full rather than by a simple name that the
+// generic class's package may give to another enum. It holds one and two levels
+// down, through a superclass argument, and for an enum nested in a class.
 func TestResolve_AnEnumKeepsItsIdentityAsATypeArgument(t *testing.T) {
 	classes := []parser.Class{
 		{Name: "Envelope", Package: "a", FilePath: "a/Envelope.java", TypeParameters: []string{"T"}, Fields: []parser.Field{{Name: "data", Type: "T"}}},
 		{Name: "Page", Package: "a", FilePath: "a/Page.java", TypeParameters: []string{"U"}, Fields: []parser.Field{{Name: "inner", Type: "Envelope<U>"}}},
 		{Name: "Base", Package: "a", FilePath: "a/Base.java", TypeParameters: []string{"T"}, Fields: []parser.Field{{Name: "data", Type: "T"}}},
-		{Name: "Status", Package: "a", FilePath: "a/Status.java", IsEnum: true, EnumConstants: []string{"FROM_A"}},
-		{Name: "Status", Package: "b", FilePath: "b/Status.java", IsEnum: true, EnumConstants: []string{"FROM_B"}},
+		{Name: "Status", Package: "a", FilePath: "a/Status.java", IsEnum: true, EnumConstants: []string{"FROM_A"}, EnumJsonValue: true},
+		{Name: "Status", Package: "b", FilePath: "b/Status.java", IsEnum: true, EnumConstants: []string{"FROM_B"}, EnumJsonValue: true},
 		{Name: "Order", Package: "b", FilePath: "b/Order.java"},
-		{Name: "Kind", Package: "b", Outer: "Order", FilePath: "b/Order.java", IsEnum: true, EnumConstants: []string{"FROM_ORDER"}},
-		{Name: "Kind", Package: "a", FilePath: "a/Kind.java", IsEnum: true, EnumConstants: []string{"FROM_A_KIND"}},
+		{Name: "Kind", Package: "b", Outer: "Order", FilePath: "b/Order.java", IsEnum: true, EnumConstants: []string{"FROM_ORDER"}, EnumJsonValue: true},
+		{Name: "Kind", Package: "a", FilePath: "a/Kind.java", IsEnum: true, EnumConstants: []string{"FROM_A_KIND"}, EnumJsonValue: true},
 		{
 			Name: "Sub", Package: "b", FilePath: "b/Sub.java", SuperClass: "Base", SuperClassTypeArgs: []string{"Status"},
 			Imports: []parser.Import{{Path: "a.Base"}},

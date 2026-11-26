@@ -30,7 +30,20 @@ func extractFile(root *tree_sitter.Node, source []byte, filePath string, result 
 			child := node.Child(i)
 			switch child.Kind() {
 			case "ERROR":
-				// The grammar folded a declaration into an error.
+				// The grammar folded a declaration into an error. An annotation
+				// class whose parameter defaults to [] is one of those, and is
+				// read back from the text rather than skipped.
+				if name, anns, ok := annotationClassFromError(child, source); ok {
+					result.Classes = append(result.Classes, Class{
+						Name:         name,
+						Package:      packageName,
+						FilePath:     filePath,
+						Imports:      imports,
+						IsAnnotation: true,
+						Annotations:  anns,
+					})
+					continue
+				}
 				if skipDamaged && !isStraySemicolon(child, source) {
 					skip(child)
 				}
@@ -68,9 +81,42 @@ func extractFile(root *tree_sitter.Node, source []byte, filePath string, result 
 					addFileConstant(result, packageName, filePath, imports, *prop)
 				}
 			case "annotated_expression":
+				// The grammar reads `annotation class Name` as an infix
+				// expression, so a composed annotation would otherwise be
+				// invisible and its annotations would stick to the next
+				// declaration. Read it as the annotation class it is.
+				if name, ok := annotationClassName(child, source); ok {
+					if result.Error != nil {
+						return
+					}
+					anns, err := collectAnnotatedExpression(child, source, filePath)
+					if err != nil {
+						result.Error = err
+						return
+					}
+					result.Classes = append(result.Classes, Class{
+						Name:         name,
+						Package:      packageName,
+						FilePath:     filePath,
+						Imports:      imports,
+						IsAnnotation: true,
+						Annotations:  anns,
+					})
+					continue
+				}
 				// A declaration can be wrapped in annotation expressions at
 				// file scope. Descend so the class is not missed.
 				visit(child)
+			case "infix_expression":
+				if name, ok := infixAnnotationClass(child, source); ok {
+					result.Classes = append(result.Classes, Class{
+						Name:         name,
+						Package:      packageName,
+						FilePath:     filePath,
+						Imports:      imports,
+						IsAnnotation: true,
+					})
+				}
 			case "type_alias":
 				if skipDamaged && declarationDamaged(child, source) {
 					skip(child)
@@ -240,11 +286,14 @@ func extractClass(node *tree_sitter.Node, source []byte, packageName, filePath s
 		IsEnum:         flags["enum"],
 		IsSealed:       flags["sealed"],
 		IsInterface:    flags["interface"] || node.Kind() == "interface_declaration" || directIndexOf(node, "interface") >= 0,
+		IsAnnotation:   flags["annotation"],
 		TypeParameters: extractTypeParameters(node, source),
 	}
 
 	extractSuperTypes(node, source, &class)
-	extractEnumEntries(node, source, &class)
+	if err := extractEnumEntries(node, source, filePath, &class); err != nil {
+		return err
+	}
 
 	if primary := firstChildOfKind(node, "primary_constructor"); primary != nil {
 		if classParams := firstChildOfKind(primary, "class_parameters"); classParams != nil {
@@ -491,10 +540,10 @@ func extractTypeParameters(node *tree_sitter.Node, source []byte) []string {
 	return out
 }
 
-func extractEnumEntries(node *tree_sitter.Node, source []byte, class *Class) {
+func extractEnumEntries(node *tree_sitter.Node, source []byte, filePath string, class *Class) error {
 	body := firstChildOfKind(node, "enum_class_body")
 	if body == nil {
-		return
+		return nil
 	}
 	for i := uint(0); i < body.ChildCount(); i++ {
 		child := body.Child(i)
@@ -502,10 +551,89 @@ func extractEnumEntries(node *tree_sitter.Node, source []byte, class *Class) {
 			continue
 		}
 		if id := firstChildOfKind(child, "identifier"); id != nil {
+			anns, _, err := parseModifiers(firstChildOfKind(child, "modifiers"), source, filePath)
+			if err != nil {
+				return err
+			}
 			class.EnumValues = append(class.EnumValues, id.Utf8Text(source))
 			class.EnumValueKDocs = append(class.EnumValueKDocs, leadingKDoc(child, source))
+			if entryJsonName(anns) != "" {
+				class.EnumJsonProperty = true
+			}
+			on, err := entryDeclaresJsonValue(child, source, filePath)
+			if err != nil {
+				return err
+			}
+			if on {
+				class.EnumEntryJsonValue = true
+			}
 		}
 	}
+	return nil
+}
+
+// entryJsonName returns the name an @JsonProperty on an enum entry gives it, or ""
+// when there is none or it gives no name. Of the use-site targets only the entry
+// itself and its field carry the annotation to where Jackson reads it.
+func entryJsonName(annotations []Annotation) string {
+	for _, ann := range annotations {
+		switch ann.UseSiteTarget {
+		case "", "field":
+		default:
+			continue
+		}
+		if ann.Name == "JsonProperty" {
+			return strings.TrimSpace(ann.Params["value"])
+		}
+	}
+	return ""
+}
+
+// entryDeclaresJsonValue reports whether the class body of one entry carries
+// @JsonValue switched on. @JsonValue(false) does not, and a body that does not
+// mention it changes nothing. A property counts when the annotation lands on
+// the field or the getter.
+func entryDeclaresJsonValue(entry *tree_sitter.Node, source []byte, filePath string) (bool, error) {
+	body := firstChildOfKind(entry, "class_body")
+	if body == nil {
+		return false, nil
+	}
+	for i := uint(0); i < body.ChildCount(); i++ {
+		child := body.Child(i)
+		var targets map[string]bool
+		switch child.Kind() {
+		case "function_declaration":
+			targets = map[string]bool{"": true}
+		case "property_declaration":
+			targets = map[string]bool{"": true, "field": true, "get": true}
+		default:
+			continue
+		}
+		anns, _, err := parseModifiers(firstChildOfKind(child, "modifiers"), source, filePath)
+		if err != nil {
+			return false, err
+		}
+		if jsonValueSwitchedOn(anns, targets) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func jsonValueSwitchedOn(annotations []Annotation, targets map[string]bool) bool {
+	for _, ann := range annotations {
+		name := ann.Name
+		if i := strings.LastIndex(name, "."); i >= 0 {
+			name = name[i+1:]
+		}
+		if name != "JsonValue" || !targets[ann.UseSiteTarget] {
+			continue
+		}
+		if strings.TrimSpace(ann.Params["value"]) != "false" {
+			return true
+		}
+	}
+	return false
 }
 
 func extractClassParameter(node *tree_sitter.Node, source []byte, filePath string) (Property, bool, error) {
@@ -739,7 +867,17 @@ func leadingAnnotations(node *tree_sitter.Node, source []byte, filePath string) 
 				kdoc = text
 			}
 			continue
+		case "ERROR":
+			if _, _, ok := annotationClassFromError(prev, source); ok {
+				return anns, kdoc, nil
+			}
+			return anns, kdoc, nil
 		case "annotated_expression":
+			// An annotation class the grammar did not recognise belongs to
+			// itself, not to the declaration that follows it.
+			if _, ok := annotationClassName(prev, source); ok {
+				return anns, kdoc, nil
+			}
 			got, err := collectAnnotatedExpression(prev, source, filePath)
 			if err != nil {
 				return nil, "", err
@@ -754,6 +892,108 @@ func leadingAnnotations(node *tree_sitter.Node, source []byte, filePath string) 
 		}
 	}
 	return anns, kdoc, nil
+}
+
+// annotationClassName reports the name of an `annotation class` the grammar
+// read as an annotated infix expression (`annotation class Name`), which is
+// how a composed annotation is written.
+func annotationClassName(node *tree_sitter.Node, source []byte) (string, bool) {
+	cur := node
+	for cur != nil && cur.Kind() == "annotated_expression" {
+		var expr *tree_sitter.Node
+		for i := uint(0); i < cur.ChildCount(); i++ {
+			child := cur.Child(i)
+			if child.Kind() == "annotation" {
+				continue
+			}
+			expr = child
+			break
+		}
+		if expr == nil {
+			return "", false
+		}
+		if expr.Kind() == "annotated_expression" {
+			cur = expr
+			continue
+		}
+		return infixAnnotationClass(expr, source)
+	}
+	return "", false
+}
+
+// infixAnnotationClass reports the name when node is the infix the grammar
+// gives `annotation class Name`.
+func infixAnnotationClass(node *tree_sitter.Node, source []byte) (string, bool) {
+	if node == nil || node.Kind() != "infix_expression" {
+		return "", false
+	}
+	var words []string
+	var callName string
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		switch child.Kind() {
+		case "identifier":
+			words = append(words, child.Utf8Text(source))
+		case "call_expression":
+			// `annotation class Name { }` is read as a call whose body is a
+			// lambda. The name is the callee.
+			if id := firstChildOfKind(child, "identifier"); id != nil {
+				callName = id.Utf8Text(source)
+			}
+		}
+	}
+	if len(words) >= 2 && words[0] == "annotation" && words[1] == "class" {
+		if len(words) >= 3 {
+			return words[2], true
+		}
+		if callName != "" {
+			return callName, true
+		}
+	}
+	return "", false
+}
+
+// annotationClassFromError reads an annotation class the grammar rejected, which
+// is what `annotation class X(vararg val value: Int = [])` becomes. The name and
+// the annotations written in front of `annotation class` are taken from the text.
+func annotationClassFromError(node *tree_sitter.Node, source []byte) (string, []Annotation, bool) {
+	if node == nil || node.Kind() != "ERROR" {
+		return "", nil, false
+	}
+	text := node.Utf8Text(source)
+	idx := strings.Index(text, "annotation class")
+	if idx < 0 {
+		return "", nil, false
+	}
+	rest := strings.TrimSpace(text[idx+len("annotation class"):])
+	name := ""
+	for _, r := range rest {
+		if r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || (name != "" && r >= '0' && r <= '9') {
+			name += string(r)
+			continue
+		}
+		break
+	}
+	if name == "" {
+		return "", nil, false
+	}
+	var anns []Annotation
+	head := text[:idx]
+	for i := 0; i < len(head); i++ {
+		if head[i] != '@' {
+			continue
+		}
+		j := i + 1
+		for j < len(head) && (head[j] == '_' || head[j] >= 'A' && head[j] <= 'Z' || head[j] >= 'a' && head[j] <= 'z' || head[j] >= '0' && head[j] <= '9') {
+			j++
+		}
+		if j == i+1 {
+			continue
+		}
+		anns = append(anns, Annotation{Name: head[i+1 : j], Params: map[string]string{}})
+		i = j - 1
+	}
+	return name, anns, true
 }
 
 func collectAnnotatedExpression(node *tree_sitter.Node, source []byte, filePath string) ([]Annotation, error) {

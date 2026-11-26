@@ -310,6 +310,13 @@ func extractAllClasses(tree *tree_sitter.Tree, source []byte) ([]Class, error) {
 			enum.Local = isLocalType(node)
 			enum.Imports = imports
 			classes = append(classes, enum)
+		case "annotation_type_declaration":
+			ann := extractAnnotationType(node, source)
+			ann.Package = packageName
+			ann.Outer = enclosingTypes(node, source)
+			ann.Local = isLocalType(node)
+			ann.Imports = imports
+			classes = append(classes, ann)
 		}
 	}, 0)
 

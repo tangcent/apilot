@@ -68,6 +68,36 @@ enum class OrderState(val code: String) {
     }
 }
 `,
+	// Currency declares @JsonValue, so a property typed with it takes what the
+	// getter returns, not the name of an entry (see enum_test.go).
+	"com.example.lib.Currency": `package com.example.lib
+
+import com.fasterxml.jackson.annotation.JsonValue
+
+enum class Currency(@get:JsonValue val symbol: String) {
+    USD("usd"),
+    EUR("eur"),
+}
+`,
+	// Valued and Coded declare the same member, and only Valued carries
+	// @JsonValue on it: an enum of the project that implements Valued is written
+	// as what the member returns, one that implements Coded as its entry's name
+	// (see enum_alias_test.go).
+	"com.example.lib.Valued": `package com.example.lib
+
+import com.fasterxml.jackson.annotation.JsonValue
+
+interface Valued {
+    @get:JsonValue
+    val wire: String get() = ""
+}
+`,
+	"com.example.lib.Coded": `package com.example.lib
+
+interface Coded {
+    val wire: String get() = ""
+}
+`,
 }
 
 // decompiledLibrarySources are classes of the same library that the indexer
@@ -140,6 +170,99 @@ public enum PayChannel {
 
     public String getCode() {
         return this.code;
+    }
+}
+`,
+	// Tier is a Kotlin enum with @JsonValue on its getter, decompiled like
+	// Region.
+	"com.example.lib.Tier": `/*
+ * Decompiled with CFR 0.152.
+ */
+package com.example.lib;
+
+import com.fasterxml.jackson.annotation.JsonValue;
+import kotlin.Metadata;
+import org.jetbrains.annotations.NotNull;
+
+@Metadata(mv={1, 9, 0}, k=1, xi=48)
+public final class Tier
+extends Enum<Tier> {
+    public static final /* enum */ Tier GOLD = new Tier("gold");
+    public static final /* enum */ Tier SILVER = new Tier("silver");
+    private static final /* synthetic */ Tier[] $VALUES;
+    @NotNull
+    private final String code;
+
+    private Tier(String code) {
+        this.code = code;
+    }
+
+    @JsonValue
+    @NotNull
+    public final String getCode() {
+        return this.code;
+    }
+
+    static {
+        $VALUES = tierArray = new Tier[]{Tier.GOLD, Tier.SILVER};
+    }
+}
+`,
+	// Stage and Mode give a constant a name with @JsonProperty, as a Java enum and
+	// as a Kotlin enum decompiled the same way as Region: the annotation is among
+	// the modifiers of the field of the constant.
+	"com.example.lib.Stage": `/*
+ * Decompiled with CFR 0.152.
+ */
+package com.example.lib;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+public enum Stage {
+    @JsonProperty(value="first_stage")
+    FIRST,
+    SECOND;
+}
+`,
+	"com.example.lib.Mode": `/*
+ * Decompiled with CFR 0.152.
+ */
+package com.example.lib;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+import kotlin.Metadata;
+import kotlin.enums.EnumEntries;
+import kotlin.enums.EnumEntriesKt;
+import org.jetbrains.annotations.NotNull;
+
+@Metadata(mv={1, 9, 0}, k=1, xi=48)
+public final class Mode
+extends Enum<Mode> {
+    @JsonProperty(value="fast_mode")
+    public static final /* enum */ Mode FAST = new Mode();
+    public static final /* enum */ Mode SLOW = new Mode();
+    private static final /* synthetic */ Mode[] $VALUES;
+    private static final /* synthetic */ EnumEntries $ENTRIES;
+
+    private Mode() {
+    }
+
+    public static Mode[] values() {
+        return (Mode[])$VALUES.clone();
+    }
+
+    public static Mode valueOf(String value) {
+        return Enum.valueOf(Mode.class, value);
+    }
+
+    @NotNull
+    public static EnumEntries<Mode> getEntries() {
+        return $ENTRIES;
+    }
+
+    static {
+        $VALUES = modeArray = new Mode[]{Mode.FAST, Mode.SLOW};
+        $ENTRIES = EnumEntriesKt.enumEntries((Enum[])$VALUES);
     }
 }
 `,

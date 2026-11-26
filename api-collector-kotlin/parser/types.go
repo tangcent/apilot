@@ -138,10 +138,20 @@ type Class struct {
 	IsEnum             bool
 	IsSealed           bool
 	IsInterface        bool
-	EnumValues         []string
+	// IsAnnotation marks an annotation class. Jackson reads a composed
+	// annotation it declares only when the annotation is retained at runtime,
+	// which is the default for a Kotlin annotation class.
+	IsAnnotation bool
+	EnumValues   []string
 	// EnumValueKDocs holds the KDoc of each enum entry as written, in the
 	// order of EnumValues: "" for an entry without one.
 	EnumValueKDocs []string
+	// EnumJsonProperty marks an enum one of whose entries carries @JsonProperty
+	// with a value: Jackson writes that entry under the name it is given.
+	EnumJsonProperty bool
+	// EnumEntryJsonValue marks an enum one of whose entries has a class body
+	// with @JsonValue switched on. The enum keeps its type name.
+	EnumEntryJsonValue bool
 	// Outer is the dotted path of the classes this declaration is nested in,
 	// outermost first: "Outer" for Outer.Inner, "Outer.Mid" for Deep in
 	// Outer.Mid.Deep. Empty for a top-level declaration. A nested class, inner

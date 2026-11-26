@@ -544,3 +544,28 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// A handler parameter without a binding annotation is an enum, and takes its
+// entries, by the enum its type name denotes in the scope of the controller: the
+// Status of the controller's own package, not another Status that was declared
+// later, and not an enum for the sake of a Status elsewhere when the controller's
+// own Status is a class.
+func TestImplicitParameterNamesAnEnumInTheScopeOfTheController(t *testing.T) {
+	classes := []ktparser.Class{
+		{Name: "Status", Package: "b", FilePath: "b/Status.kt", IsEnum: true, EnumValues: []string{"ON", "OFF"}},
+		{Name: "Status", Package: "a", FilePath: "a/Status.kt", IsEnum: true, EnumValues: []string{"ACTIVE"}},
+		{Name: "Status", Package: "c", FilePath: "c/Status.kt", Fields: []ktparser.Property{{Name: "label", Type: "String", IsMutable: true}}},
+	}
+	p := NewParser(resolver.New(classes))
+	param := testParameter("status", "Status")
+
+	inB := p.implicitParameters(&param, "query", "list", nil, &ktparser.Class{Name: "BController", Package: "b", FilePath: "b/BController.kt"}, nil)
+	if len(inB) != 1 || inB[0].Name != "status" || !equalStrings(inB[0].Enum, []string{"ON", "OFF"}) {
+		t.Errorf("in b = %+v, want the entries of b.Status", inB)
+	}
+
+	inC := p.implicitParameters(&param, "query", "list", nil, &ktparser.Class{Name: "CController", Package: "c", FilePath: "c/CController.kt"}, nil)
+	if len(inC) != 1 || inC[0].Name != "label" {
+		t.Errorf("in c = %+v, want the properties of the class c.Status as model attribute parameters", inC)
+	}
+}

@@ -411,6 +411,13 @@ func (p *Parser) extractParameter(param *ktparser.Parameter, methodDocParams map
 	if doc.Required != nil {
 		ep.Required = *doc.Required
 	}
+	// The entries of an enum are the values the parameter takes, as they are for a
+	// parameter without a binding annotation (see implicitParameters); values the
+	// parameter documents itself win.
+	if len(ep.Enum) == 0 && paramType != "body" && p.typeResolver != nil && source != nil {
+		identity := func(name string) string { return p.typeResolver.Identity(source, name) }
+		ep.Enum, _ = p.typeResolver.EnumValuesFrom(source, javaspringmvc.ElementType(p.valueType(source, param.Type), identity))
+	}
 
 	// Kotlin never loses parameter names, so the identifier is the fallback.
 	// An explicit annotation name still wins: @RequestHeader("X-Tenant"), or
@@ -459,7 +466,7 @@ func (p *Parser) implicitParameters(param *ktparser.Parameter, in, methodName st
 	case javaspringmvc.ImplicitParam:
 		enum := doc.Enum
 		if len(enum) == 0 {
-			enum = p.typeResolver.EnumValues(javaspringmvc.ElementType(typeName, identity))
+			enum, _ = p.typeResolver.EnumValuesFrom(source, javaspringmvc.ElementType(typeName, identity))
 		}
 		return []EndpointParameter{{
 			Name:         param.Name,

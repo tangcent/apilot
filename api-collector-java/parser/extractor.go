@@ -174,8 +174,9 @@ func extractClass(node *tree_sitter.Node, source []byte) Class {
 			class.Methods = extractMethods(child, source)
 			class.Fields = extractFields(child, source)
 			if class.IsEnum {
-				class.EnumConstants = decompiledEnumConstants(child, source)
+				class.EnumConstants, class.EnumJsonProperty = decompiledEnumConstants(child, source)
 				class.EnumConstantDocs = make([]string, len(class.EnumConstants))
+				class.EnumJsonValue = declaresJsonValue(class.Methods, class.Fields)
 			}
 			break
 		}
@@ -221,8 +222,16 @@ func extendsEnum(node *tree_sitter.Node, source []byte) bool {
 // Kotlin enum are not always initialised at their declaration: CFR leaves the
 // initializer out when the class initializer assigns them. The synthetic
 // $VALUES and $ENTRIES carry no marker, so they are not constants.
-func decompiledEnumConstants(classBody *tree_sitter.Node, source []byte) []string {
-	var constants []string
+//
+// The annotations of a constant are printed before its field, and one of them may
+// give the constant a name:
+//
+//	@JsonProperty(value="pending_x")
+//	public static final /* enum */ State PENDING = new State("PENDING");
+//
+// renamed reports whether a constant is given a name by @JsonProperty, as
+// Class.EnumJsonProperty does for an enum that is declared as one.
+func decompiledEnumConstants(classBody *tree_sitter.Node, source []byte) (constants []string, renamed bool) {
 	for i := uint(0); i < classBody.ChildCount(); i++ {
 		field := classBody.Child(i)
 		if field.Kind() != "field_declaration" || !hasEnumMarker(field, source) {
@@ -231,10 +240,13 @@ func decompiledEnumConstants(classBody *tree_sitter.Node, source []byte) []strin
 		if declarator := field.ChildByFieldName("declarator"); declarator != nil {
 			if name := declarator.ChildByFieldName("name"); name != nil {
 				constants = append(constants, name.Utf8Text(source))
+				if JsonPropertyName(extractAnnotations(field, source)) != "" {
+					renamed = true
+				}
 			}
 		}
 	}
-	return constants
+	return constants, renamed
 }
 
 // hasEnumMarker reports whether a field declaration carries CFR's `/* enum */`
@@ -284,10 +296,14 @@ func extractInterface(node *tree_sitter.Node, source []byte) Class {
 // extractEnum reads an enum declaration: its name and its constants. The
 // fields and methods of its body are not read: Spring binds a request
 // parameter to an enum by the name of a constant, so the constants are the
-// values it accepts.
+// values it accepts. Only what changes the value Jackson writes is kept besides:
+// whether a member of the body carries @JsonValue (see Class.EnumJsonValue),
+// whether a constant is given a name by @JsonProperty (see Class.EnumJsonProperty),
+// and the interfaces the enum implements, which may carry @JsonValue on a method.
 func extractEnum(node *tree_sitter.Node, source []byte) Class {
 	enum := Class{IsEnum: true, JavaDoc: extractLeadingJavaDoc(node, source), RawJavaDoc: rawLeadingJavaDoc(node, source)}
 	enum.Annotations = extractAnnotations(node, source)
+	enum.Interfaces = extractInterfaces(node, source)
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Kind() {
@@ -297,18 +313,129 @@ func extractEnum(node *tree_sitter.Node, source []byte) Class {
 			}
 		case "enum_body":
 			for j := uint(0); j < child.ChildCount(); j++ {
-				constant := child.Child(j)
-				if constant.Kind() != "enum_constant" {
-					continue
-				}
-				if name := constant.ChildByFieldName("name"); name != nil {
-					enum.EnumConstants = append(enum.EnumConstants, name.Utf8Text(source))
-					enum.EnumConstantDocs = append(enum.EnumConstantDocs, extractLeadingJavaDoc(constant, source))
+				member := child.Child(j)
+				switch member.Kind() {
+				case "enum_constant":
+					if name := member.ChildByFieldName("name"); name != nil {
+						enum.EnumConstants = append(enum.EnumConstants, name.Utf8Text(source))
+						enum.EnumConstantDocs = append(enum.EnumConstantDocs, extractLeadingJavaDoc(member, source))
+						if JsonPropertyName(extractAnnotations(member, source)) != "" {
+							enum.EnumJsonProperty = true
+						}
+						if constantDeclaresJsonValue(member, source) {
+							enum.EnumConstantValue = true
+						}
+					}
+				case "enum_body_declarations":
+					// The methods and fields are what an override of @JsonValue is
+					// read from. A @JsonValue(false) is kept, so it can win over a
+					// method the enum inherits; the flag records only one that is on.
+					enum.Methods = append(enum.Methods, extractMethods(member, source)...)
+					enum.Fields = append(enum.Fields, extractFields(member, source)...)
+					enum.EnumJsonValue = enum.EnumJsonValue || declaresJsonValue(enum.Methods, enum.Fields)
 				}
 			}
 		}
 	}
 	return enum
+}
+
+// constantDeclaresJsonValue reports whether the class body of one constant
+// carries @JsonValue switched on. Jackson writes that constant as the value
+// the member returns. @JsonValue(false) does not, and a body that does not
+// mention @JsonValue changes nothing.
+func constantDeclaresJsonValue(constant *tree_sitter.Node, source []byte) bool {
+	for i := uint(0); i < constant.ChildCount(); i++ {
+		body := constant.Child(i)
+		if body.Kind() != "class_body" {
+			continue
+		}
+		if declaresJsonValue(extractMethods(body, source), extractFields(body, source)) {
+			return true
+		}
+	}
+	return false
+}
+
+// extractAnnotationType reads an annotation type: its name, the annotations
+// written on it, and the retention Jackson uses to decide whether a composed
+// annotation is visible. A Java annotation type that does not say is retained
+// in the class file only, where Jackson does not read it.
+func extractAnnotationType(node *tree_sitter.Node, source []byte) Class {
+	class := Class{IsAnnotation: true, JavaDoc: extractLeadingJavaDoc(node, source), RawJavaDoc: rawLeadingJavaDoc(node, source)}
+	class.Name = declaredName(node, source)
+	class.Annotations = extractAnnotations(node, source)
+	class.AnnotationRetention = javaAnnotationRetention(class.Annotations)
+	return class
+}
+
+// javaAnnotationRetention is the retention an annotation type declares, or CLASS
+// when it declares none: that is Java's default, and Jackson reads only RUNTIME.
+func javaAnnotationRetention(annotations []Annotation) string {
+	for _, ann := range annotations {
+		name := ann.Name
+		if i := strings.LastIndex(name, "."); i >= 0 {
+			name = name[i+1:]
+		}
+		if name != "Retention" {
+			continue
+		}
+		value := strings.TrimSpace(ann.Params["value"])
+		if i := strings.LastIndex(value, "."); i >= 0 {
+			value = value[i+1:]
+		}
+		switch value {
+		case "RUNTIME", "CLASS", "SOURCE":
+			return value
+		}
+	}
+	return "CLASS"
+}
+
+// declaresJsonValue reports whether a field or a method of an enum carries
+// @JsonValue.
+func declaresJsonValue(methods []Method, fields []Field) bool {
+	for _, m := range methods {
+		if HasJsonValue(m.Annotations) {
+			return true
+		}
+	}
+	for _, f := range fields {
+		if HasJsonValue(f.Annotations) {
+			return true
+		}
+	}
+	return false
+}
+
+// JsonPropertyName returns the name an @JsonProperty among annotations gives its
+// target, or "" when there is none or it gives no name.
+func JsonPropertyName(annotations []Annotation) string {
+	for _, ann := range annotations {
+		name := ann.Name
+		if i := strings.LastIndex(name, "."); i >= 0 {
+			name = name[i+1:]
+		}
+		if name == "JsonProperty" {
+			return strings.TrimSpace(ann.Params["value"])
+		}
+	}
+	return ""
+}
+
+// HasJsonValue reports whether annotations include an @JsonValue that is
+// switched on: @JsonValue(false) turns the member off again.
+func HasJsonValue(annotations []Annotation) bool {
+	for _, ann := range annotations {
+		name := ann.Name
+		if i := strings.LastIndex(name, "."); i >= 0 {
+			name = name[i+1:]
+		}
+		if name == "JsonValue" && strings.TrimSpace(ann.Params["value"]) != "false" {
+			return true
+		}
+	}
+	return false
 }
 
 // extractRecord extracts a record declaration. Its components become fields;
