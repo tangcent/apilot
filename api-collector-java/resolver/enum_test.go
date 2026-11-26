@@ -118,6 +118,8 @@ func TestResolve_EnumWithAnotherJSONFormKeepsItsTypeName(t *testing.T) {
 		{name: "@JsonSerialize with a converter", annotation: "@JsonSerialize(converter = Convert.class)"},
 		{name: "@JsonSerialize without one", annotation: "@JsonSerialize(include = Include.ALWAYS)", asString: true},
 		{name: "@JsonSerialize with the serializer that stands for none", annotation: "@JsonSerialize(using = JsonSerializer.None.class)", asString: true},
+		{name: "@JsonSerialize with the qualified serializer that stands for none", annotation: "@JsonSerialize(using = com.fasterxml.jackson.databind.JsonSerializer.None.class)", asString: true},
+		{name: "@JsonSerialize with a serializer whose name ends in None", annotation: "@JsonSerialize(using = FallbackNone.class)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

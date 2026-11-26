@@ -67,7 +67,14 @@ func namesSerializer(ann parser.Annotation) bool {
 // isNoneSerializer reports the class Jackson uses to say an annotation names
 // no serializer: JsonSerializer.None, written as Java or as Kotlin sees it.
 func isNoneSerializer(value string) bool {
-	return strings.HasSuffix(value, "None.class") || strings.HasSuffix(value, "None::class")
+	// Jackson's sentinel is JsonSerializer.None. A user serializer whose name
+	// merely ends in None names a real serializer, so match the class itself.
+	for _, none := range []string{"JsonSerializer.None.class", "JsonSerializer.None::class"} {
+		if value == none || strings.HasSuffix(value, "."+none) {
+			return true
+		}
+	}
+	return false
 }
 
 // writesOtherThanName reports whether a shape of @JsonFormat makes Jackson write
@@ -128,13 +135,6 @@ const (
 // EnumJsonValue is the same fact for a declaration that records it and does not
 // carry the member: a test, or a shape read before members were kept.
 func (r *TypeResolver) writesJsonValue(enum parser.Class, key string) bool {
-	// A constant whose class body switches @JsonValue on is written as that
-	// value. The enum keeps its type name, which is what main reports: the
-	// constants of one enum can disagree, and a string of names would be wrong
-	// for the constant that carries the annotation.
-	if enum.EnumConstantValue {
-		return true
-	}
 	// A constant whose class body switches @JsonValue on is written as that
 	// value. The enum keeps its type name, which is what main reports: the
 	// constants of one enum can disagree, and a string of names would be wrong
