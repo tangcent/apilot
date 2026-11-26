@@ -207,6 +207,32 @@ func extractTypeNode(node *tree_sitter.Node, source []byte) string {
 	return cleanTypeText(typeSource(node, source))
 }
 
+// typeNodeNullable reports whether a type is nullable as a whole: `Byte?` and
+// `(Byte)?` are, `List<Byte?>` and `(Int) -> Byte?` are not. The grammar reads
+// the latter as a nullable function type, but the `?` is the one of its result.
+func typeNodeNullable(node *tree_sitter.Node) bool {
+	if node == nil {
+		return false
+	}
+	switch node.Kind() {
+	case "nullable_type":
+		for i := uint(0); i < node.ChildCount(); i++ {
+			if node.Child(i).Kind() == "function_type" {
+				return false
+			}
+		}
+		return true
+	case "parenthesized_type":
+		for i := uint(0); i < node.ChildCount(); i++ {
+			child := node.Child(i)
+			if isTypeNode(child.Kind()) {
+				return typeNodeNullable(child)
+			}
+		}
+	}
+	return false
+}
+
 // typeSource returns the source text of a type node without the annotations
 // written inside it: `List<@NotBlank(message = X) String>` reads as
 // `List<String>`.

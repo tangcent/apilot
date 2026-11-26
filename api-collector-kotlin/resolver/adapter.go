@@ -214,6 +214,18 @@ func (r *Resolver) NormalizeType(source *ktparser.Class, rawType string) string 
 	return r.scope.normalize(source, rawType)
 }
 
+// ParameterType returns the type of a parameter of a function written in
+// source as the function receives it: the type as written, but for a vararg of a
+// primitive type or of a typealias of one, which is the primitive array (see
+// typeScope.receivedType). methodParams are the type parameters of that
+// function; a parameter that is not a vararg is returned as written either way.
+func (r *Resolver) ParameterType(source *ktparser.Class, param ktparser.Parameter, methodParams []string) string {
+	if r == nil {
+		return (*typeScope)(nil).receivedType(source, param.Type, param.Vararg, param.ElementNullable, methodParams)
+	}
+	return r.scope.receivedType(source, param.Type, param.Vararg, param.ElementNullable, methodParams)
+}
+
 // SuperClassBindings binds each type parameter of super to the argument that
 // sub's extends clause gives it, spelled so that it means the same in the scope
 // of super: `class Sub : Base<Item>()` binds Base's parameter to the class Item
@@ -634,6 +646,16 @@ func toJavaImports(imports []ktparser.Import) []javaparser.Import {
 	return out
 }
 
+// propertyType spells the type of a property of class the way the shared resolver
+// reads it. A property of the primary constructor declared `vararg val` holds
+// the array its elements make: a primitive array for a primitive type (see
+// receivedType).
+func (s *typeScope) propertyType(class *ktparser.Class, prop ktparser.Property) string {
+	// A property is not a function, so it has no type parameters of its own.
+	// Those of the class are on class; a primary constructor's are the class's.
+	return s.normalize(class, s.receivedType(class, prop.Type, prop.Vararg, prop.ElementNullable, nil))
+}
+
 // toBindingClass converts a declaration for the binding view: every property
 // Spring can set, under its Kotlin name.
 func (s *typeScope) toBindingClass(class ktparser.Class) javaparser.Class {
@@ -650,7 +672,7 @@ func (s *typeScope) toBindingClass(class ktparser.Class) javaparser.Class {
 		}
 		out.Fields = append(out.Fields, javaparser.Field{
 			Name:        prop.Name,
-			Type:        s.normalize(&class, prop.Type),
+			Type:        s.propertyType(&class, prop),
 			Annotations: fieldAnnotations(prop.Annotations),
 			JavaDoc:     javadoc.CleanJavaDoc(prop.KDoc),
 			IsFinal:     !prop.IsMutable,
@@ -710,7 +732,7 @@ func (s *typeScope) toJavaClass(class ktparser.Class) javaparser.Class {
 		}
 		out.Fields = append(out.Fields, javaparser.Field{
 			Name:        name,
-			Type:        s.normalize(&class, prop.Type),
+			Type:        s.propertyType(&class, prop),
 			Annotations: fieldAnnotations(prop.Annotations),
 			JavaDoc:     javadoc.CleanJavaDoc(prop.KDoc),
 			IsFinal:     !prop.IsMutable,
@@ -798,13 +820,36 @@ func isQualifiedName(text string) bool {
 }
 
 func fieldAnnotations(annotations []ktparser.Annotation) []javaparser.Annotation {
-	out := toJavaAnnotations(annotations)
+	// @param: and @set: sit on the constructor parameter or the setter. Plain
+	// Jackson still serialises through the getter and the field, so a
+	// serializer or a raw value written only there does not replace the
+	// Base64 string. @get:, @field: and an untargeted annotation do.
+	var kept []ktparser.Annotation
+	for _, ann := range annotations {
+		if (ann.Name == "JsonSerialize" || ann.Name == "JsonRawValue") && !serializationUseSite(ann.UseSiteTarget) {
+			continue
+		}
+		kept = append(kept, ann)
+	}
+	out := toJavaAnnotations(kept)
 	for _, ann := range annotations {
 		if ann.Name == "JsonProperty" && ann.Params["required"] == "false" {
 			out = append(out, javaparser.Annotation{Name: "Nullable"})
 		}
 	}
 	return out
+}
+
+// serializationUseSite reports whether a use-site target is one plain Jackson
+// reads when it writes the property. The getter, the field and an untargeted
+// annotation are. The constructor parameter is not: @param:JsonSerialize still
+// leaves a ByteArray as Base64.
+func serializationUseSite(target string) bool {
+	switch target {
+	case "", "get", "field":
+		return true
+	}
+	return false
 }
 
 func propertyName(annotations []ktparser.Annotation) string {

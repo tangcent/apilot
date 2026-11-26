@@ -331,6 +331,11 @@ type TypeResolver struct {
 	// bindingView is set while ResolveForBinding expands a model attribute.
 	// Enums take part in that view only (see sees).
 	bindingView bool
+	// keepBinaryArray is set while a property is resolved whose annotations
+	// replace Jackson's serializer for a byte[] or a char[]. Those stay arrays,
+	// which is what main exports: the replacement is not a Base64 string, and
+	// what it writes instead cannot be read off the source.
+	keepBinaryArray bool
 	// requiredFields is a collector.RequiredFields mode; empty means default.
 	requiredFields string
 	// dependencyAnswers holds what dependencyResolver answered for each name,
@@ -1630,6 +1635,16 @@ func (r *TypeResolver) ResolveFrom(source parser.Class, rawType string, typeBind
 	// collection does: `String[]` and `List<String>` are one shape, and
 	// `Order[][]` is an array of arrays of Order.
 	if element, ok := strings.CutSuffix(strings.TrimSpace(rawType), "[]"); ok {
+		// A byte[] and a char[] are the exceptions: Jackson writes a byte[] as
+		// one Base64 string and a char[] as one string of its characters, where
+		// `Byte[]`, `Character[]` and the lists of them are arrays. Only the
+		// JSON view is Jackson's; the binding view leaves the array as it is,
+		// since Spring's data binder reads neither as one string. A byte[] that
+		// is a whole request or response body is written raw by Spring rather
+		// than by Jackson; the string is still the closest schema of it.
+		if !r.bindingView && !r.keepBinaryArray && (element == "byte" || element == "char") {
+			return model.SingleModel(model.JsonTypeString)
+		}
 		return model.ArrayModel(r.ResolveFrom(source, element, typeBindings))
 	}
 
@@ -2048,7 +2063,7 @@ func importsAnnotation(source parser.Class, qualified string) bool {
 }
 
 func (r *TypeResolver) resolveField(source parser.Class, f parser.Field, localBindings map[string]string, typeParamSet map[string]bool) *model.FieldModel {
-	fieldModel := r.ResolveFrom(source, f.Type, localBindings)
+	fieldModel := r.resolvePropertySchema(source, f.Type, f.Annotations, localBindings)
 	fm := &model.FieldModel{
 		Model:    fieldModel,
 		Required: r.fieldRequired(source, f.Annotations),

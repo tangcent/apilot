@@ -49,6 +49,15 @@ type Parameter struct {
 	DefaultValue string
 	// Nullable marks a nullable type (`String?`). Type drops the `?`.
 	Nullable bool
+	// Vararg marks `vararg name: T`. Type is then `Array<T>`, the array the
+	// function receives, and Nullable is false, as the array is never null. A
+	// vararg of a primitive type is not an Array of it but the primitive array
+	// (`vararg name: Byte` is a ByteArray), which only the scope the type is
+	// written in tells (see resolver.ParameterType).
+	Vararg bool
+	// ElementNullable marks a vararg of `T?`, which is an Array of boxed
+	// values whatever T is.
+	ElementNullable bool
 }
 
 // Property is a constructor or body property (val/var).
@@ -62,10 +71,40 @@ type Property struct {
 	IsMutable    bool
 	// InConstructor marks a property declared in the primary constructor.
 	InConstructor bool
+	// Vararg marks a property of the primary constructor declared
+	// `vararg val name: T`. Type is then `Array<T>`, the array the property
+	// holds, as it is for a vararg parameter (see Parameter.Vararg).
+	Vararg bool
+	// ElementNullable marks a vararg property of `T?`, which is an Array of boxed
+	// values whatever T is.
+	ElementNullable bool
 	// IsConst marks a const val. On the JVM it is a static field of its class,
 	// not instance state; a const val of a companion object is read onto the
 	// class the companion belongs to, where Java and annotations see it.
 	IsConst bool
+}
+
+// TypeParameter is a type parameter of a function. Its name is in scope in that
+// function only, in front of every class, alias and import. Bounds are the
+// upper bounds as written: the one after the colon, then those of a where
+// clause. A vararg is classified by the name alone (see resolver.ParameterType).
+type TypeParameter struct {
+	Name    string
+	Reified bool
+	Bounds  []string
+}
+
+// TypeParameterNames returns the names of the function's type parameters, in
+// source order. It is nil when the function declares none.
+func (f Function) TypeParameterNames() []string {
+	if len(f.TypeParameters) == 0 {
+		return nil
+	}
+	names := make([]string, len(f.TypeParameters))
+	for i, param := range f.TypeParameters {
+		names[i] = param.Name
+	}
+	return names
 }
 
 // Function is a Kotlin function declaration.
@@ -73,6 +112,7 @@ type Function struct {
 	Name              string
 	Annotations       []Annotation
 	Parameters        []Parameter
+	TypeParameters    []TypeParameter
 	ReturnType        string
 	HasDeclaredReturn bool
 	Body              string
@@ -132,7 +172,10 @@ type TypeAlias struct {
 	// Target is the aliased type as written in the file that declares the alias:
 	// it is read in that file's scope, not in the scope of the code that uses the
 	// alias.
-	Target         string
+	Target string
+	// TargetNullable marks a target that is nullable as a whole (`typealias
+	// MaybeByte = Byte?`). Target drops the `?`.
+	TargetNullable bool
 	TypeParameters []string
 	Imports        []Import
 	// IsPrivate marks an alias written private: visible in its file only.

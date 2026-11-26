@@ -226,7 +226,14 @@ func (p *Parser) extractEndpoint(method *ktparser.Function, basePath string, cla
 	var requestBodyType string
 	methodDocParams := javadoc.ParseJavaDocParams(method.KDoc)
 	for i := range method.Parameters {
-		param := &method.Parameters[i]
+		// The parameter is read as a copy: its type is the one this source
+		// gives it, and the function may be read from more than one source.
+		declared := method.Parameters[i]
+		// Only this classification sees the function's type parameters. The
+		// schema below is read in the class, as a parameter that is not a
+		// vararg is: a type parameter called Byte stays kotlin.Byte there.
+		declared.Type = p.typeResolver.ParameterType(source, declared, method.TypeParameterNames())
+		param := &declared
 		if ep := p.extractParameter(param, methodDocParams, method.Name, source); ep != nil {
 			params = append(params, *ep)
 			if ep.ParamType == "body" {

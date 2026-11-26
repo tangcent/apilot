@@ -19,6 +19,9 @@ type builtinType struct {
 	// element is the argument an array type of a primitive carries when it is
 	// written without one: IntArray is a list of Integer.
 	element string
+	// array is the simple name of the primitive array of kotlin that holds
+	// this type, when it is a primitive type: `vararg n: Byte` is a ByteArray.
+	array string
 }
 
 // builtinTypes holds the types the adapter maps, by the qualified name Kotlin
@@ -43,12 +46,16 @@ var builtinTypes = func() map[string]builtinType {
 	add("kotlin", "java.lang.Object", "", "Any")
 	add("kotlin", "java.lang.Void", "", "Unit", "Nothing")
 	add("kotlin", "java.util.List", "", "Array")
-	add("kotlin", "java.util.List", "java.lang.Integer", "IntArray", "ByteArray", "ShortArray", "UByteArray", "UShortArray", "UIntArray")
+	add("kotlin", "java.util.List", "java.lang.Integer", "IntArray", "ShortArray", "UByteArray", "UShortArray", "UIntArray")
+	// A ByteArray is a JVM byte[], which Jackson writes as one Base64 string, and
+	// a CharArray a char[], which it writes as one string of its characters; the
+	// other primitive arrays are arrays.
+	add("kotlin", "byte[]", "", "ByteArray")
+	add("kotlin", "char[]", "", "CharArray")
 	add("kotlin", "java.util.List", "java.lang.Long", "LongArray", "ULongArray")
 	add("kotlin", "java.util.List", "java.lang.Float", "FloatArray")
 	add("kotlin", "java.util.List", "java.lang.Double", "DoubleArray")
 	add("kotlin", "java.util.List", "java.lang.Boolean", "BooleanArray")
-	add("kotlin", "java.util.List", "java.lang.String", "CharArray")
 
 	// kotlin.collections.*, kotlin.sequences.*
 	add("kotlin.collections", "java.util.List", "", "List", "MutableList", "MutableCollection", "Iterable")
@@ -83,6 +90,16 @@ var builtinTypes = func() map[string]builtinType {
 	add("java.util", "java.util.HashSet", "", "HashSet")
 	add("java.util", "java.util.LinkedHashSet", "", "LinkedHashSet")
 	add("java.util", "java.util.Map", "", "Map", "HashMap", "LinkedHashMap", "TreeMap", "SortedMap")
+
+	for primitive, array := range map[string]string{
+		"Byte": "ByteArray", "Short": "ShortArray", "Int": "IntArray", "Long": "LongArray",
+		"Float": "FloatArray", "Double": "DoubleArray", "Boolean": "BooleanArray", "Char": "CharArray",
+		"UByte": "UByteArray", "UShort": "UShortArray", "UInt": "UIntArray", "ULong": "ULongArray",
+	} {
+		t := types["kotlin."+primitive]
+		t.array = array
+		types["kotlin."+primitive] = t
+	}
 	return types
 }()
 
@@ -552,6 +569,95 @@ func (s *typeScope) expand(use *ktparser.Class, alias *ktparser.TypeAlias, args 
 	}
 	declaring := &ktparser.Class{Package: alias.Package, FilePath: alias.FilePath, Imports: alias.Imports}
 	return s.spell(declaring, alias.Target, spelling{subst: subst, depth: sp.depth + 1, qualify: true})
+}
+
+// receivedType returns the type of a parameter of a function, or of a property of
+// a primary constructor, written in unit, as the function receives it and the
+// class holds it. It is the type as written, except for a vararg: Kotlin types
+// `vararg n: Byte` as a ByteArray and `vararg c: Char` as a CharArray, the
+// primitive arrays, and so for every primitive type, where `vararg n: Byte?` and
+// `vararg s: String` are an `Array` of the element. A vararg is written `Array<T>`
+// by the parser, with elementNullable set for a `T?`.
+//
+// The primitive is the type the element stands for (see primitiveOf): what its
+// name denotes where it is written (see bind), so a class of the project that is
+// called Byte, or a type parameter, is not one, and what a typealias names, so
+// `vararg o: Octet` of `typealias Octet = Byte` is a ByteArray and one of
+// `typealias MaybeByte = Byte?`, or of a chain of aliases that is nullable at any
+// level, an `Array` of the alias.
+//
+// methodParams are the type parameters of the function the vararg belongs to.
+// They are the innermost scope, in front of the type parameters of the class,
+// so a parameter called Byte is not kotlin.Byte. A property has none: a primary
+// constructor's type parameters are the class's. The target of an alias is read
+// without them (see primitiveOf). A name written in full is never one of them.
+func (s *typeScope) receivedType(unit *ktparser.Class, written string, vararg, elementNullable bool, methodParams []string) string {
+	if !vararg || elementNullable {
+		return written
+	}
+	element, ok := strings.CutPrefix(written, "Array<")
+	if !ok {
+		return written
+	}
+	element, ok = strings.CutSuffix(element, ">")
+	if !ok {
+		return written
+	}
+	b := s.primitiveOf(unit, strings.TrimSpace(element), 0, methodParams)
+	if b == nil || b.array == "" {
+		return written
+	}
+	// The array is written by its simple name where that name still means
+	// it, so that the parameter is listed as `ByteArray` like one declared so.
+	qualified := "kotlin." + b.array
+	if got := s.bind(unit, b.array, false); got.builtin != nil && *got.builtin == builtinTypes[qualified] {
+		return b.array
+	}
+	return qualified
+}
+
+// primitiveOf returns the standard type that a type written in unit stands for,
+// following the typealiases that lead to it, each read in the file that declares
+// it as expand reads it; it returns nil when the type stands for none, or for a
+// nullable type, which an alias with a nullable target does at that level: a
+// vararg of it is boxed. The arguments of a generic alias, and of a generic
+// standard type, which is none of the primitive ones, are not looked into: an
+// alias cannot stand for one of its type parameters, so none of them is what the
+// alias stands for.
+//
+// methodParams hide a simple name before bind does. They are not passed on to
+// the file that declares an alias: a parameter called Byte at the use does not
+// change the Byte the alias was written with.
+func (s *typeScope) primitiveOf(unit *ktparser.Class, raw string, depth int, methodParams []string) *builtinType {
+	base, args := splitGenericType(raw)
+	if methodTypeParameter(methodParams, base) {
+		return nil
+	}
+	b := s.bind(unit, base, false)
+	switch {
+	case b.builtin != nil:
+		if args != nil {
+			return nil
+		}
+		return b.builtin
+	case b.alias != nil:
+		if depth >= maxAliasDepth || b.alias.TargetNullable {
+			return nil
+		}
+		declaring := &ktparser.Class{Package: b.alias.Package, FilePath: b.alias.FilePath, Imports: b.alias.Imports}
+		return s.primitiveOf(declaring, b.alias.Target, depth+1, nil)
+	}
+	return nil
+}
+
+// methodTypeParameter reports whether name is a type parameter of the function.
+// A qualified name is the class it spells, not a type parameter.
+func methodTypeParameter(params []string, name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.Contains(name, ".") {
+		return false
+	}
+	return slices.Contains(params, name)
 }
 
 // qualifyProject writes a class of the project that unit names by its simple

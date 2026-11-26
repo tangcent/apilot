@@ -17,10 +17,10 @@ import (
 var builtinScopeExpectation = map[string]map[string]string{
 	"/own/save": {
 		"request.count": "int", "request.total": "long", "request.name": "string", "request.flag": "boolean",
-		"request.counts": "array<int>", "request.bytes": "array<int>",
+		"request.counts": "array<int>", "request.bytes": "string",
 		"request.boxed": "object{digits}", "request.weight": "object{digits}", "request.unit": "string",
 		"response.count": "int", "response.total": "long", "response.name": "string", "response.flag": "boolean",
-		"response.counts": "array<int>", "response.bytes": "array<int>",
+		"response.counts": "array<int>", "response.bytes": "string",
 		"response.boxed": "object{digits}", "response.weight": "object{digits}", "response.unit": "string",
 	},
 	"/own/unit": {"response": "string"},
