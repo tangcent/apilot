@@ -61,16 +61,16 @@ var javaLangScalars = map[string]string{
 // package on demand (see declaredInScope). This is easy-yapi's
 // `json.rule.convert[<fqn>]` layer.
 var jdkQualifiedScalars = map[string]string{
-	"java.sql.Time":           model.JsonTypeString,
-	"java.sql.Date":           model.JsonTypeString,
-	"java.sql.Timestamp":      model.JsonTypeString,
-	"java.net.URL":            model.JsonTypeString,
-	"java.net.URI":            model.JsonTypeString,
-	"java.util.Date":          model.JsonTypeString,
-	"java.util.Calendar":      model.JsonTypeString,
-	"java.util.UUID":          model.JsonTypeString,
-	"java.math.BigDecimal":    model.JsonTypeDouble,
-	"java.math.BigInteger":    model.JsonTypeLong,
+	"java.sql.Time":         model.JsonTypeString,
+	"java.sql.Date":         model.JsonTypeString,
+	"java.sql.Timestamp":    model.JsonTypeString,
+	"java.net.URL":          model.JsonTypeString,
+	"java.net.URI":          model.JsonTypeString,
+	"java.util.Date":        model.JsonTypeString,
+	"java.util.Calendar":    model.JsonTypeString,
+	"java.util.UUID":        model.JsonTypeString,
+	"java.math.BigDecimal":  model.JsonTypeDouble,
+	"java.math.BigInteger":  model.JsonTypeLong,
 	"org.bson.types.ObjectId": model.JsonTypeString,
 	// java.util.OptionalInt and its kin hold a number or nothing. Jackson's
 	// Jdk8Module, which Spring Boot registers, writes the number or null.
@@ -146,25 +146,25 @@ var jdkScalarTypes = map[string]string{
 	"biginteger": model.JsonTypeLong,
 	"bigdecimal": model.JsonTypeDouble,
 	// java.time
-	"instant":        model.JsonTypeString,
-	"localdate":      model.JsonTypeString,
-	"localtime":      model.JsonTypeString,
-	"localdatetime":  model.JsonTypeString,
-	"offsettime":     model.JsonTypeString,
+	"instant":       model.JsonTypeString,
+	"localdate":     model.JsonTypeString,
+	"localtime":     model.JsonTypeString,
+	"localdatetime": model.JsonTypeString,
+	"offsettime":    model.JsonTypeString,
 	"offsetdatetime": model.JsonTypeString,
-	"zoneddatetime":  model.JsonTypeString,
-	"duration":       model.JsonTypeString,
-	"period":         model.JsonTypeString,
-	"year":           model.JsonTypeString,
-	"yearmonth":      model.JsonTypeString,
-	"monthday":       model.JsonTypeString,
-	"zoneid":         model.JsonTypeString,
-	"zoneoffset":     model.JsonTypeString,
+	"zoneddatetime": model.JsonTypeString,
+	"duration":      model.JsonTypeString,
+	"period":        model.JsonTypeString,
+	"year":          model.JsonTypeString,
+	"yearmonth":     model.JsonTypeString,
+	"monthday":      model.JsonTypeString,
+	"zoneid":        model.JsonTypeString,
+	"zoneoffset":    model.JsonTypeString,
 	// java.util
-	"date":              model.JsonTypeString,
-	"calendar":          model.JsonTypeString,
+	"date":             model.JsonTypeString,
+	"calendar":         model.JsonTypeString,
 	"gregoriancalendar": model.JsonTypeString,
-	"uuid":              model.JsonTypeString,
+	"uuid":             model.JsonTypeString,
 	// java.util.concurrent.atomic
 	"atomicboolean": model.JsonTypeBoolean,
 	"atomicinteger": model.JsonTypeInt,
@@ -288,7 +288,7 @@ func (r *TypeResolver) isMapType(source parser.Class, name string) bool {
 // `Flux<T>` is a stream and serialises as an array of `T`. A class of the
 // project that is called Mono is a class.
 var reactiveWrappers = map[string]bool{
-	"reactor.core.publisher.Mono": false,
+	"reactor.core.publisher.Mono":  false,
 	"reactor.core.publisher.Flux": true,
 }
 
