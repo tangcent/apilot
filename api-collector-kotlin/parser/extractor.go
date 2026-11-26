@@ -409,6 +409,70 @@ func userTypeNameAndArgs(node *tree_sitter.Node, source []byte) (string, []strin
 	return base, args
 }
 
+// extractFunctionTypeParameters reads the type parameters of a function,
+// including reified and the upper bounds written after the colon or in a
+// where clause. A function that declares none has none.
+func extractFunctionTypeParameters(node *tree_sitter.Node, source []byte) []TypeParameter {
+	params := firstChildOfKind(node, "type_parameters")
+	if params == nil {
+		return nil
+	}
+	var out []TypeParameter
+	index := map[string]int{}
+	for i := uint(0); i < params.ChildCount(); i++ {
+		child := params.Child(i)
+		if child.Kind() != "type_parameter" {
+			continue
+		}
+		param := TypeParameter{Reified: typeParameterIsReified(child)}
+		if id := firstChildOfKind(child, "identifier", "type_identifier"); id != nil {
+			param.Name = id.Utf8Text(source)
+		}
+		if bound := typeAfterColon(child, source); bound != "" {
+			param.Bounds = append(param.Bounds, bound)
+		}
+		if param.Name != "" {
+			index[param.Name] = len(out)
+		}
+		out = append(out, param)
+	}
+	constraints := firstChildOfKind(node, "type_constraints")
+	if constraints == nil {
+		return out
+	}
+	for i := uint(0); i < constraints.ChildCount(); i++ {
+		child := constraints.Child(i)
+		if child.Kind() != "type_constraint" {
+			continue
+		}
+		id := firstChildOfKind(child, "identifier", "type_identifier")
+		if id == nil {
+			continue
+		}
+		at, ok := index[id.Utf8Text(source)]
+		if !ok {
+			continue
+		}
+		if bound := typeAfterColon(child, source); bound != "" {
+			out[at].Bounds = append(out[at].Bounds, bound)
+		}
+	}
+	return out
+}
+
+func typeParameterIsReified(node *tree_sitter.Node) bool {
+	mods := firstChildOfKind(node, "type_parameter_modifiers")
+	if mods == nil {
+		return false
+	}
+	for i := uint(0); i < mods.ChildCount(); i++ {
+		if mods.Child(i).Kind() == "reification_modifier" {
+			return true
+		}
+	}
+	return false
+}
+
 func extractTypeParameters(node *tree_sitter.Node, source []byte) []string {
 	params := firstChildOfKind(node, "type_parameters")
 	if params == nil {
@@ -535,10 +599,11 @@ func extractFunction(node *tree_sitter.Node, source []byte, filePath string) (*F
 		return nil, nil
 	}
 	fn := &Function{
-		Name:        nameNode.Utf8Text(source),
-		Annotations: anns,
-		KDoc:        leadingKDoc(node, source),
-		IsOverride:  flags["override"],
+		Name:           nameNode.Utf8Text(source),
+		Annotations:    anns,
+		TypeParameters: extractFunctionTypeParameters(node, source),
+		KDoc:           leadingKDoc(node, source),
+		IsOverride:     flags["override"],
 	}
 
 	if params := firstChildOfKind(node, "function_value_parameters"); params != nil {

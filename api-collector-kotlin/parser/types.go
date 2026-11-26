@@ -84,11 +84,35 @@ type Property struct {
 	IsConst bool
 }
 
+// TypeParameter is a type parameter of a function. Its name is in scope in that
+// function only, in front of every class, alias and import. Bounds are the
+// upper bounds as written: the one after the colon, then those of a where
+// clause. A vararg is classified by the name alone (see resolver.ParameterType).
+type TypeParameter struct {
+	Name    string
+	Reified bool
+	Bounds  []string
+}
+
+// TypeParameterNames returns the names of the function's type parameters, in
+// source order. It is nil when the function declares none.
+func (f Function) TypeParameterNames() []string {
+	if len(f.TypeParameters) == 0 {
+		return nil
+	}
+	names := make([]string, len(f.TypeParameters))
+	for i, param := range f.TypeParameters {
+		names[i] = param.Name
+	}
+	return names
+}
+
 // Function is a Kotlin function declaration.
 type Function struct {
 	Name              string
 	Annotations       []Annotation
 	Parameters        []Parameter
+	TypeParameters    []TypeParameter
 	ReturnType        string
 	HasDeclaredReturn bool
 	Body              string

@@ -217,12 +217,13 @@ func (r *Resolver) NormalizeType(source *ktparser.Class, rawType string) string 
 // ParameterType returns the type of a parameter of a function written in
 // source as the function receives it: the type as written, but for a vararg of a
 // primitive type or of a typealias of one, which is the primitive array (see
-// typeScope.receivedType).
-func (r *Resolver) ParameterType(source *ktparser.Class, param ktparser.Parameter) string {
+// typeScope.receivedType). methodParams are the type parameters of that
+// function; a parameter that is not a vararg is returned as written either way.
+func (r *Resolver) ParameterType(source *ktparser.Class, param ktparser.Parameter, methodParams []string) string {
 	if r == nil {
-		return (*typeScope)(nil).receivedType(source, param.Type, param.Vararg, param.ElementNullable)
+		return (*typeScope)(nil).receivedType(source, param.Type, param.Vararg, param.ElementNullable, methodParams)
 	}
-	return r.scope.receivedType(source, param.Type, param.Vararg, param.ElementNullable)
+	return r.scope.receivedType(source, param.Type, param.Vararg, param.ElementNullable, methodParams)
 }
 
 // SuperClassBindings binds each type parameter of super to the argument that
@@ -650,7 +651,9 @@ func toJavaImports(imports []ktparser.Import) []javaparser.Import {
 // the array its elements make: a primitive array for a primitive type (see
 // receivedType).
 func (s *typeScope) propertyType(class *ktparser.Class, prop ktparser.Property) string {
-	return s.normalize(class, s.receivedType(class, prop.Type, prop.Vararg, prop.ElementNullable))
+	// A property is not a function, so it has no type parameters of its own.
+	// Those of the class are on class; a primary constructor's are the class's.
+	return s.normalize(class, s.receivedType(class, prop.Type, prop.Vararg, prop.ElementNullable, nil))
 }
 
 // toBindingClass converts a declaration for the binding view: every property

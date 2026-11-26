@@ -585,7 +585,13 @@ func (s *typeScope) expand(use *ktparser.Class, alias *ktparser.TypeAlias, args 
 // `vararg o: Octet` of `typealias Octet = Byte` is a ByteArray and one of
 // `typealias MaybeByte = Byte?`, or of a chain of aliases that is nullable at any
 // level, an `Array` of the alias.
-func (s *typeScope) receivedType(unit *ktparser.Class, written string, vararg, elementNullable bool) string {
+//
+// methodParams are the type parameters of the function the vararg belongs to.
+// They are the innermost scope, in front of the type parameters of the class,
+// so a parameter called Byte is not kotlin.Byte. A property has none: a primary
+// constructor's type parameters are the class's. The target of an alias is read
+// without them (see primitiveOf). A name written in full is never one of them.
+func (s *typeScope) receivedType(unit *ktparser.Class, written string, vararg, elementNullable bool, methodParams []string) string {
 	if !vararg || elementNullable {
 		return written
 	}
@@ -597,7 +603,7 @@ func (s *typeScope) receivedType(unit *ktparser.Class, written string, vararg, e
 	if !ok {
 		return written
 	}
-	b := s.primitiveOf(unit, strings.TrimSpace(element), 0)
+	b := s.primitiveOf(unit, strings.TrimSpace(element), 0, methodParams)
 	if b == nil || b.array == "" {
 		return written
 	}
@@ -618,8 +624,15 @@ func (s *typeScope) receivedType(unit *ktparser.Class, written string, vararg, e
 // standard type, which is none of the primitive ones, are not looked into: an
 // alias cannot stand for one of its type parameters, so none of them is what the
 // alias stands for.
-func (s *typeScope) primitiveOf(unit *ktparser.Class, raw string, depth int) *builtinType {
+//
+// methodParams hide a simple name before bind does. They are not passed on to
+// the file that declares an alias: a parameter called Byte at the use does not
+// change the Byte the alias was written with.
+func (s *typeScope) primitiveOf(unit *ktparser.Class, raw string, depth int, methodParams []string) *builtinType {
 	base, args := splitGenericType(raw)
+	if methodTypeParameter(methodParams, base) {
+		return nil
+	}
 	b := s.bind(unit, base, false)
 	switch {
 	case b.builtin != nil:
@@ -632,9 +645,19 @@ func (s *typeScope) primitiveOf(unit *ktparser.Class, raw string, depth int) *bu
 			return nil
 		}
 		declaring := &ktparser.Class{Package: b.alias.Package, FilePath: b.alias.FilePath, Imports: b.alias.Imports}
-		return s.primitiveOf(declaring, b.alias.Target, depth+1)
+		return s.primitiveOf(declaring, b.alias.Target, depth+1, nil)
 	}
 	return nil
+}
+
+// methodTypeParameter reports whether name is a type parameter of the function.
+// A qualified name is the class it spells, not a type parameter.
+func methodTypeParameter(params []string, name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.Contains(name, ".") {
+		return false
+	}
+	return slices.Contains(params, name)
 }
 
 // qualifyProject writes a class of the project that unit names by its simple

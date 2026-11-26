@@ -50,7 +50,7 @@ func TestParameterType_AVarargOfAPrimitiveTypeIsThePrimitiveArray(t *testing.T) 
 	for _, tt := range tests {
 		t.Run(tt.element, func(t *testing.T) {
 			param := varargParameter(tt.element)
-			if got := r.ParameterType(varargUnit(), param); got != tt.want {
+			if got := r.ParameterType(varargUnit(), param, nil); got != tt.want {
 				t.Errorf("ParameterType(vararg %s) = %q, want %q", tt.element, got, tt.want)
 			}
 		})
@@ -65,20 +65,20 @@ func TestParameterType_ANullableVarargAndAnArrayAreAsWritten(t *testing.T) {
 
 	nullable := varargParameter("Byte")
 	nullable.ElementNullable = true
-	if got := r.ParameterType(unit, nullable); got != "Array<Byte>" {
+	if got := r.ParameterType(unit, nullable, nil); got != "Array<Byte>" {
 		t.Errorf("ParameterType(vararg Byte?) = %q, want Array<Byte>", got)
 	}
 
 	for _, written := range []string{"Array<Byte>", "ByteArray", "Byte", "List<Byte>"} {
 		param := ktparser.Parameter{Name: "values", Type: written}
-		if got := r.ParameterType(unit, param); got != written {
+		if got := r.ParameterType(unit, param, nil); got != written {
 			t.Errorf("ParameterType(%s) = %q, want it as written", written, got)
 		}
 	}
 
 	// A resolver that was never built reads the same way.
 	var none *Resolver
-	if got := none.ParameterType(unit, varargParameter("Char")); got != "CharArray" {
+	if got := none.ParameterType(unit, varargParameter("Char"), nil); got != "CharArray" {
 		t.Errorf("ParameterType(vararg Char) = %q, want CharArray", got)
 	}
 }
@@ -93,33 +93,33 @@ func TestParameterType_TheElementIsWhatItsNameDenotesWhereItIsWritten(t *testing
 	arrayClassElsewhere := scopeShadow("com.example.kcvarargother", "ByteArray", "other")
 
 	r := New([]ktparser.Class{byteClass, otherByte, arrayClass, arrayClassElsewhere})
-	if got := r.ParameterType(varargUnit(), varargParameter("Byte")); got != "Array<Byte>" {
+	if got := r.ParameterType(varargUnit(), varargParameter("Byte"), nil); got != "Array<Byte>" {
 		t.Errorf("a class of the package called Byte: got %q, want Array<Byte>", got)
 	}
-	if got := r.ParameterType(varargUnit(), varargParameter("Short")); got != "ShortArray" {
+	if got := r.ParameterType(varargUnit(), varargParameter("Short"), nil); got != "ShortArray" {
 		t.Errorf("a class called Byte does not hide Short: got %q, want ShortArray", got)
 	}
-	if got := r.ParameterType(varargUnit(), varargParameter("kotlin.Byte")); got != "kotlin.ByteArray" {
+	if got := r.ParameterType(varargUnit(), varargParameter("kotlin.Byte"), nil); got != "kotlin.ByteArray" {
 		t.Errorf("kotlin.Byte beside a class called ByteArray: got %q, want kotlin.ByteArray", got)
 	}
 
 	// Another package's class is in scope only where it is imported.
 	other := &ktparser.Class{Name: "Handler", Package: "com.example.kcvarargapp", FilePath: "app/Handler.kt"}
-	if got := r.ParameterType(other, varargParameter("Byte")); got != "ByteArray" {
+	if got := r.ParameterType(other, varargParameter("Byte"), nil); got != "ByteArray" {
 		t.Errorf("a class of another package called Byte: got %q, want ByteArray", got)
 	}
 	imported := &ktparser.Class{
 		Name: "Handler", Package: "com.example.kcvarargapp", FilePath: "app/Handler.kt",
 		Imports: []ktparser.Import{{Path: "com.example.kcvarargother.Byte"}},
 	}
-	if got := r.ParameterType(imported, varargParameter("Byte")); got != "Array<Byte>" {
+	if got := r.ParameterType(imported, varargParameter("Byte"), nil); got != "Array<Byte>" {
 		t.Errorf("an imported class called Byte: got %q, want Array<Byte>", got)
 	}
 	starred := &ktparser.Class{
 		Name: "Handler", Package: "com.example.kcvarargapp", FilePath: "app/Handler.kt",
 		Imports: []ktparser.Import{{Path: "com.example.kcvarargother", OnDemand: true}},
 	}
-	if got := r.ParameterType(starred, varargParameter("Byte")); got != "Array<Byte>" {
+	if got := r.ParameterType(starred, varargParameter("Byte"), nil); got != "Array<Byte>" {
 		t.Errorf("a star-imported class called Byte: got %q, want Array<Byte>", got)
 	}
 
@@ -128,10 +128,10 @@ func TestParameterType_TheElementIsWhatItsNameDenotesWhereItIsWritten(t *testing
 		Name: "Handler", Package: "com.example.kcvarargapp", FilePath: "app/Handler.kt",
 		Imports: []ktparser.Import{{Path: "com.example.kcvarargother.Byte", Alias: "Octet"}},
 	}
-	if got := r.ParameterType(renamed, varargParameter("Octet")); got != "Array<Octet>" {
+	if got := r.ParameterType(renamed, varargParameter("Octet"), nil); got != "Array<Octet>" {
 		t.Errorf("a renamed class: got %q, want Array<Octet>", got)
 	}
-	if got := r.ParameterType(renamed, varargParameter("Byte")); got != "ByteArray" {
+	if got := r.ParameterType(renamed, varargParameter("Byte"), nil); got != "ByteArray" {
 		t.Errorf("Byte beside a renamed class: got %q, want ByteArray", got)
 	}
 
@@ -141,7 +141,7 @@ func TestParameterType_TheElementIsWhatItsNameDenotesWhereItIsWritten(t *testing
 		Name: "Handler", Package: "com.example.kcvarargapp", FilePath: "app/Handler.kt",
 		Imports: []ktparser.Import{{Path: "java.lang.Byte"}},
 	}
-	if got := r.ParameterType(javaByte, varargParameter("Byte")); got != "Array<Byte>" {
+	if got := r.ParameterType(javaByte, varargParameter("Byte"), nil); got != "Array<Byte>" {
 		t.Errorf("an imported java.lang.Byte: got %q, want Array<Byte>", got)
 	}
 }
@@ -154,11 +154,11 @@ func TestParameterType_ATypeParameterIsNotAPrimitiveType(t *testing.T) {
 	unit.TypeParameters = []string{"T", "Byte"}
 	for _, element := range []string{"T", "Byte"} {
 		param := varargParameter(element)
-		if got := r.ParameterType(unit, param); got != param.Type {
+		if got := r.ParameterType(unit, param, nil); got != param.Type {
 			t.Errorf("ParameterType(vararg %s) = %q, want %q", element, got, param.Type)
 		}
 	}
-	if got := r.ParameterType(unit, varargParameter("Char")); got != "CharArray" {
+	if got := r.ParameterType(unit, varargParameter("Char"), nil); got != "CharArray" {
 		t.Errorf("ParameterType(vararg Char) = %q, want CharArray", got)
 	}
 }

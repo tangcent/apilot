@@ -123,7 +123,7 @@ func TestParameterType_AVarargOfATypealiasIsTheArrayItsTargetMakes(t *testing.T)
 	r := varargAliasResolver()
 	for _, tt := range tests {
 		t.Run(tt.element, func(t *testing.T) {
-			if got := r.ParameterType(varargAliasUnit(), varargParameter(tt.element)); got != tt.want {
+			if got := r.ParameterType(varargAliasUnit(), varargParameter(tt.element), nil); got != tt.want {
 				t.Errorf("ParameterType(vararg %s) = %q, want %q", tt.element, got, tt.want)
 			}
 		})
@@ -139,21 +139,21 @@ func TestParameterType_ANullableElementOrAParameterOfATypealiasIsAsWritten(t *te
 	for _, element := range []string{"Octet", "Letter", "Octet3", "Const<String>"} {
 		param := varargParameter(element)
 		param.ElementNullable = true
-		if got, want := r.ParameterType(unit, param), "Array<"+element+">"; got != want {
+		if got, want := r.ParameterType(unit, param, nil), "Array<"+element+">"; got != want {
 			t.Errorf("ParameterType(vararg %s?) = %q, want %q", element, got, want)
 		}
 	}
 
 	for _, written := range []string{"Octet", "MaybeByte", "Array<Octet>", "List<Octet>"} {
 		param := ktparser.Parameter{Name: "values", Type: written}
-		if got := r.ParameterType(unit, param); got != written {
+		if got := r.ParameterType(unit, param, nil); got != written {
 			t.Errorf("ParameterType(%s) = %q, want it as written", written, got)
 		}
 	}
 
 	// A resolver that was never built knows no alias.
 	var none *Resolver
-	if got := none.ParameterType(unit, varargParameter("Octet")); got != "Array<Octet>" {
+	if got := none.ParameterType(unit, varargParameter("Octet"), nil); got != "Array<Octet>" {
 		t.Errorf("ParameterType(vararg Octet) without a resolver = %q, want Array<Octet>", got)
 	}
 }
@@ -196,7 +196,7 @@ func TestParameterType_ATypealiasIsFoundWhereTheFileCanSeeIt(t *testing.T) {
 	r := NewWithAliases(classes, nil, varargAliases())
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := r.ParameterType(tt.unit, varargParameter(tt.element)); got != tt.want {
+			if got := r.ParameterType(tt.unit, varargParameter(tt.element), nil); got != tt.want {
 				t.Errorf("ParameterType(vararg %s) = %q, want %q", tt.element, got, tt.want)
 			}
 		})
@@ -220,10 +220,10 @@ func TestParameterType_ATypealiasIsReadWhereItIsDeclared(t *testing.T) {
 	// still stands for kotlin.Byte, and the alias of the shadow package for the
 	// class its package declares.
 	shadowFile := &ktparser.Class{Name: "Handler", Package: varargShadowPackage, FilePath: "shadow/Handler.kt"}
-	if got := r.ParameterType(shadowFile, varargParameter("Byte")); got != "Array<Byte>" {
+	if got := r.ParameterType(shadowFile, varargParameter("Byte"), nil); got != "Array<Byte>" {
 		t.Errorf("Byte beside a class called Byte = %q, want Array<Byte>", got)
 	}
-	if got := r.ParameterType(shadowFile, varargParameter("Shadowed")); got != "Array<Shadowed>" {
+	if got := r.ParameterType(shadowFile, varargParameter("Shadowed"), nil); got != "Array<Shadowed>" {
 		t.Errorf("an alias of the class called Byte = %q, want Array<Shadowed>", got)
 	}
 	starred := &ktparser.Class{
@@ -231,20 +231,20 @@ func TestParameterType_ATypealiasIsReadWhereItIsDeclared(t *testing.T) {
 		Imports: []ktparser.Import{{Path: varargAliasPackage, OnDemand: true}},
 	}
 	// Octet is a class of the package here: it wins over the star import.
-	if got := r.ParameterType(starred, varargParameter("Octet")); got != "Array<Octet>" {
+	if got := r.ParameterType(starred, varargParameter("Octet"), nil); got != "Array<Octet>" {
 		t.Errorf("a class of the package called like a star-imported alias = %q, want Array<Octet>", got)
 	}
-	if got := r.ParameterType(starred, varargParameter("Octet2")); got != "ByteArray" {
+	if got := r.ParameterType(starred, varargParameter("Octet2"), nil); got != "ByteArray" {
 		t.Errorf("an alias of Byte beside a class called Byte = %q, want ByteArray", got)
 	}
 
 	// The class that uses the alias has a type parameter, or a name, of its own.
 	unit := varargAliasUnit()
 	unit.TypeParameters = []string{"Octet"}
-	if got := r.ParameterType(unit, varargParameter("Octet")); got != "Array<Octet>" {
+	if got := r.ParameterType(unit, varargParameter("Octet"), nil); got != "Array<Octet>" {
 		t.Errorf("a type parameter called like the alias = %q, want Array<Octet>", got)
 	}
-	if got := r.ParameterType(unit, varargParameter("Letter")); got != "CharArray" {
+	if got := r.ParameterType(unit, varargParameter("Letter"), nil); got != "CharArray" {
 		t.Errorf("a type parameter does not hide another alias = %q, want CharArray", got)
 	}
 }
