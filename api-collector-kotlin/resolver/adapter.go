@@ -820,13 +820,36 @@ func isQualifiedName(text string) bool {
 }
 
 func fieldAnnotations(annotations []ktparser.Annotation) []javaparser.Annotation {
-	out := toJavaAnnotations(annotations)
+	// @param: and @set: sit on the constructor parameter or the setter. Plain
+	// Jackson still serialises through the getter and the field, so a
+	// serializer or a raw value written only there does not replace the
+	// Base64 string. @get:, @field: and an untargeted annotation do.
+	var kept []ktparser.Annotation
+	for _, ann := range annotations {
+		if (ann.Name == "JsonSerialize" || ann.Name == "JsonRawValue") && !serializationUseSite(ann.UseSiteTarget) {
+			continue
+		}
+		kept = append(kept, ann)
+	}
+	out := toJavaAnnotations(kept)
 	for _, ann := range annotations {
 		if ann.Name == "JsonProperty" && ann.Params["required"] == "false" {
 			out = append(out, javaparser.Annotation{Name: "Nullable"})
 		}
 	}
 	return out
+}
+
+// serializationUseSite reports whether a use-site target is one plain Jackson
+// reads when it writes the property. The getter, the field and an untargeted
+// annotation are. The constructor parameter is not: @param:JsonSerialize still
+// leaves a ByteArray as Base64.
+func serializationUseSite(target string) bool {
+	switch target {
+	case "", "get", "field":
+		return true
+	}
+	return false
 }
 
 func propertyName(annotations []ktparser.Annotation) string {
