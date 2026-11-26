@@ -523,3 +523,33 @@ interface Coded {
 	checkReads(t, "decompiled", classes, nil, false, scopeRead{"app.Holder", "tier", "str[A]"})
 	checkReads(t, "decompiled, bound", classes, nil, true, scopeRead{"app.Holder", "tier", "str[A]"})
 }
+
+// An annotation type is not a class the name lookup can see. A field whose
+// simple name matches one in another package still falls back to the class,
+// @see still names the one enum, and a field typed with the name of an
+// annotation in its own package stays unresolved.
+func TestResolve_AnAnnotationTypeIsNotAClassOfThatName(t *testing.T) {
+	classes := parseFiles(t, map[string]string{
+		"ann/Code.java": `package ann;
+public @interface Code {}`,
+		"lib/Code.java": `package lib;
+public class Code { int value; }`,
+		"app/Holder.java": `package app;
+class Holder { Code code; }`,
+		"app/Same.java": `package app;
+@interface Mark {}
+class Same { Mark mark; }`,
+		"lib/Level.java": `package lib;
+public enum Level { A, B }`,
+		"ann/Level.java": `package ann;
+public @interface Level {}`,
+		"app/Doc.java": `package app;
+class Doc {
+  /** @see Level */
+  String state;
+}`,
+	})
+	checkReads(t, "fallback", classes, nil, false, scopeRead{"app.Holder", "code", "obj(Code:value)"})
+	checkReads(t, "same package", classes, nil, false, scopeRead{"app.Same", "mark", "unres(Mark)"})
+	checkReads(t, "see", classes, nil, false, scopeRead{"app.Doc", "state", "str[A,B]"})
+}

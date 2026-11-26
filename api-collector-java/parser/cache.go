@@ -36,7 +36,9 @@ import (
 // Version 12: an enum records the methods and fields of its body, so an override
 // that switches @JsonValue off is kept, and an annotation type records the
 // retention Jackson sees a composed annotation by.
-const cacheSchemaVersion = "12"
+// Version 13: an enum records @JsonValue switched on inside the class body of
+// a constant, and an annotation type is marked so it is not registered as a class.
+const cacheSchemaVersion = "13"
 
 // Cache provides file-level caching based on content hash.
 type Cache struct {

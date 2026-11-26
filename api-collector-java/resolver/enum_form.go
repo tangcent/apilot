@@ -128,6 +128,20 @@ const (
 // EnumJsonValue is the same fact for a declaration that records it and does not
 // carry the member: a test, or a shape read before members were kept.
 func (r *TypeResolver) writesJsonValue(enum parser.Class, key string) bool {
+	// A constant whose class body switches @JsonValue on is written as that
+	// value. The enum keeps its type name, which is what main reports: the
+	// constants of one enum can disagree, and a string of names would be wrong
+	// for the constant that carries the annotation.
+	if enum.EnumConstantValue {
+		return true
+	}
+	// A constant whose class body switches @JsonValue on is written as that
+	// value. The enum keeps its type name, which is what main reports: the
+	// constants of one enum can disagree, and a string of names would be wrong
+	// for the constant that carries the annotation.
+	if enum.EnumConstantValue {
+		return true
+	}
 	if r.fieldValue(enum) == valueOn {
 		return true
 	}
@@ -403,9 +417,9 @@ func (r *TypeResolver) expandBundles(owner parser.Class, annotations []parser.An
 }
 
 // runtimeBundle returns the annotation type ann names when Jackson would unwrap
-// it, and the key it is held under. Only a type the resolver already holds is
-// considered: asking the dependencies would change which names a lookup asks
-// for, and a composed annotation they do not show stays as written.
+// it, and the key it is held under. The type is looked up in the annotation
+// index only, through the scope of owner, and the dependencies are not asked:
+// a composed annotation they do not show stays as written.
 func (r *TypeResolver) runtimeBundle(owner parser.Class, ann parser.Annotation, seen map[string]bool) (parser.Class, string, bool) {
 	switch lastSegment(ann.Name) {
 	case "JsonValue", "JsonFormat", "JsonSerialize", "JacksonAnnotationsInside",
@@ -414,15 +428,7 @@ func (r *TypeResolver) runtimeBundle(owner parser.Class, ann parser.Annotation, 
 		"SuppressWarnings", "Suppress", "Metadata":
 		return parser.Class{}, "", false
 	}
-	key := ann.Name
-	if !strings.Contains(key, ".") {
-		var found bool
-		key, found = r.inScope(owner, ann.Name, false)
-		if !found {
-			return parser.Class{}, "", false
-		}
-	}
-	decl, ok := r.classRegistry[key]
+	decl, key, ok := r.annotationInScope(owner, ann.Name)
 	if !ok || decl.AnnotationRetention != "RUNTIME" || !hasSimpleName(decl.Annotations, "JacksonAnnotationsInside") {
 		return parser.Class{}, "", false
 	}
@@ -430,6 +436,62 @@ func (r *TypeResolver) runtimeBundle(owner parser.Class, ann parser.Annotation, 
 		return parser.Class{}, "", false
 	}
 	return decl, key, true
+}
+
+// annotationInScope returns the annotation type name denotes in the scope of
+// owner. The order is the one a class name uses: a member of owner, the same
+// file, a single-type import, the package, then an import on demand. Nothing
+// outside that scope answers, and the dependencies are not asked.
+func (r *TypeResolver) annotationInScope(owner parser.Class, name string) (parser.Class, string, bool) {
+	simple := name
+	if strings.Contains(name, ".") {
+		if decl, ok := r.annotations[name]; ok {
+			return decl, name, true
+		}
+		return parser.Class{}, "", false
+	}
+	if owner.Name != "" {
+		outer := owner.Name
+		if owner.Outer != "" {
+			outer = owner.Outer + "." + owner.Name
+		}
+		if key := qualify(owner.Package, outer+"."+simple); key != "" {
+			if decl, ok := r.annotations[key]; ok {
+				return decl, key, true
+			}
+		}
+	}
+	for _, key := range r.annotationsByFile[owner.FilePath] {
+		decl := r.annotations[key]
+		if decl.Name == simple && decl.Outer == "" {
+			return decl, key, true
+		}
+	}
+	for _, imp := range owner.Imports {
+		if imp.Static || imp.OnDemand || lastSegment(imp.Path) != simple {
+			continue
+		}
+		if decl, ok := r.annotations[imp.Path]; ok {
+			return decl, imp.Path, true
+		}
+		return parser.Class{}, "", false
+	}
+	if owner.Package != "" {
+		key := owner.Package + "." + simple
+		if decl, ok := r.annotations[key]; ok && decl.Outer == "" {
+			return decl, key, true
+		}
+	}
+	for _, imp := range owner.Imports {
+		if imp.Static || !imp.OnDemand {
+			continue
+		}
+		key := imp.Path + "." + simple
+		if decl, ok := r.annotations[key]; ok {
+			return decl, key, true
+		}
+	}
+	return parser.Class{}, "", false
 }
 
 // hasSimpleName reports whether annotations include one whose last segment is name.

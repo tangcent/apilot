@@ -955,3 +955,38 @@ func entriesOf(field *model.FieldModel) []string {
 	}
 	return got
 }
+
+// An annotation class is not a type a name can denote. A bare name falls back
+// to the class of another package, and a field typed with the name of an
+// annotation in its own package does not take that annotation's members.
+func TestResolveFromAnAnnotationClassIsNotATypeOfThatName(t *testing.T) {
+	ann := ktparser.Class{
+		Name: "Code", Package: "ann", FilePath: "ann/Code.kt", IsAnnotation: true,
+		Fields: []ktparser.Property{testProperty("marker", "Int")},
+	}
+	codeClass := ktparser.Class{
+		Name: "Code", Package: "lib", FilePath: "lib/Code.kt",
+		Fields: []ktparser.Property{testProperty("value", "Int")},
+	}
+	holder := ktparser.Class{
+		Name: "Holder", Package: "app", FilePath: "app/Holder.kt",
+		Fields: []ktparser.Property{testProperty("code", "Code")},
+	}
+	sameAnn := ktparser.Class{
+		Name: "Mark", Package: "app", FilePath: "app/Mark.kt", IsAnnotation: true,
+		Fields: []ktparser.Property{testProperty("marker", "Int")},
+	}
+	same := ktparser.Class{
+		Name: "Same", Package: "app", FilePath: "app/Same.kt",
+		Fields: []ktparser.Property{testProperty("mark", "Mark")},
+	}
+	r := New([]ktparser.Class{ann, codeClass, holder, sameAnn, same})
+	code := objectField(t, r.ResolveFrom(&holder, "Holder", nil), "code")
+	if _, ok := code.Model.Fields["value"]; !ok || code.Model.Fields["marker"] != nil {
+		t.Errorf("code = %+v, want the class lib.Code", code.Model)
+	}
+	mark := objectField(t, r.ResolveFrom(&same, "Same", nil), "mark")
+	if mark.Model.Fields["marker"] != nil {
+		t.Errorf("mark = %+v, want no member of the annotation class", mark.Model)
+	}
+}

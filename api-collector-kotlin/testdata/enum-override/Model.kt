@@ -295,6 +295,31 @@ enum class ConstBody {
     B
 }
 
+enum class BodyFalse {
+    A {
+        @JsonValue(false)
+        fun extra(): String = "x"
+    },
+    B
+}
+
+enum class BodyPlain {
+    A {
+        fun label(): String = "aa"
+    },
+    B
+}
+
+enum class BodyKeeps : Wire {
+    A {
+        @JsonValue(false)
+        override fun code(): String = "x"
+    },
+    B;
+
+    override fun code(): String = "x"
+}
+
 class OverrideForm {
     var namePlain: Plain? = null
     var nameOff: Off? = null
@@ -308,6 +333,9 @@ class OverrideForm {
     var nameIfaceString: IfaceStr? = null
     var nameFirstFalse: FirstFalse? = null
     var limitConst: ConstBody? = null
+    var nameBodyFalse: BodyFalse? = null
+    var nameBodyPlain: BodyPlain? = null
+    var valueBodyKeeps: BodyKeeps? = null
 
     var valueInherit: Inherit? = null
     var valueExplicit: ExplicitOn? = null

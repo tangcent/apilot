@@ -535,7 +535,9 @@ var enumOverrideNames = []string{"A: ", "B: "}
 // name starts with name is an enum Jackson writes as the constant name, so the
 // field is a string of A and B. A field whose name starts with value is an enum
 // Jackson writes in another form, so the field keeps the type name. limitConst
-// is the known case of @JsonValue written only in the body of one constant.
+// carries @JsonValue only in the body of one constant: Jackson writes that
+// constant as the method's value, so the enum keeps its type name rather than
+// being reported as a string main does not report.
 //
 // The Kotlin collector asserts the same table for the same declarations written
 // in Kotlin (api-collector-kotlin/enum_test.go): keep the two in sync.
@@ -551,7 +553,10 @@ var enumOverrideExpectation = map[string]enumField{
 	"nameClassRet":     {"string", enumOverrideNames},
 	"nameIfaceString":  {"string", enumOverrideNames},
 	"nameFirstFalse":   {"string", enumOverrideNames},
-	"limitConst":       {"string", enumOverrideNames},
+	"limitConst":       {"ConstBody", nil},
+	"nameBodyFalse":    {"string", enumOverrideNames},
+	"nameBodyPlain":    {"string", enumOverrideNames},
+	"valueBodyKeeps":   {"BodyKeeps", nil},
 	"valueInherit":     {"Inherit", nil},
 	"valueExplicit":    {"ExplicitOn", nil},
 	"valueReopen":      {"Reopen", nil},
@@ -572,9 +577,9 @@ var enumOverrideExpectation = map[string]enumField{
 }
 
 var enumOverrideUnresolved = []string{
-	"BundleIface", "BundleNum", "BundleVal", "Defaulted", "ExplicitOn", "FirstTrue",
-	"GenericOn", "IfaceArr", "IfaceNum", "IfaceObj", "IfaceSer", "Inherit", "OneOff",
-	"Overload", "PrivateVal", "Reopen", "ThroughNum",
+	"BodyKeeps", "BundleIface", "BundleNum", "BundleVal", "ConstBody", "Defaulted",
+	"ExplicitOn", "FirstTrue", "GenericOn", "IfaceArr", "IfaceNum", "IfaceObj",
+	"IfaceSer", "Inherit", "OneOff", "Overload", "PrivateVal", "Reopen", "ThroughNum",
 }
 
 func TestJSONViewHonorsAnOverrideOfJsonValue(t *testing.T) {

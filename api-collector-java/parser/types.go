@@ -78,10 +78,14 @@ type Import struct {
 
 // Class represents a Java class or interface with annotations and methods.
 type Class struct {
-	Name               string
-	Package            string
-	JavaDoc            string
-	IsInterface        bool
+	Name        string
+	Package     string
+	JavaDoc     string
+	IsInterface bool
+	// IsAnnotation marks an annotation type. It is not a class a name can
+	// denote: name lookup, @see and the search for an implementation never see
+	// it. A composed annotation is the only reader.
+	IsAnnotation       bool
 	Annotations        []Annotation
 	Methods            []Method
 	Fields             []Field
@@ -132,6 +136,10 @@ type Class struct {
 	// field: Jackson writes the value of that member, not the name of the
 	// constant.
 	EnumJsonValue bool
+	// EnumConstantValue marks an enum one of whose constants has a class body
+	// with @JsonValue switched on. Jackson writes that constant as the value
+	// the member returns, so the enum is not reported as a string of names.
+	EnumConstantValue bool
 	// EnumJsonProperty marks an enum one of whose constants carries @JsonProperty
 	// with a value: Jackson writes that constant under the name it is given.
 	EnumJsonProperty bool

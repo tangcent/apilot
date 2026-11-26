@@ -97,6 +97,7 @@ func TestResolve_EnumWithAnotherJSONFormKeepsItsTypeName(t *testing.T) {
 		name       string
 		annotation string // before the enum declaration
 		body       string // in the enum body
+		constant   string // inside the class body of LOW; empty is a method with no annotation
 		asString   bool
 	}{
 		{name: "no annotation", asString: true},
@@ -104,7 +105,7 @@ func TestResolve_EnumWithAnotherJSONFormKeepsItsTypeName(t *testing.T) {
 		{name: "@JsonValue on a field", body: "@JsonValue private String code;"},
 		{name: "@JsonValue by its qualified name", body: "@com.fasterxml.jackson.annotation.JsonValue public String code() { return null; }"},
 		{name: "@JsonValue switched off", body: "@JsonValue(false) public String code() { return null; }", asString: true},
-		{name: "@JsonValue only inside the body of a constant", asString: true},
+		{name: "@JsonValue only inside the body of a constant", constant: "@JsonValue String other() { return null; }"},
 		{name: "@JsonFormat shape object", annotation: "@JsonFormat(shape = JsonFormat.Shape.OBJECT)"},
 		{name: "@JsonFormat shape object, imported", annotation: "@JsonFormat(shape = Shape.OBJECT)"},
 		{name: "@JsonFormat shape number", annotation: "@JsonFormat(shape = JsonFormat.Shape.NUMBER)"},
@@ -120,6 +121,10 @@ func TestResolve_EnumWithAnotherJSONFormKeepsItsTypeName(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			constant := tt.constant
+			if constant == "" {
+				constant = "String other() { return null; }"
+			}
 			source := `package a;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
@@ -128,7 +133,7 @@ import com.fasterxml.jackson.annotation.JsonValue;
 ` + tt.annotation + `
 enum Level {
     LOW {
-        @JsonValue String other() { return null; }
+        ` + constant + `
     },
     HIGH;
 

@@ -341,6 +341,39 @@ enum ConstBody {
     B
 }
 
+enum BodyFalse {
+    A {
+        @JsonValue(false)
+        public String extra() {
+            return "x";
+        }
+    },
+    B
+}
+
+enum BodyPlain {
+    A {
+        public String label() {
+            return "aa";
+        }
+    },
+    B
+}
+
+enum BodyKeeps implements Wire {
+    A {
+        @JsonValue(false)
+        public String code() {
+            return "x";
+        }
+    },
+    B;
+
+    public String code() {
+        return "x";
+    }
+}
+
 class OverrideForm {
     private Plain namePlain;
     private Off nameOff;
@@ -354,6 +387,9 @@ class OverrideForm {
     private IfaceStr nameIfaceString;
     private FirstFalse nameFirstFalse;
     private ConstBody limitConst;
+    private BodyFalse nameBodyFalse;
+    private BodyPlain nameBodyPlain;
+    private BodyKeeps valueBodyKeeps;
 
     private Inherit valueInherit;
     private ExplicitOn valueExplicit;

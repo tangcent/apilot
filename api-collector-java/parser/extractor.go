@@ -322,6 +322,9 @@ func extractEnum(node *tree_sitter.Node, source []byte) Class {
 						if JsonPropertyName(extractAnnotations(member, source)) != "" {
 							enum.EnumJsonProperty = true
 						}
+						if constantDeclaresJsonValue(member, source) {
+							enum.EnumConstantValue = true
+						}
 					}
 				case "enum_body_declarations":
 					// The methods and fields are what an override of @JsonValue is
@@ -337,12 +340,29 @@ func extractEnum(node *tree_sitter.Node, source []byte) Class {
 	return enum
 }
 
+// constantDeclaresJsonValue reports whether the class body of one constant
+// carries @JsonValue switched on. Jackson writes that constant as the value
+// the member returns. @JsonValue(false) does not, and a body that does not
+// mention @JsonValue changes nothing.
+func constantDeclaresJsonValue(constant *tree_sitter.Node, source []byte) bool {
+	for i := uint(0); i < constant.ChildCount(); i++ {
+		body := constant.Child(i)
+		if body.Kind() != "class_body" {
+			continue
+		}
+		if declaresJsonValue(extractMethods(body, source), extractFields(body, source)) {
+			return true
+		}
+	}
+	return false
+}
+
 // extractAnnotationType reads an annotation type: its name, the annotations
 // written on it, and the retention Jackson uses to decide whether a composed
 // annotation is visible. A Java annotation type that does not say is retained
 // in the class file only, where Jackson does not read it.
 func extractAnnotationType(node *tree_sitter.Node, source []byte) Class {
-	class := Class{IsInterface: true, JavaDoc: extractLeadingJavaDoc(node, source), RawJavaDoc: rawLeadingJavaDoc(node, source)}
+	class := Class{IsAnnotation: true, JavaDoc: extractLeadingJavaDoc(node, source), RawJavaDoc: rawLeadingJavaDoc(node, source)}
 	class.Name = declaredName(node, source)
 	class.Annotations = extractAnnotations(node, source)
 	class.AnnotationRetention = javaAnnotationRetention(class.Annotations)

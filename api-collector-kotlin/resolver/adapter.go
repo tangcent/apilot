@@ -79,6 +79,12 @@ func NewWithAliases(classes []ktparser.Class, javaTypes []javaparser.Class, alia
 				r.fileConstants[qualify(class.Package, prop.Name)] = class
 			}
 		}
+		if class.IsAnnotation {
+			// An annotation class is not a type a name can denote. It is handed
+			// to the Java resolver only so a composed annotation can be read.
+			javaClasses = append(javaClasses, scope.toJavaClass(*class))
+			continue
+		}
 		r.byKey[key] = class
 		r.bySimple[class.Name] = appendUnique(r.bySimple[class.Name], key)
 		if class.FilePath != "" {
@@ -540,15 +546,16 @@ func ToJavaClasses(classes []ktparser.Class, javaTypes []javaparser.Class, alias
 // imports it holds, and a renaming import is not among them.
 func (s *typeScope) toJavaEnum(class ktparser.Class) javaparser.Class {
 	out := javaparser.Class{
-		Name:          class.Name,
-		Package:       class.Package,
-		Outer:         class.Outer,
-		FilePath:      class.FilePath,
-		Imports:       toJavaImports(class.Imports),
-		Annotations:   toJavaAnnotations(class.Annotations),
-		IsEnum:        true,
-		EnumConstants: append([]string(nil), class.EnumValues...),
-		EnumJsonValue: declaresJsonValue(class),
+		Name:              class.Name,
+		Package:           class.Package,
+		Outer:             class.Outer,
+		FilePath:          class.FilePath,
+		Imports:           toJavaImports(class.Imports),
+		Annotations:       toJavaAnnotations(class.Annotations),
+		IsEnum:            true,
+		EnumConstants:     append([]string(nil), class.EnumValues...),
+		EnumJsonValue:     declaresJsonValue(class) || class.EnumEntryJsonValue,
+		EnumConstantValue: class.EnumEntryJsonValue,
 
 		EnumJsonProperty: class.EnumJsonProperty,
 		Methods:          jsonValueMethods(class),
@@ -664,6 +671,7 @@ func (s *typeScope) toJavaClass(class ktparser.Class) javaparser.Class {
 		IsInterface:    class.IsInterface || class.IsSealed,
 	}
 	if class.IsAnnotation {
+		out.IsAnnotation = true
 		out.AnnotationRetention = kotlinAnnotationRetention(class.Annotations)
 	}
 	// The supertype list is outside the body of the class.

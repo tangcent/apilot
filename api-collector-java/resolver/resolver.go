@@ -61,16 +61,16 @@ var javaLangScalars = map[string]string{
 // package on demand (see declaredInScope). This is easy-yapi's
 // `json.rule.convert[<fqn>]` layer.
 var jdkQualifiedScalars = map[string]string{
-	"java.sql.Time":         model.JsonTypeString,
-	"java.sql.Date":         model.JsonTypeString,
-	"java.sql.Timestamp":    model.JsonTypeString,
-	"java.net.URL":          model.JsonTypeString,
-	"java.net.URI":          model.JsonTypeString,
-	"java.util.Date":        model.JsonTypeString,
-	"java.util.Calendar":    model.JsonTypeString,
-	"java.util.UUID":        model.JsonTypeString,
-	"java.math.BigDecimal":  model.JsonTypeDouble,
-	"java.math.BigInteger":  model.JsonTypeLong,
+	"java.sql.Time":           model.JsonTypeString,
+	"java.sql.Date":           model.JsonTypeString,
+	"java.sql.Timestamp":      model.JsonTypeString,
+	"java.net.URL":            model.JsonTypeString,
+	"java.net.URI":            model.JsonTypeString,
+	"java.util.Date":          model.JsonTypeString,
+	"java.util.Calendar":      model.JsonTypeString,
+	"java.util.UUID":          model.JsonTypeString,
+	"java.math.BigDecimal":    model.JsonTypeDouble,
+	"java.math.BigInteger":    model.JsonTypeLong,
 	"org.bson.types.ObjectId": model.JsonTypeString,
 	// java.util.OptionalInt and its kin hold a number or nothing. Jackson's
 	// Jdk8Module, which Spring Boot registers, writes the number or null.
@@ -146,25 +146,25 @@ var jdkScalarTypes = map[string]string{
 	"biginteger": model.JsonTypeLong,
 	"bigdecimal": model.JsonTypeDouble,
 	// java.time
-	"instant":       model.JsonTypeString,
-	"localdate":     model.JsonTypeString,
-	"localtime":     model.JsonTypeString,
-	"localdatetime": model.JsonTypeString,
-	"offsettime":    model.JsonTypeString,
+	"instant":        model.JsonTypeString,
+	"localdate":      model.JsonTypeString,
+	"localtime":      model.JsonTypeString,
+	"localdatetime":  model.JsonTypeString,
+	"offsettime":     model.JsonTypeString,
 	"offsetdatetime": model.JsonTypeString,
-	"zoneddatetime": model.JsonTypeString,
-	"duration":      model.JsonTypeString,
-	"period":        model.JsonTypeString,
-	"year":          model.JsonTypeString,
-	"yearmonth":     model.JsonTypeString,
-	"monthday":      model.JsonTypeString,
-	"zoneid":        model.JsonTypeString,
-	"zoneoffset":    model.JsonTypeString,
+	"zoneddatetime":  model.JsonTypeString,
+	"duration":       model.JsonTypeString,
+	"period":         model.JsonTypeString,
+	"year":           model.JsonTypeString,
+	"yearmonth":      model.JsonTypeString,
+	"monthday":       model.JsonTypeString,
+	"zoneid":         model.JsonTypeString,
+	"zoneoffset":     model.JsonTypeString,
 	// java.util
-	"date":             model.JsonTypeString,
-	"calendar":         model.JsonTypeString,
+	"date":              model.JsonTypeString,
+	"calendar":          model.JsonTypeString,
 	"gregoriancalendar": model.JsonTypeString,
-	"uuid":             model.JsonTypeString,
+	"uuid":              model.JsonTypeString,
 	// java.util.concurrent.atomic
 	"atomicboolean": model.JsonTypeBoolean,
 	"atomicinteger": model.JsonTypeInt,
@@ -288,7 +288,7 @@ func (r *TypeResolver) isMapType(source parser.Class, name string) bool {
 // `Flux<T>` is a stream and serialises as an array of `T`. A class of the
 // project that is called Mono is a class.
 var reactiveWrappers = map[string]bool{
-	"reactor.core.publisher.Mono":  false,
+	"reactor.core.publisher.Mono": false,
 	"reactor.core.publisher.Flux": true,
 }
 
@@ -315,15 +315,20 @@ type DependencyResolver interface {
 // overwriting each other. Which one a simple name denotes is decided per
 // compilation unit by resolveName, following JLS 6.5.5.1 and 6.4.1.
 type TypeResolver struct {
-	classRegistry      map[string]parser.Class // qualified name -> declaration
-	bySimpleName       map[string][]string     // simple name -> qualified names, sorted
-	byFile             map[string][]string     // compilation unit -> qualified names declared there
-	dependencyKeys     map[string]bool         // registry keys of the classes read from dependencies (see registerDependency)
-	nestedByName       map[string][]string     // simple name -> qualified names of the nested classes carrying it, scanned or read, sorted
-	scannedKeys        map[string]bool         // qualified names of the classes of the scanned sources
-	scannedPackages    map[string]bool         // packages that a class of the scanned sources declares
-	supertypeOf        map[string]bool         // classes whose header is being read: their member types are out of scope (see inHeader)
-	supertypesHeld     map[string]bool         // classes whose supertypes were read from the dependencies (see holdSupertypes)
+	classRegistry map[string]parser.Class // qualified name -> declaration
+	bySimpleName  map[string][]string     // simple name -> qualified names, sorted
+	byFile        map[string][]string     // compilation unit -> qualified names declared there
+	// annotations indexes annotation types apart from classes. A name lookup,
+	// @see and the search for an implementation never see them; only a composed
+	// annotation does, through the same scope a class name would use.
+	annotations        map[string]parser.Class
+	annotationsByFile  map[string][]string
+	dependencyKeys     map[string]bool     // registry keys of the classes read from dependencies (see registerDependency)
+	nestedByName       map[string][]string // simple name -> qualified names of the nested classes carrying it, scanned or read, sorted
+	scannedKeys        map[string]bool     // qualified names of the classes of the scanned sources
+	scannedPackages    map[string]bool     // packages that a class of the scanned sources declares
+	supertypeOf        map[string]bool     // classes whose header is being read: their member types are out of scope (see inHeader)
+	supertypesHeld     map[string]bool     // classes whose supertypes were read from the dependencies (see holdSupertypes)
 	allTypeParams      map[string]bool
 	resolving          map[string][]string // class -> the types it is being expanded as, innermost last (see isBeingExpanded)
 	dependencyResolver DependencyResolver
@@ -370,11 +375,13 @@ func (r *TypeResolver) SetRequiredFields(mode string) {
 
 func NewTypeResolver(classes []parser.Class) *TypeResolver {
 	r := &TypeResolver{
-		classRegistry: make(map[string]parser.Class, len(classes)),
-		bySimpleName:  make(map[string][]string),
-		byFile:        make(map[string][]string),
-		allTypeParams: make(map[string]bool),
-		resolving:     make(map[string][]string),
+		classRegistry:     make(map[string]parser.Class, len(classes)),
+		bySimpleName:      make(map[string][]string),
+		byFile:            make(map[string][]string),
+		annotations:       make(map[string]parser.Class),
+		annotationsByFile: make(map[string][]string),
+		allTypeParams:     make(map[string]bool),
+		resolving:         make(map[string][]string),
 
 		dependencyKeys:  make(map[string]bool),
 		nestedByName:    make(map[string][]string),
@@ -401,6 +408,10 @@ func qualifiedName(c parser.Class) string {
 
 // register indexes a declaration of the scanned sources under key.
 func (r *TypeResolver) register(c parser.Class, key string) {
+	if c.IsAnnotation {
+		r.indexAnnotation(c, key)
+		return
+	}
 	r.classRegistry[key] = c
 	r.bySimpleName[c.Name] = appendKey(r.bySimpleName[c.Name], key)
 	if c.Outer != "" {
@@ -461,6 +472,10 @@ type siblingReader interface {
 
 // indexDependency holds a class read from the dependencies under key.
 func (r *TypeResolver) indexDependency(c parser.Class, key string) {
+	if c.IsAnnotation {
+		r.indexAnnotation(c, key)
+		return
+	}
 	r.classRegistry[key] = c
 	r.dependencyKeys[key] = true
 	if c.Outer != "" {
@@ -480,6 +495,19 @@ func appendKey(keys []string, key string) []string {
 	keys = append(keys, key)
 	sort.Strings(keys)
 	return keys
+}
+
+// indexAnnotation holds an annotation type where only composed-annotation
+// expansion can see it. It is not a class of the registry.
+func (r *TypeResolver) indexAnnotation(c parser.Class, key string) {
+	if r.annotations == nil {
+		r.annotations = make(map[string]parser.Class)
+		r.annotationsByFile = make(map[string][]string)
+	}
+	r.annotations[key] = c
+	if c.FilePath != "" {
+		r.annotationsByFile[c.FilePath] = appendKey(r.annotationsByFile[c.FilePath], key)
+	}
 }
 
 // Class returns the declaration a type name denotes as seen from source.
