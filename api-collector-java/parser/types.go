@@ -93,6 +93,14 @@ type Class struct {
 	SuperClassTypeArgs []string
 	TypeParameters     []string
 	Interfaces         []string
+	// JsonValueMethods and JsonValueFields are members a declaration converted
+	// from Kotlin hands over only to decide how Jackson writes an enum: those
+	// annotated @JsonValue, on or off, or with an annotation that may wrap it,
+	// under their JVM names. They are not members for anything else, so an
+	// endpoint parser, which reads Methods, never sees them. A class the Java
+	// parser reads leaves them empty.
+	JsonValueMethods []Method
+	JsonValueFields  []Field
 	// Outer is the dotted path of the classes this declaration is nested in,
 	// outermost first: "Outer" for Outer.Inner, "Outer.Mid" for Deep in
 	// Outer.Mid.Deep. Empty for a top-level declaration. A nested class is a

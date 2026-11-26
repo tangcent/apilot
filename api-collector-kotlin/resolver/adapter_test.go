@@ -372,7 +372,8 @@ func TestToJavaEnumJsonValue(t *testing.T) {
 // toJavaEnum passes the member that carries @JsonValue, under the name the JVM
 // gives it, including one switched off. An interface passes the same member, so
 // an override can be matched by name. @get: lands on the getter; a property
-// whose name starts with is keeps that name.
+// whose name starts with is keeps that name. The members are handed over for
+// @JsonValue alone: Methods and Fields stay empty, as for any Kotlin class.
 func TestToJavaEnumPassesTheMemberThatOverridesJsonValue(t *testing.T) {
 	off := ktparser.Annotation{Name: "JsonValue", Params: map[string]string{"value": "false"}}
 	enum := newTypeScope(nil, nil).toJavaEnum(ktparser.Class{
@@ -387,8 +388,11 @@ func TestToJavaEnumPassesTheMemberThatOverridesJsonValue(t *testing.T) {
 			testProperty("code", "String", ktparser.Annotation{Name: "JsonValue", UseSiteTarget: "field"}),
 		},
 	})
+	if len(enum.Methods) != 0 || len(enum.Fields) != 0 {
+		t.Errorf("enum methods = %+v, fields = %+v, want none", enum.Methods, enum.Fields)
+	}
 	got := map[string]string{}
-	for _, m := range enum.Methods {
+	for _, m := range enum.JsonValueMethods {
 		value := "on"
 		if !javaparser.HasJsonValue(m.Annotations) {
 			value = "off"
@@ -399,8 +403,8 @@ func TestToJavaEnumPassesTheMemberThatOverridesJsonValue(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("methods = %v, want %v", got, want)
 	}
-	if len(enum.Fields) != 1 || enum.Fields[0].Name != "code" || !javaparser.HasJsonValue(enum.Fields[0].Annotations) {
-		t.Errorf("fields = %+v, want the field code with @JsonValue", enum.Fields)
+	if len(enum.JsonValueFields) != 1 || enum.JsonValueFields[0].Name != "code" || !javaparser.HasJsonValue(enum.JsonValueFields[0].Annotations) {
+		t.Errorf("fields = %+v, want the field code with @JsonValue", enum.JsonValueFields)
 	}
 
 	iface := newTypeScope(nil, nil).toJavaClass(ktparser.Class{
@@ -408,12 +412,15 @@ func TestToJavaEnumPassesTheMemberThatOverridesJsonValue(t *testing.T) {
 		Fields:      []ktparser.Property{testProperty("wire", "String", ktparser.Annotation{Name: "JsonValue", UseSiteTarget: "get"})},
 		Methods:     []ktparser.Function{{Name: "code", Annotations: []ktparser.Annotation{off}}},
 	})
+	if len(iface.Methods) != 0 {
+		t.Errorf("interface methods = %+v, want none", iface.Methods)
+	}
 	names := map[string]bool{}
-	for _, m := range iface.Methods {
+	for _, m := range iface.JsonValueMethods {
 		names[m.Name] = true
 	}
-	if len(iface.Methods) != 2 || !names["getWire"] || !names["code"] || names["jsonValue"] {
-		t.Errorf("interface methods = %+v, want getWire and code", iface.Methods)
+	if len(iface.JsonValueMethods) != 2 || !names["getWire"] || !names["code"] || names["jsonValue"] {
+		t.Errorf("interface members = %+v, want getWire and code", iface.JsonValueMethods)
 	}
 }
 

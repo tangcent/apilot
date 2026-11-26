@@ -174,7 +174,7 @@ func (r *TypeResolver) writesInheritedFormat(enum parser.Class, key string) bool
 // On wins over off when two fields disagree; a field does not inherit one.
 func (r *TypeResolver) fieldValue(enum parser.Class) int {
 	state := valueAbsent
-	for _, field := range enum.Fields {
+	for _, field := range valueFields(enum) {
 		if field.IsStatic {
 			continue
 		}
@@ -195,7 +195,7 @@ func (r *TypeResolver) recordsJsonValue(enum parser.Class) bool {
 	if r.fieldValue(enum) != valueAbsent {
 		return true
 	}
-	for _, method := range enum.Methods {
+	for _, method := range valueMethods(enum) {
 		if method.IsStatic || len(method.Parameters) > 0 {
 			continue
 		}
@@ -206,6 +206,24 @@ func (r *TypeResolver) recordsJsonValue(enum parser.Class) bool {
 	return false
 }
 
+// valueMethods are the methods whose @JsonValue counts: those of the class and
+// those a declaration converted from Kotlin hands over for it alone (see
+// parser.Class).
+func valueMethods(c parser.Class) []parser.Method {
+	if len(c.JsonValueMethods) == 0 {
+		return c.Methods
+	}
+	return append(append([]parser.Method(nil), c.Methods...), c.JsonValueMethods...)
+}
+
+// valueFields are the fields whose @JsonValue counts, as valueMethods are.
+func valueFields(c parser.Class) []parser.Field {
+	if len(c.JsonValueFields) == 0 {
+		return c.Fields
+	}
+	return append(append([]parser.Field(nil), c.Fields...), c.JsonValueFields...)
+}
+
 // collectNoArgMethods adds the names of the no-argument instance methods of c
 // and of every type it extends or implements.
 func (r *TypeResolver) collectNoArgMethods(c parser.Class, key string, visited map[string]bool, names map[string]struct{}) {
@@ -213,7 +231,7 @@ func (r *TypeResolver) collectNoArgMethods(c parser.Class, key string, visited m
 		return
 	}
 	visited[key] = true
-	for _, method := range c.Methods {
+	for _, method := range valueMethods(c) {
 		if method.IsStatic || len(method.Parameters) > 0 || method.Name == "" {
 			continue
 		}
@@ -252,7 +270,7 @@ func (r *TypeResolver) nearestValue(c parser.Class, key, name string, visited ma
 func (r *TypeResolver) declaredValue(c parser.Class, name string) (int, bool) {
 	state := valueAbsent
 	declared := false
-	for _, method := range c.Methods {
+	for _, method := range valueMethods(c) {
 		if method.IsStatic || method.Name != name || len(method.Parameters) > 0 {
 			continue
 		}

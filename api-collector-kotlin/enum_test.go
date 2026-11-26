@@ -634,3 +634,25 @@ func TestJSONViewReadsACrossLanguageOverrideOfJsonValue(t *testing.T) {
 		t.Errorf("unresolved = %v, want %v", unresolved, want)
 	}
 }
+
+// The members a Kotlin interface hands the shared resolver for @JsonValue are
+// not methods of it for anything else. A Feign client written with
+// @RequestLine, a Spring Cloud client, a JAX-RS resource and a Spring MVC
+// contract written in Kotlin give the Java side no endpoint, as before, while a
+// Java enum still reads @JsonValue from the Kotlin interface it implements.
+func TestKotlinInterfaceMembersKeptForJsonValueAreNotEndpoints(t *testing.T) {
+	endpoints, _ := collectDir(t, "testdata/enum-client-interfaces")
+	var got []string
+	for _, ep := range endpoints {
+		got = append(got, ep.Folder+" "+ep.Method+" "+ep.Path)
+	}
+	sort.Strings(got)
+	if want := []string{"JavaController POST /java/create"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("endpoints = %q, want %q", got, want)
+	}
+	create := findEndpoint(t, endpoints, "create")
+	checkEnumFields(t, "request body", create.RequestBody.Body.Fields, map[string]enumField{
+		"status": {"Status", nil},
+		"plain":  {"string", []string{"A: ", "B: "}},
+	})
+}

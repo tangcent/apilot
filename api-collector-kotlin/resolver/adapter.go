@@ -558,8 +558,8 @@ func (s *typeScope) toJavaEnum(class ktparser.Class) javaparser.Class {
 		EnumConstantValue: class.EnumEntryJsonValue,
 
 		EnumJsonProperty: class.EnumJsonProperty,
-		Methods:          jsonValueMethods(class),
-		Fields:           jsonValueFields(class),
+		JsonValueMethods: jsonValueMethods(class),
+		JsonValueFields:  jsonValueFields(class),
 	}
 	// The supertype list is outside the body of the enum.
 	for _, iface := range class.Interfaces {
@@ -716,11 +716,13 @@ func (s *typeScope) toJavaClass(class ktparser.Class) javaparser.Class {
 	}
 	// Methods are deliberately not copied: Kotlin data-class getters,
 	// componentN, copy and toString are compiler-generated. Properties are the
-	// only JSON fields. An interface keeps the members that carry @JsonValue,
-	// under the name the JVM gives them, so an enum that overrides one can be
-	// matched to it. @JsonValue(false) is kept: it wins over a member further up.
+	// only JSON fields. An interface hands over the members that carry
+	// @JsonValue, under the name the JVM gives them, so an enum that overrides
+	// one can be matched to it. @JsonValue(false) is kept: it wins over a member
+	// further up. They are not its methods, so a Feign, JAX-RS or Spring MVC
+	// interface written in Kotlin is not an endpoint on the Java side.
 	if class.IsInterface {
-		out.Methods = jsonValueMethods(class)
+		out.JsonValueMethods = jsonValueMethods(class)
 	}
 	return out
 }
@@ -771,8 +773,7 @@ func jsonValueFields(class ktparser.Class) []javaparser.Field {
 // annotationsForValue keeps the annotations of one member that can change the
 // value Jackson writes: @JsonValue, on or off, and any other annotation, which
 // may be a composed annotation. Annotations that only name or document the
-// member, and the mapping annotations of a controller, are left out so a
-// method kept for @JsonValue is not also an endpoint.
+// member are left out.
 func annotationsForValue(annotations []ktparser.Annotation, targets map[string]bool) []javaparser.Annotation {
 	var out []javaparser.Annotation
 	for _, ann := range annotations {
