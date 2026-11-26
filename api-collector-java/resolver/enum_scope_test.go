@@ -477,3 +477,49 @@ func TestResolve_AnEnumImplementingAnInterfaceOfALibraryFollowsItsJsonValue(t *t
 	checkReads(t, "a library interface", classes, library, false, scopeRead{"app.Holder", "kind", "unres(Kind)"})
 	checkReads(t, "no dependencies", classes, nil, false, scopeRead{"app.Holder", "kind", "str[A]"})
 }
+
+// @JsonValue(false) on the enum overrides @JsonValue the library interface
+// declares. Without the library the enum has nothing to override, and the
+// constant names stand.
+func TestResolve_AnOverrideOfALibraryJsonValueIsHonored(t *testing.T) {
+	classes := parseFiles(t, map[string]string{
+		"app/Kind.java": `package app;
+import com.fasterxml.jackson.annotation.JsonValue;
+import lib.Coded;
+public enum Kind implements Coded {
+    A;
+    @JsonValue(false) public String code() { return null; }
+}`,
+		"app/Holder.java": "package app; class Holder { Kind kind; }",
+	})
+	library := func() DependencyResolver {
+		return libraryOf(t, map[string]string{
+			"lib/Coded.java": `package lib;
+import com.fasterxml.jackson.annotation.JsonValue;
+public interface Coded { @JsonValue String code(); }`,
+		})
+	}
+	checkReads(t, "the override wins", classes, library, false, scopeRead{"app.Holder", "kind", "str[A]"})
+	checkReads(t, "the override wins, bound", classes, library, true, scopeRead{"app.Holder", "kind", "str[A]"})
+	checkReads(t, "no dependencies", classes, nil, false, scopeRead{"app.Holder", "kind", "str[A]"})
+}
+
+// A class CFR prints for a Kotlin enum records the method that switches
+// @JsonValue off, and that method wins over the interface.
+func TestResolve_ADecompiledEnumHonorsJsonValueFalse(t *testing.T) {
+	classes := parseFiles(t, map[string]string{
+		"app/Tier.java": `package app;
+import com.fasterxml.jackson.annotation.JsonValue;
+public final class Tier extends Enum<Tier> implements Coded {
+    public static final /* enum */ Tier A = new Tier();
+    @JsonValue(false)
+    public String code() { return "a"; }
+}
+interface Coded {
+    @JsonValue String code();
+}`,
+		"app/Holder.java": "package app; class Holder { Tier tier; }",
+	})
+	checkReads(t, "decompiled", classes, nil, false, scopeRead{"app.Holder", "tier", "str[A]"})
+	checkReads(t, "decompiled, bound", classes, nil, true, scopeRead{"app.Holder", "tier", "str[A]"})
+}

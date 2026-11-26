@@ -138,7 +138,11 @@ type Class struct {
 	IsEnum             bool
 	IsSealed           bool
 	IsInterface        bool
-	EnumValues         []string
+	// IsAnnotation marks an annotation class. Jackson reads a composed
+	// annotation it declares only when the annotation is retained at runtime,
+	// which is the default for a Kotlin annotation class.
+	IsAnnotation bool
+	EnumValues   []string
 	// EnumValueKDocs holds the KDoc of each enum entry as written, in the
 	// order of EnumValues: "" for an entry without one.
 	EnumValueKDocs []string

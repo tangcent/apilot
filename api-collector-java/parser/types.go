@@ -135,6 +135,11 @@ type Class struct {
 	// EnumJsonProperty marks an enum one of whose constants carries @JsonProperty
 	// with a value: Jackson writes that constant under the name it is given.
 	EnumJsonProperty bool
+	// AnnotationRetention is the retention of an annotation type: RUNTIME, CLASS
+	// or SOURCE. Empty when this declaration is not an annotation type. Jackson
+	// reads a composed annotation only when it is RUNTIME; a Java annotation
+	// type that does not say is CLASS.
+	AnnotationRetention string
 }
 
 // QualifiedName returns the name a declaration is known by: its package, the

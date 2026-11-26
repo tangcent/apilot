@@ -487,3 +487,147 @@ func TestJSONViewTellsEnumsOfOneNameInPackagesApart(t *testing.T) {
 		t.Errorf("unresolved = %v, want none", got)
 	}
 }
+
+// enumOverrideNames are the entries of every enum in testdata/enum-override.
+var enumOverrideNames = []string{"A: ", "B: "}
+
+// enumOverrideExpectation is the export of testdata/enum-override. A property
+// whose name starts with name is an enum Jackson writes as the entry name, so
+// the property is a string of A and B. A property whose name starts with value
+// is an enum Jackson writes in another form, so the property keeps the type
+// name. limitConst is the known case of @JsonValue written only in the body of
+// one entry.
+//
+// The Java collector asserts the same table for the same declarations written
+// in Java (api-collector-java/enum_test.go): keep the two in sync.
+var enumOverrideExpectation = map[string]enumField{
+	"namePlain":        {"string", enumOverrideNames},
+	"nameOff":          {"string", enumOverrideNames},
+	"nameMid":          {"string", enumOverrideNames},
+	"nameOwnOff":       {"string", enumOverrideNames},
+	"nameGenericOff":   {"string", enumOverrideNames},
+	"nameStringOver":   {"string", enumOverrideNames},
+	"nameNone":         {"string", enumOverrideNames},
+	"nameBundleOff":    {"string", enumOverrideNames},
+	"nameClassRet":     {"string", enumOverrideNames},
+	"nameIfaceString":  {"string", enumOverrideNames},
+	"nameFirstFalse":   {"string", enumOverrideNames},
+	"limitConst":       {"string", enumOverrideNames},
+	"valueInherit":     {"Inherit", nil},
+	"valueExplicit":    {"ExplicitOn", nil},
+	"valueReopen":      {"Reopen", nil},
+	"valueOneOff":      {"OneOff", nil},
+	"valueOverload":    {"Overload", nil},
+	"valueGeneric":     {"GenericOn", nil},
+	"valueNumber":      {"IfaceNum", nil},
+	"valueObject":      {"IfaceObj", nil},
+	"valueArray":       {"IfaceArr", nil},
+	"valueSerialize":   {"IfaceSer", nil},
+	"valueThrough":     {"ThroughNum", nil},
+	"valueBundle":      {"BundleVal", nil},
+	"valueBundleNum":   {"BundleNum", nil},
+	"valueBundleIface": {"BundleIface", nil},
+	"valueDefault":     {"Defaulted", nil},
+	"valuePrivate":     {"PrivateVal", nil},
+	"valueFirstTrue":   {"FirstTrue", nil},
+}
+
+var enumOverrideUnresolved = []string{
+	"BundleIface", "BundleNum", "BundleVal", "Defaulted", "ExplicitOn", "FirstTrue",
+	"GenericOn", "IfaceArr", "IfaceNum", "IfaceObj", "IfaceSer", "Inherit", "OneOff",
+	"Overload", "PrivateVal", "Reopen", "ThroughNum",
+}
+
+func TestJSONViewHonorsAnOverrideOfJsonValue(t *testing.T) {
+	endpoints, c := collectDir(t, "testdata/enum-override")
+	byName := map[string]collector.ApiEndpoint{}
+	for _, ep := range endpoints {
+		byName[ep.Name] = ep
+	}
+	create := byName["create"]
+	if create.RequestBody == nil || create.RequestBody.Body == nil {
+		t.Fatalf("endpoints = %+v, want create with a body", endpoints)
+	}
+	checkEnumFields(t, "request body", create.RequestBody.Body.Fields, enumOverrideExpectation)
+
+	params := map[string]collector.ApiParameter{}
+	for _, p := range byName["page"].Parameters {
+		params[p.Name] = p
+	}
+	for name := range enumOverrideExpectation {
+		if got := params[name].Enum; !reflect.DeepEqual(got, []string{"A", "B"}) {
+			t.Errorf("parameter %s enum = %q, want A and B", name, got)
+		}
+	}
+
+	var names []string
+	for name := range c.Unresolved() {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if !reflect.DeepEqual(names, enumOverrideUnresolved) {
+		t.Errorf("unresolved = %v, want %v", names, enumOverrideUnresolved)
+	}
+}
+
+// enumKtExpectation is the export of testdata/enum-kt: property use-site targets,
+// a getter whose JVM name keeps the is prefix, and an interface imported under
+// an alias. A property Jackson writes as the entry name is a string of A and B.
+func TestJSONViewReadsAKotlinPropertyOverrideOfJsonValue(t *testing.T) {
+	endpoints, c := collectDir(t, "testdata/enum-kt")
+	create := findEndpoint(t, endpoints, "create")
+	names := []string{"A: ", "B: "}
+	checkEnumFields(t, "request body", create.RequestBody.Body.Fields, map[string]enumField{
+		"propInherit":  {"PropInherit", nil},
+		"propOffGet":   {"string", names},
+		"propOffField": {"PropOffField", nil},
+		"propOffPlain": {"PropOffPlain", nil},
+		"ctorPlain":    {"CtorPlain", nil},
+		"ctorGet":      {"CtorGet", nil},
+		"setOnly":      {"string", names},
+		"flagInherit":  {"FlagInherit", nil},
+		"flagOff":      {"string", names},
+		"aliasedOn":    {"AliasedOn", nil},
+		"aliasedOff":   {"string", names},
+	})
+	page := findEndpoint(t, endpoints, "page")
+	params := map[string]collector.ApiParameter{}
+	for _, p := range page.Parameters {
+		params[p.Name] = p
+	}
+	for _, name := range []string{"propOffGet", "propOffField", "flagOff", "aliasedOff", "setOnly"} {
+		if got := params[name].Enum; !reflect.DeepEqual(got, []string{"A", "B"}) {
+			t.Errorf("parameter %s enum = %q, want A and B", name, got)
+		}
+	}
+	var unresolved []string
+	for name := range c.Unresolved() {
+		unresolved = append(unresolved, name)
+	}
+	sort.Strings(unresolved)
+	want := []string{"AliasedOn", "CtorGet", "CtorPlain", "FlagInherit", "PropInherit", "PropOffField", "PropOffPlain"}
+	if !reflect.DeepEqual(unresolved, want) {
+		t.Errorf("unresolved = %v, want %v", unresolved, want)
+	}
+}
+
+// A Kotlin enum and a Java enum in one tree override each other's @JsonValue.
+func TestJSONViewReadsACrossLanguageOverrideOfJsonValue(t *testing.T) {
+	endpoints, c := collectDir(t, "testdata/enum-cross")
+	create := findEndpoint(t, endpoints, "create")
+	names := []string{"A: ", "B: "}
+	checkEnumFields(t, "request body", create.RequestBody.Body.Fields, map[string]enumField{
+		"ktOn":    {"KtOn", nil},
+		"ktOff":   {"string", names},
+		"javaOn":  {"JavaOn", nil},
+		"javaOff": {"string", names},
+	})
+	var unresolved []string
+	for name := range c.Unresolved() {
+		unresolved = append(unresolved, name)
+	}
+	sort.Strings(unresolved)
+	if want := []string{"JavaOn", "KtOn"}; !reflect.DeepEqual(unresolved, want) {
+		t.Errorf("unresolved = %v, want %v", unresolved, want)
+	}
+}

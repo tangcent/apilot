@@ -551,6 +551,8 @@ func (s *typeScope) toJavaEnum(class ktparser.Class) javaparser.Class {
 		EnumJsonValue: declaresJsonValue(class),
 
 		EnumJsonProperty: class.EnumJsonProperty,
+		Methods:          jsonValueMethods(class),
+		Fields:           jsonValueFields(class),
 	}
 	// The supertype list is outside the body of the enum.
 	for _, iface := range class.Interfaces {
@@ -661,6 +663,9 @@ func (s *typeScope) toJavaClass(class ktparser.Class) javaparser.Class {
 		Interfaces:     make([]string, 0, len(class.Interfaces)),
 		IsInterface:    class.IsInterface || class.IsSealed,
 	}
+	if class.IsAnnotation {
+		out.AnnotationRetention = kotlinAnnotationRetention(class.Annotations)
+	}
 	// The supertype list is outside the body of the class.
 	for _, arg := range class.SuperClassTypeArgs {
 		out.SuperClassTypeArgs = append(out.SuperClassTypeArgs, s.normalizeHeader(&class, arg))
@@ -703,12 +708,135 @@ func (s *typeScope) toJavaClass(class ktparser.Class) javaparser.Class {
 	}
 	// Methods are deliberately not copied: Kotlin data-class getters,
 	// componentN, copy and toString are compiler-generated. Properties are the
-	// only JSON fields. An interface keeps one method for the @JsonValue its members
-	// carry, which an enum that implements it inherits.
-	if class.IsInterface && declaresJsonValue(class) {
-		out.Methods = append(out.Methods, javaparser.Method{Name: "jsonValue", Annotations: []javaparser.Annotation{{Name: "JsonValue"}}})
+	// only JSON fields. An interface keeps the members that carry @JsonValue,
+	// under the name the JVM gives them, so an enum that overrides one can be
+	// matched to it. @JsonValue(false) is kept: it wins over a member further up.
+	if class.IsInterface {
+		out.Methods = jsonValueMethods(class)
 	}
 	return out
+}
+
+// jsonValueMethods are the no-argument methods whose annotations decide whether
+// Jackson writes an enum as the value of a member: a function under its own
+// name, and a property's getter under the JVM name (@get: only; a field
+// annotation is not the getter). A property whose name starts with "is" and an
+// uppercase letter keeps that name for every type, as the compiler does.
+func jsonValueMethods(class ktparser.Class) []javaparser.Method {
+	var out []javaparser.Method
+	for _, fn := range class.Methods {
+		anns := annotationsForValue(fn.Annotations, map[string]bool{"": true})
+		if len(anns) == 0 {
+			continue
+		}
+		out = append(out, javaparser.Method{
+			Name:        fn.Name,
+			Annotations: anns,
+			Parameters:  make([]javaparser.Parameter, len(fn.Parameters)),
+		})
+	}
+	for _, prop := range class.Fields {
+		anns := annotationsForValue(prop.Annotations, map[string]bool{"get": true})
+		if len(anns) == 0 {
+			continue
+		}
+		out = append(out, javaparser.Method{Name: jvmGetterName(prop.Name), Annotations: anns})
+	}
+	return out
+}
+
+// jsonValueFields are the properties whose field carries an annotation Jackson
+// reads as @JsonValue. @JsonValue with no use-site target lands on the field,
+// and one there does not turn a getter off.
+func jsonValueFields(class ktparser.Class) []javaparser.Field {
+	var out []javaparser.Field
+	for _, prop := range class.Fields {
+		anns := annotationsForValue(prop.Annotations, map[string]bool{"": true, "field": true})
+		if len(anns) == 0 {
+			continue
+		}
+		out = append(out, javaparser.Field{Name: prop.Name, Annotations: anns})
+	}
+	return out
+}
+
+// annotationsForValue keeps the annotations of one member that can change the
+// value Jackson writes: @JsonValue, on or off, and any other annotation, which
+// may be a composed annotation. Annotations that only name or document the
+// member, and the mapping annotations of a controller, are left out so a
+// method kept for @JsonValue is not also an endpoint.
+func annotationsForValue(annotations []ktparser.Annotation, targets map[string]bool) []javaparser.Annotation {
+	var out []javaparser.Annotation
+	for _, ann := range annotations {
+		if !targets[ann.UseSiteTarget] || !countsForJsonValue(ann.Name) {
+			continue
+		}
+		out = append(out, javaparser.Annotation{Name: ann.Name, Params: ann.Params, Refs: ann.Refs})
+	}
+	return out
+}
+
+// countsForJsonValue reports whether an annotation is @JsonValue or might wrap
+// one. The names it rejects are read for some other purpose, or not at all.
+func countsForJsonValue(name string) bool {
+	if i := strings.LastIndex(name, "."); i >= 0 {
+		name = name[i+1:]
+	}
+	switch name {
+	case "JsonFormat", "JsonSerialize", "JsonProperty", "JsonIgnore", "JsonAlias", "JsonInclude",
+		"JsonCreator", "Deprecated", "Override", "Suppress", "SuppressWarnings",
+		"NotNull", "Nullable", "NonNull", "NotBlank",
+		"GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping", "RequestMapping",
+		"PathVariable", "RequestParam", "RequestBody", "RequestHeader", "RequestPart",
+		"Documented", "Target", "Retention", "Inherited", "Repeatable":
+		return false
+	default:
+		return true
+	}
+}
+
+// jvmGetterName is the name of the getter the Kotlin compiler gives a property.
+// A name that starts with "is" and an uppercase letter is already the getter,
+// for a Boolean and for every other type. Anything else is get and the name
+// with its first character in upper case.
+func jvmGetterName(name string) string {
+	rs := []rune(name)
+	if len(rs) >= 3 && rs[0] == 'i' && rs[1] == 's' && unicode.IsUpper(rs[2]) {
+		return name
+	}
+	if len(rs) == 0 {
+		return "get"
+	}
+	rs[0] = unicode.ToUpper(rs[0])
+	return "get" + string(rs)
+}
+
+// kotlinAnnotationRetention is the retention of an annotation class. Jackson
+// reads a composed annotation only at runtime, and a Kotlin annotation class
+// is retained at runtime unless it says otherwise. BINARY is the class file.
+func kotlinAnnotationRetention(annotations []ktparser.Annotation) string {
+	for _, ann := range annotations {
+		name := ann.Name
+		if i := strings.LastIndex(name, "."); i >= 0 {
+			name = name[i+1:]
+		}
+		if name != "Retention" {
+			continue
+		}
+		value := strings.TrimSpace(ann.Params["value"])
+		if i := strings.LastIndex(value, "."); i >= 0 {
+			value = value[i+1:]
+		}
+		switch value {
+		case "RUNTIME":
+			return "RUNTIME"
+		case "SOURCE":
+			return "SOURCE"
+		default:
+			return "CLASS"
+		}
+	}
+	return "RUNTIME"
 }
 
 func toJavaAnnotations(annotations []ktparser.Annotation) []javaparser.Annotation {

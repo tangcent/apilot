@@ -155,6 +155,43 @@ extends Enum<Region> {
 	}
 }
 
+// An override that switches @JsonValue off is a method of the enum, so a value
+// inherited from an interface can be told from one the enum turned off. The
+// flag stays unset: false is not a value Jackson writes.
+func TestParser_AnEnumRecordsAMethodThatSwitchesJsonValueOff(t *testing.T) {
+	source := `package a;
+import com.fasterxml.jackson.annotation.JsonValue;
+enum Level {
+    LOW;
+    @JsonValue(false)
+    public String code() { return "l"; }
+    @JsonValue(false)
+    public String code(int ignored) { return "n"; }
+}`
+	p, err := NewParser(ParserOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	classes, err := p.ParseSource([]byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(classes) != 1 || !classes[0].IsEnum {
+		t.Fatalf("classes = %+v, want one enum", classes)
+	}
+	if classes[0].EnumJsonValue {
+		t.Error("EnumJsonValue = true, want false")
+	}
+	var got []string
+	for _, m := range classes[0].Methods {
+		got = append(got, m.Name)
+	}
+	if !reflect.DeepEqual(got, []string{"code", "code"}) {
+		t.Errorf("methods = %v, want the two code methods", got)
+	}
+}
+
 func TestHasJsonValue(t *testing.T) {
 	tests := []struct {
 		name        string

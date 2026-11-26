@@ -33,7 +33,10 @@ import (
 // static.
 // Version 11: an enum records whether it declares @JsonValue, whether a constant
 // is given a name by @JsonProperty, and the interfaces it implements.
-const cacheSchemaVersion = "11"
+// Version 12: an enum records the methods and fields of its body, so an override
+// that switches @JsonValue off is kept, and an annotation type records the
+// retention Jackson sees a composed annotation by.
+const cacheSchemaVersion = "12"
 
 // Cache provides file-level caching based on content hash.
 type Cache struct {

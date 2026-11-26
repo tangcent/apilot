@@ -324,7 +324,12 @@ func extractEnum(node *tree_sitter.Node, source []byte) Class {
 						}
 					}
 				case "enum_body_declarations":
-					enum.EnumJsonValue = membersDeclareJsonValue(member, source)
+					// The methods and fields are what an override of @JsonValue is
+					// read from. A @JsonValue(false) is kept, so it can win over a
+					// method the enum inherits; the flag records only one that is on.
+					enum.Methods = append(enum.Methods, extractMethods(member, source)...)
+					enum.Fields = append(enum.Fields, extractFields(member, source)...)
+					enum.EnumJsonValue = enum.EnumJsonValue || declaresJsonValue(enum.Methods, enum.Fields)
 				}
 			}
 		}
@@ -332,19 +337,39 @@ func extractEnum(node *tree_sitter.Node, source []byte) Class {
 	return enum
 }
 
-// membersDeclareJsonValue reports whether a field or a method among the
-// declarations of an enum body carries @JsonValue.
-func membersDeclareJsonValue(declarations *tree_sitter.Node, source []byte) bool {
-	for i := uint(0); i < declarations.ChildCount(); i++ {
-		member := declarations.Child(i)
-		switch member.Kind() {
-		case "field_declaration", "method_declaration":
-			if HasJsonValue(extractAnnotations(member, source)) {
-				return true
-			}
+// extractAnnotationType reads an annotation type: its name, the annotations
+// written on it, and the retention Jackson uses to decide whether a composed
+// annotation is visible. A Java annotation type that does not say is retained
+// in the class file only, where Jackson does not read it.
+func extractAnnotationType(node *tree_sitter.Node, source []byte) Class {
+	class := Class{IsInterface: true, JavaDoc: extractLeadingJavaDoc(node, source), RawJavaDoc: rawLeadingJavaDoc(node, source)}
+	class.Name = declaredName(node, source)
+	class.Annotations = extractAnnotations(node, source)
+	class.AnnotationRetention = javaAnnotationRetention(class.Annotations)
+	return class
+}
+
+// javaAnnotationRetention is the retention an annotation type declares, or CLASS
+// when it declares none: that is Java's default, and Jackson reads only RUNTIME.
+func javaAnnotationRetention(annotations []Annotation) string {
+	for _, ann := range annotations {
+		name := ann.Name
+		if i := strings.LastIndex(name, "."); i >= 0 {
+			name = name[i+1:]
+		}
+		if name != "Retention" {
+			continue
+		}
+		value := strings.TrimSpace(ann.Params["value"])
+		if i := strings.LastIndex(value, "."); i >= 0 {
+			value = value[i+1:]
+		}
+		switch value {
+		case "RUNTIME", "CLASS", "SOURCE":
+			return value
 		}
 	}
-	return false
+	return "CLASS"
 }
 
 // declaresJsonValue reports whether a field or a method of an enum carries

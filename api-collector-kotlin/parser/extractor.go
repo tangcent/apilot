@@ -68,9 +68,42 @@ func extractFile(root *tree_sitter.Node, source []byte, filePath string, result 
 					addFileConstant(result, packageName, filePath, imports, *prop)
 				}
 			case "annotated_expression":
+				// The grammar reads `annotation class Name` as an infix
+				// expression, so a composed annotation would otherwise be
+				// invisible and its annotations would stick to the next
+				// declaration. Read it as the annotation class it is.
+				if name, ok := annotationClassName(child, source); ok {
+					if result.Error != nil {
+						return
+					}
+					anns, err := collectAnnotatedExpression(child, source, filePath)
+					if err != nil {
+						result.Error = err
+						return
+					}
+					result.Classes = append(result.Classes, Class{
+						Name:         name,
+						Package:      packageName,
+						FilePath:     filePath,
+						Imports:      imports,
+						IsAnnotation: true,
+						Annotations:  anns,
+					})
+					continue
+				}
 				// A declaration can be wrapped in annotation expressions at
 				// file scope. Descend so the class is not missed.
 				visit(child)
+			case "infix_expression":
+				if name, ok := infixAnnotationClass(child, source); ok {
+					result.Classes = append(result.Classes, Class{
+						Name:         name,
+						Package:      packageName,
+						FilePath:     filePath,
+						Imports:      imports,
+						IsAnnotation: true,
+					})
+				}
 			case "type_alias":
 				if skipDamaged && declarationDamaged(child, source) {
 					skip(child)
@@ -240,6 +273,7 @@ func extractClass(node *tree_sitter.Node, source []byte, packageName, filePath s
 		IsEnum:         flags["enum"],
 		IsSealed:       flags["sealed"],
 		IsInterface:    flags["interface"] || node.Kind() == "interface_declaration" || directIndexOf(node, "interface") >= 0,
+		IsAnnotation:   flags["annotation"],
 		TypeParameters: extractTypeParameters(node, source),
 	}
 
@@ -767,6 +801,11 @@ func leadingAnnotations(node *tree_sitter.Node, source []byte, filePath string) 
 			}
 			continue
 		case "annotated_expression":
+			// An annotation class the grammar did not recognise belongs to
+			// itself, not to the declaration that follows it.
+			if _, ok := annotationClassName(prev, source); ok {
+				return anns, kdoc, nil
+			}
 			got, err := collectAnnotatedExpression(prev, source, filePath)
 			if err != nil {
 				return nil, "", err
@@ -781,6 +820,52 @@ func leadingAnnotations(node *tree_sitter.Node, source []byte, filePath string) 
 		}
 	}
 	return anns, kdoc, nil
+}
+
+// annotationClassName reports the name of an `annotation class` the grammar
+// read as an annotated infix expression (`annotation class Name`), which is
+// how a composed annotation is written.
+func annotationClassName(node *tree_sitter.Node, source []byte) (string, bool) {
+	cur := node
+	for cur != nil && cur.Kind() == "annotated_expression" {
+		var expr *tree_sitter.Node
+		for i := uint(0); i < cur.ChildCount(); i++ {
+			child := cur.Child(i)
+			if child.Kind() == "annotation" {
+				continue
+			}
+			expr = child
+			break
+		}
+		if expr == nil {
+			return "", false
+		}
+		if expr.Kind() == "annotated_expression" {
+			cur = expr
+			continue
+		}
+		return infixAnnotationClass(expr, source)
+	}
+	return "", false
+}
+
+// infixAnnotationClass reports the name when node is the infix the grammar
+// gives `annotation class Name`.
+func infixAnnotationClass(node *tree_sitter.Node, source []byte) (string, bool) {
+	if node == nil || node.Kind() != "infix_expression" {
+		return "", false
+	}
+	var words []string
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "identifier" {
+			words = append(words, child.Utf8Text(source))
+		}
+	}
+	if len(words) == 3 && words[0] == "annotation" && words[1] == "class" {
+		return words[2], true
+	}
+	return "", false
 }
 
 func collectAnnotatedExpression(node *tree_sitter.Node, source []byte, filePath string) ([]Annotation, error) {
